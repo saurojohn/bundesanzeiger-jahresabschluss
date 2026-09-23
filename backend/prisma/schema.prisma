@@ -24,18 +24,18 @@ datasource db {
 /// Eine Kanzlei (Steuerberater-Praxis) als Top-Level-Tenant.
 /// 1 Kanzlei → n Mandanten (GmbHs / GmbH & Co. KGs).
 model Kanzlei {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String
-  rechtsform  String   // "Steuerberatungsgesellschaft" | "Wirtschaftsprüfungsgesellschaft" | "Einzelkanzlei"
-  adresse     Json     // {strasse, plz, ort, land}
-  ustId       String?  // USt-IdNr.
-  logoUrl     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  rechtsform String // "Steuerberatungsgesellschaft" | "Wirtschaftsprüfungsgesellschaft" | "Einzelkanzlei"
+  adresse    Json // {strasse, plz, ort, land}
+  ustId      String? // USt-IdNr.
+  logoUrl    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  mandanten   Mandant[]
-  user        User[]
-  auditLogs   AuditLog[]
+  mandanten Mandant[]
+  user      User[]
+  auditLogs AuditLog[]
 
   @@map("kanzlei")
 }
@@ -43,31 +43,31 @@ model Kanzlei {
 /// Ein Mandant = 1 GmbH (oder GmbH & Co. KG).
 /// Gehört genau 1 Kanzlei.
 model Mandant {
-  id              String   @id @default(uuid()) @db.Uuid
-  kanzleiId       String   @db.Uuid
-  firmenname      String
-  rechtsform      String   // "GmbH" | "GmbH & Co. KG" | "AG" | ...
-  handelsregister String?  // "HRB 123456"
-  ustId           String?  // USt-IdNr.
-  adresse         Json     // {strasse, plz, ort, land}
-  geschaeftsfuehrer Json   // [{name, geburtsdatum, anteilProzent}]
-  gruendungsdatum DateTime?
-  bilanzsummeVorjahr Decimal? @db.Decimal(18, 2)
-  umsatzVorjahr     Decimal? @db.Decimal(18, 2)
-  mitarbeiterAnzahl Int?
-  groessenklasse    String  // "KLEINST" | "KLEIN" | "MITTEL" | "GROSS" (gem. § 267 HGB)
-  publishChannel    String  // "PDF_DIRECT" | "XML_XBRL" | "EBILANZ_TAXONOMIE"
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String    @id @default(uuid()) @db.Uuid
+  kanzleiId          String    @db.Uuid
+  firmenname         String
+  rechtsform         String // "GmbH" | "GmbH & Co. KG" | "AG" | ...
+  handelsregister    String? // "HRB 123456"
+  ustId              String? // USt-IdNr.
+  adresse            Json // {strasse, plz, ort, land}
+  geschaeftsfuehrer  Json // [{name, geburtsdatum, anteilProzent}]
+  gruendungsdatum    DateTime?
+  bilanzsummeVorjahr Decimal?  @db.Decimal(18, 2)
+  umsatzVorjahr      Decimal?  @db.Decimal(18, 2)
+  mitarbeiterAnzahl  Int?
+  groessenklasse     String // "KLEINST" | "KLEIN" | "MITTEL" | "GROSS" (gem. § 267 HGB)
+  publishChannel     String // "PDF_DIRECT" | "XML_XBRL" | "EBILANZ_TAXONOMIE"
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  kanzlei       Kanzlei              @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
-  userAccess    UserMandantRole[]
-  bilanzen      Bilanz[]
-  guvs          GuV[]
-  anhaenge      Anhang[]
+  kanzlei           Kanzlei           @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
+  userAccess        UserMandantRole[]
+  bilanzen          Bilanz[]
+  guvs              GuV[]
+  anhaenge          Anhang[]
   jahresabschluesse Jahresabschluss[]
-  submissions   BanzSubmission[]
-  auditLogs     AuditLog[]
+  submissions       BanzSubmission[]
+  auditLogs         AuditLog[]
 
   @@unique([kanzleiId, firmenname])
   @@index([kanzleiId])
@@ -81,43 +81,43 @@ model Mandant {
 
 /// Globaler User-Account (kann Zugriff auf mehrere Mandanten haben via UserMandantRole).
 model User {
-  id            String   @id @default(uuid()) @db.Uuid
-  kanzleiId     String?  @db.Uuid  // null für System-Admin
-  email         String   @unique
-  passwordHash  String
-  vorname       String
-  nachname      String
-  telefon       String?
-  totpSecret    String?  // Encrypted TOTP-Secret (otplib)
-  totpEnabled   Boolean  @default(false)
+  id               String    @id @default(uuid()) @db.Uuid
+  kanzleiId        String?   @db.Uuid // null für System-Admin
+  email            String    @unique
+  passwordHash     String
+  vorname          String
+  nachname         String
+  telefon          String?
+  totpSecret       String? // Encrypted TOTP-Secret (otplib)
+  totpEnabled      Boolean   @default(false)
   mfaRecoveryCodes String? // Encrypted, JSON-encoded Array
-  lastLoginAt   DateTime?
-  lastLoginIp   String?
-  isActive      Boolean  @default(true)
-  globalRole    String   @default("USER") // "USER" | "SYSTEM_ADMIN"
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  lastLoginAt      DateTime?
+  lastLoginIp      String?
+  isActive         Boolean   @default(true)
+  globalRole       String    @default("USER") // "USER" | "SYSTEM_ADMIN"
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  kanzlei       Kanzlei?            @relation(fields: [kanzleiId], references: [id])
-  mandantRoles  UserMandantRole[]
-  auditLogs     AuditLog[]
-  sessions      UserSession[]
+  kanzlei      Kanzlei?          @relation(fields: [kanzleiId], references: [id])
+  mandantRoles UserMandantRole[]
+  auditLogs    AuditLog[]
+  sessions     UserSession[]
 
   @@map("user")
 }
 
 /// Refresh-Token-Sessions (für JWT-Refresh).
 model UserSession {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
-  refreshTokenHash String @unique
-  ipAddress   String?
-  userAgent   String?
-  expiresAt   DateTime
-  revokedAt   DateTime?
-  createdAt   DateTime @default(now())
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String    @unique
+  ipAddress        String?
+  userAgent        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
@@ -126,16 +126,16 @@ model UserSession {
 
 /// m:n-Zuordnung User × Mandant × Rolle.
 model UserMandantRole {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
-  mandantId   String   @db.Uuid
-  rolle       String   // "GF" | "STEUERBERATER" | "WIRTSCHAFTSPRUEFER" | "KANZLEI_ADMIN"
-  grantedAt   DateTime @default(now())
-  grantedById String?  @db.Uuid  // welcher User hat die Rolle gewährt
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  mandantId   String    @db.Uuid
+  rolle       String // "GF" | "STEUERBERATER" | "WIRTSCHAFTSPRUEFER" | "KANZLEI_ADMIN"
+  grantedAt   DateTime  @default(now())
+  grantedById String?   @db.Uuid // welcher User hat die Rolle gewährt
   revokedAt   DateTime?
 
-  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mandant     Mandant @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mandant Mandant @relation(fields: [mandantId], references: [id], onDelete: Cascade)
 
   @@unique([userId, mandantId, rolle])
   @@index([userId])
@@ -149,20 +149,20 @@ model UserMandantRole {
 
 /// Bilanz eines Mandanten für ein Geschäftsjahr.
 model Bilanz {
-  id              String   @id @default(uuid()) @db.Uuid
-  mandantId       String   @db.Uuid
-  geschaeftsjahr  Int      // z.B. 2025
-  erstelltAm      DateTime?
-  gueltigBis      DateTime?
-  status          String   @default("DRAFT") // "DRAFT" | "VALIDATED" | "ARCHIVED"
-  hinweise        String?  // Freitext-Notizen
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  createdById     String?  @db.Uuid
-  updatedById     String?  @db.Uuid
+  id             String    @id @default(uuid()) @db.Uuid
+  mandantId      String    @db.Uuid
+  geschaeftsjahr Int // z.B. 2025
+  erstelltAm     DateTime?
+  gueltigBis     DateTime?
+  status         String    @default("DRAFT") // "DRAFT" | "VALIDATED" | "ARCHIVED"
+  hinweise       String? // Freitext-Notizen
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  createdById    String?   @db.Uuid
+  updatedById    String?   @db.Uuid
 
-  mandant         Mandant  @relation(fields: [mandantId], references: [id], onDelete: Cascade)
-  positionen      BilanzPosition[]
+  mandant           Mandant           @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  positionen        BilanzPosition[]
   jahresabschluesse Jahresabschluss[]
 
   @@unique([mandantId, geschaeftsjahr])
@@ -176,17 +176,17 @@ model Bilanz {
 model BilanzPosition {
   id            String   @id @default(uuid()) @db.Uuid
   bilanzId      String   @db.Uuid
-  seite         String   // "AKTIVA" | "PASSIVA"
-  kontonummer   String   // z.B. "0100" (SKR03/04) oder HGB-Position
-  bezeichnung   String   // "Bankguthaben", "Gezeichnetes Kapital"
+  seite         String // "AKTIVA" | "PASSIVA"
+  kontonummer   String // z.B. "0100" (SKR03/04) oder HGB-Position
+  bezeichnung   String // "Bankguthaben", "Gezeichnetes Kapital"
   betragVorjahr Decimal? @db.Decimal(18, 2)
-  betragAktuell  Decimal  @db.Decimal(18, 2)
-  reihenfolge   Int      // Sortierung innerhalb der Seite
+  betragAktuell Decimal  @db.Decimal(18, 2)
+  reihenfolge   Int // Sortierung innerhalb der Seite
   bemerkung     String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  bilanz        Bilanz   @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
+  bilanz Bilanz @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
 
   @@index([bilanzId])
   @@index([seite])
@@ -198,21 +198,21 @@ model BilanzPosition {
 // ============================================================================
 
 model GuV {
-  id              String   @id @default(uuid()) @db.Uuid
-  mandantId       String   @db.Uuid
-  bilanzId        String?  @db.Uuid  // Optional: GuV kann unabhängig sein
-  geschaeftsjahr  Int
-  verfahren       String   @default("GKV") // "GKV" (Gesamtkostenverfahren) | "UKV" (Umsatzkostenverfahren)
-  status          String   @default("DRAFT")
-  hinweise        String?
-  ergebnis        Decimal  @db.Decimal(18, 2) // Jahresüberschuss/fehlbetrag (validiert)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  createdById     String?  @db.Uuid
-  updatedById     String?  @db.Uuid
+  id             String   @id @default(uuid()) @db.Uuid
+  mandantId      String   @db.Uuid
+  bilanzId       String?  @db.Uuid // Optional: GuV kann unabhängig sein
+  geschaeftsjahr Int
+  verfahren      String   @default("GKV") // "GKV" (Gesamtkostenverfahren) | "UKV" (Umsatzkostenverfahren)
+  status         String   @default("DRAFT")
+  hinweise       String?
+  ergebnis       Decimal  @db.Decimal(18, 2) // Jahresüberschuss/fehlbetrag (validiert)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdById    String?  @db.Uuid
+  updatedById    String?  @db.Uuid
 
-  mandant         Mandant  @relation(fields: [mandantId], references: [id], onDelete: Cascade)
-  positionen      GuVPosition[]
+  mandant           Mandant           @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  positionen        GuVPosition[]
   jahresabschluesse Jahresabschluss[]
 
   @@unique([mandantId, geschaeftsjahr])
@@ -225,15 +225,15 @@ model GuVPosition {
   guvId         String   @db.Uuid
   kontonummer   String
   bezeichnung   String
-  kategorie     String   // "ERLOES" | "MATERIAL" | "PERSONAL" | "ABSCHREIBUNG" | "SONSTIGE" | "STEUER" | "FINANZ"
+  kategorie     String // "ERLOES" | "MATERIAL" | "PERSONAL" | "ABSCHREIBUNG" | "SONSTIGE" | "STEUER" | "FINANZ"
   betragVorjahr Decimal? @db.Decimal(18, 2)
-  betragAktuell  Decimal  @db.Decimal(18, 2)
+  betragAktuell Decimal  @db.Decimal(18, 2)
   reihenfolge   Int
   bemerkung     String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  guv           GuV      @relation(fields: [guvId], references: [id], onDelete: Cascade)
+  guv GuV @relation(fields: [guvId], references: [id], onDelete: Cascade)
 
   @@index([guvId])
   @@index([kategorie])
@@ -245,20 +245,20 @@ model GuVPosition {
 // ============================================================================
 
 model Anhang {
-  id              String   @id @default(uuid()) @db.Uuid
-  mandantId       String   @db.Uuid
-  geschaeftsjahr  Int
-  status          String   @default("DRAFT")
-  bilanzierungsMethoden String? // Freitext, § 284 HGB
-  bewertungsMethoden    String?
+  id                     String   @id @default(uuid()) @db.Uuid
+  mandantId              String   @db.Uuid
+  geschaeftsjahr         Int
+  status                 String   @default("DRAFT")
+  bilanzierungsMethoden  String? // Freitext, § 284 HGB
+  bewertungsMethoden     String?
   sonstigePflichtangaben String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  createdById     String?  @db.Uuid
-  updatedById     String?  @db.Uuid
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  createdById            String?  @db.Uuid
+  updatedById            String?  @db.Uuid
 
-  mandant         Mandant  @relation(fields: [mandantId], references: [id], onDelete: Cascade)
-  abschnitte      AnhangAbschnitt[]
+  mandant           Mandant           @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  abschnitte        AnhangAbschnitt[]
   jahresabschluesse Jahresabschluss[]
 
   @@unique([mandantId, geschaeftsjahr])
@@ -268,13 +268,13 @@ model Anhang {
 model AnhangAbschnitt {
   id          String   @id @default(uuid()) @db.Uuid
   anhangId    String   @db.Uuid
-  titel       String   // "Allgemeine Angaben", "Bilanzierungs- und Bewertungsmethoden"
+  titel       String // "Allgemeine Angaben", "Bilanzierungs- und Bewertungsmethoden"
   inhalt      String   @db.Text
   reihenfolge Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  anhang      Anhang   @relation(fields: [anhangId], references: [id], onDelete: Cascade)
+  anhang Anhang @relation(fields: [anhangId], references: [id], onDelete: Cascade)
 
   @@index([anhangId])
   @@map("anhang_abschnitt")
@@ -287,31 +287,31 @@ model AnhangAbschnitt {
 /// Ein Jahresabschluss = Bilanz + GuV + Anhang + (optional) Lagebericht.
 /// Ist das zentrale Objekt für BAnz-Submission.
 model Jahresabschluss {
-  id                  String   @id @default(uuid()) @db.Uuid
-  mandantId           String   @db.Uuid
-  geschaeftsjahr      Int
-  bilanzId            String   @db.Uuid
-  guvId               String   @db.Uuid
-  anhangId            String   @db.Uuid
-  lageberichtId       String?  @db.Uuid  // Phase 2
-  status              String   @default("DRAFT") // DRAFT | FINALIZED | SIGNED | SUBMITTED | PUBLISHED
-  finalisiertAm       DateTime?
-  signiertAm          DateTime?
-  eingereichtAm       DateTime?
-  veroeffentlichtAm   DateTime?
-  banzBestellnummer   String?  // @unique - BAnz-Vorgangsnummer nach Submission
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  createdById         String?  @db.Uuid
-  finalizedById       String?  @db.Uuid
+  id                String    @id @default(uuid()) @db.Uuid
+  mandantId         String    @db.Uuid
+  geschaeftsjahr    Int
+  bilanzId          String    @db.Uuid
+  guvId             String    @db.Uuid
+  anhangId          String    @db.Uuid
+  lageberichtId     String?   @db.Uuid // Phase 2
+  status            String    @default("DRAFT") // DRAFT | FINALIZED | SIGNED | SUBMITTED | PUBLISHED
+  finalisiertAm     DateTime?
+  signiertAm        DateTime?
+  eingereichtAm     DateTime?
+  veroeffentlichtAm DateTime?
+  banzBestellnummer String? // @unique - BAnz-Vorgangsnummer nach Submission
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdById       String?   @db.Uuid
+  finalizedById     String?   @db.Uuid
 
-  mandant             Mandant  @relation(fields: [mandantId], references: [id], onDelete: Cascade)
-  bilanz              Bilanz   @relation(fields: [bilanzId], references: [id])
-  guv                 GuV      @relation(fields: [guvId], references: [id])
-  anhang              Anhang   @relation(fields: [anhangId], references: [id])
-  signaturen          Signature[]
-  submissions         BanzSubmission[]
-  auditLogs           AuditLog[]
+  mandant     Mandant          @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  bilanz      Bilanz           @relation(fields: [bilanzId], references: [id])
+  guv         GuV              @relation(fields: [guvId], references: [id])
+  anhang      Anhang           @relation(fields: [anhangId], references: [id])
+  signaturen  Signature[]
+  submissions BanzSubmission[]
+  auditLogs   AuditLog[]
 
   @@unique([mandantId, geschaeftsjahr])
   @@index([mandantId])
@@ -324,25 +324,25 @@ model Jahresabschluss {
 // ============================================================================
 
 model Signature {
-  id                  String   @id @default(uuid()) @db.Uuid
-  jahresabschlussId   String   @db.Uuid
-  userId              String   @db.Uuid  // Wer hat signiert (WP / Steuerberater / GF)
-  rolle               String   // "WIRTSCHAFTSPRUEFER" | "STEUERBERATER" | "GF"
-  signaturTyp         String   // "QUALIFIZIERT" | "FORTGESCHRITTEN" | "EINFACH"
-  zertifikatSubject   String?
-  zertifikatIssuer    String?
+  id                     String    @id @default(uuid()) @db.Uuid
+  jahresabschlussId      String    @db.Uuid
+  userId                 String    @db.Uuid // Wer hat signiert (WP / Steuerberater / GF)
+  rolle                  String // "WIRTSCHAFTSPRUEFER" | "STEUERBERATER" | "GF"
+  signaturTyp            String // "QUALIFIZIERT" | "FORTGESCHRITTEN" | "EINFACH"
+  zertifikatSubject      String?
+  zertifikatIssuer       String?
   zertifikatSeriennummer String?
-  zertifikatGueltigAb DateTime?
-  zertifikatGueltigBis DateTime?
-  zeitstempel         DateTime
-  zeitstempelIssuer   String?  // TSA-Name
-  hashVorher          String   // SHA-256 des Dokuments vor Signatur
-  hashNachher         String   // SHA-256 des signierten Dokuments
-  signaturDaten       Bytes    // Signatur-Bytes (PEM/DER)
-  signaturFormat      String   @default("PKCS7") // PKCS7 | PAdES | XAdES
-  createdAt           DateTime @default(now())
+  zertifikatGueltigAb    DateTime?
+  zertifikatGueltigBis   DateTime?
+  zeitstempel            DateTime
+  zeitstempelIssuer      String? // TSA-Name
+  hashVorher             String // SHA-256 des Dokuments vor Signatur
+  hashNachher            String // SHA-256 des signierten Dokuments
+  signaturDaten          Bytes // Signatur-Bytes (PEM/DER)
+  signaturFormat         String    @default("PKCS7") // PKCS7 | PAdES | XAdES
+  createdAt              DateTime  @default(now())
 
-  jahresabschluss     Jahresabschluss @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
+  jahresabschluss Jahresabschluss @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
 
   @@index([jahresabschlussId])
   @@index([userId])
@@ -354,25 +354,25 @@ model Signature {
 // ============================================================================
 
 model BanzSubmission {
-  id                  String   @id @default(uuid()) @db.Uuid
-  jahresabschlussId   String   @db.Uuid
-  mandantId           String   @db.Uuid
-  channel             String   // "PDF_DIRECT" | "XML_XBRL" | "EBILANZ_TAXONOMIE"
-  status              String   @default("PREPARED") // PREPARED | VALIDATED | SUBMITTED | ACCEPTED | PUBLISHED | REJECTED
-  preparedAt          DateTime @default(now())
-  submittedAt         DateTime?
-  banzVorgangsnummer  String?
-  banzBestellnummer   String?
-  rawPayload          Bytes    // Generierte XML/XBRL/PDF-Daten
-  payloadFormat       String   // "XML" | "XBRL" | "PDF" | "ZIP"
-  payloadHash         String   // SHA-256 für Integritätsprüfung
-  banzResponse        Json?    // BAnz-Portal-Antwort (idR JSON oder XML)
-  errorMessage        String?
-  retryCount          Int      @default(0)
-  createdById         String?  @db.Uuid
+  id                 String    @id @default(uuid()) @db.Uuid
+  jahresabschlussId  String    @db.Uuid
+  mandantId          String    @db.Uuid
+  channel            String // "PDF_DIRECT" | "XML_XBRL" | "EBILANZ_TAXONOMIE"
+  status             String    @default("PREPARED") // PREPARED | VALIDATED | SUBMITTED | ACCEPTED | PUBLISHED | REJECTED
+  preparedAt         DateTime  @default(now())
+  submittedAt        DateTime?
+  banzVorgangsnummer String?
+  banzBestellnummer  String?
+  rawPayload         Bytes // Generierte XML/XBRL/PDF-Daten
+  payloadFormat      String // "XML" | "XBRL" | "PDF" | "ZIP"
+  payloadHash        String // SHA-256 für Integritätsprüfung
+  banzResponse       Json? // BAnz-Portal-Antwort (idR JSON oder XML)
+  errorMessage       String?
+  retryCount         Int       @default(0)
+  createdById        String?   @db.Uuid
 
-  jahresabschluss     Jahresabschluss @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
-  mandant             Mandant         @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  jahresabschluss Jahresabschluss @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
+  mandant         Mandant         @relation(fields: [mandantId], references: [id], onDelete: Cascade)
 
   @@index([jahresabschlussId])
   @@index([mandantId])
@@ -388,19 +388,19 @@ model BanzSubmission {
 /// WORM-Storage-Manifest: Protokolliert jedes Objekt im Object-Lock-Storage.
 /// Selbst unveränderlich (Append-Only).
 model WormObject {
-  id              String   @id @default(uuid()) @db.Uuid
-  objectKey       String   @unique  // S3-Key
-  entityType      String   // "BILANZ_PDF" | "GUV_PDF" | "ANHANG_PDF" | "ABSCHLUSS_PDF" | "BILANZ_XML" | etc.
-  entityId        String   @db.Uuid
-  mandantId       String   @db.Uuid
-  sha256Hash      String
-  sizeBytes       Int
-  objectLockMode  String   // "COMPLIANCE" | "GOVERNANCE"
-  retentionDays   Int      // 3650 (10 Jahre)
+  id                 String   @id @default(uuid()) @db.Uuid
+  objectKey          String   @unique // S3-Key
+  entityType         String // "BILANZ_PDF" | "GUV_PDF" | "ANHANG_PDF" | "ABSCHLUSS_PDF" | "BILANZ_XML" | etc.
+  entityId           String   @db.Uuid
+  mandantId          String   @db.Uuid
+  sha256Hash         String
+  sizeBytes          Int
+  objectLockMode     String // "COMPLIANCE" | "GOVERNANCE"
+  retentionDays      Int // 3650 (10 Jahre)
   retentionExpiresAt DateTime
-  uploadedById    String?  @db.Uuid
-  uploadedAt      DateTime @default(now())
-  legalHold       Boolean  @default(true)
+  uploadedById       String?  @db.Uuid
+  uploadedAt         DateTime @default(now())
+  legalHold          Boolean  @default(true)
 
   @@index([entityType, entityId])
   @@index([mandantId])
@@ -415,24 +415,24 @@ model WormObject {
 /// Append-only Audit-Log für alle Mutationen.
 /// Erfasst VORHER/NACHHER-Zustand jeder Änderung (für Revisionssicherheit).
 model AuditLog {
-  id            String   @id @default(uuid()) @db.Uuid
-  kanzleiId     String?  @db.Uuid  // null für System-Aktionen
-  mandantId     String?  @db.Uuid  // null für kanzlei-übergreifend
-  userId        String?  @db.Uuid
-  jahresabschlussId String? @db.Uuid // Optional: Bezug zu Abschluss
-  action        String   // "CREATE" | "READ" | "UPDATE" | "DELETE" | "SIGN" | "SUBMIT" | "LOGIN" | "LOGOUT" | "EXPORT"
-  entityType    String   // "Mandant" | "Bilanz" | "GuV" | "Anhang" | "Jahresabschluss" | "User" | ...
-  entityId      String?
-  previousState Json?    // Snapshot vor Mutation (null bei CREATE)
-  newState      Json?    // Snapshot nach Mutation (null bei DELETE)
-  ipAddress     String?
-  userAgent     String?
-  geoLocation   String?  // Optional: ISO-Country-Code
-  createdAt     DateTime @default(now())
+  id                String   @id @default(uuid()) @db.Uuid
+  kanzleiId         String?  @db.Uuid // null für System-Aktionen
+  mandantId         String?  @db.Uuid // null für kanzlei-übergreifend
+  userId            String?  @db.Uuid
+  jahresabschlussId String?  @db.Uuid // Optional: Bezug zu Abschluss
+  action            String // "CREATE" | "READ" | "UPDATE" | "DELETE" | "SIGN" | "SUBMIT" | "LOGIN" | "LOGOUT" | "EXPORT"
+  entityType        String // "Mandant" | "Bilanz" | "GuV" | "Anhang" | "Jahresabschluss" | "User" | ...
+  entityId          String?
+  previousState     Json? // Snapshot vor Mutation (null bei CREATE)
+  newState          Json? // Snapshot nach Mutation (null bei DELETE)
+  ipAddress         String?
+  userAgent         String?
+  geoLocation       String? // Optional: ISO-Country-Code
+  createdAt         DateTime @default(now())
 
-  kanzlei       Kanzlei?          @relation(fields: [kanzleiId], references: [id])
-  mandant       Mandant?          @relation(fields: [mandantId], references: [id])
-  user          User?             @relation(fields: [userId], references: [id])
+  kanzlei         Kanzlei?         @relation(fields: [kanzleiId], references: [id])
+  mandant         Mandant?         @relation(fields: [mandantId], references: [id])
+  user            User?            @relation(fields: [userId], references: [id])
   jahresabschluss Jahresabschluss? @relation(fields: [jahresabschlussId], references: [id])
 
   @@index([kanzleiId, createdAt])

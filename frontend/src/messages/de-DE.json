@@ -1,0 +1,153 @@
+{
+  "common": {
+    "appName": "Bundesanzeiger Jahresabschluss",
+    "appTagline": "Veröffentlichungspipeline für Kapitalgesellschaften",
+    "loading": "Wird geladen …",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "actions": "Aktionen",
+    "yes": "Ja",
+    "no": "Nein",
+    "confirm": "Bestätigen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "create": "Erstellen",
+    "logout": "Abmelden",
+    "logoutConfirm": "Möchten Sie sich wirklich abmelden?",
+    "language": "Sprache",
+    "german": "Deutsch"
+  },
+  "auth": {
+    "login": {
+      "title": "Anmeldung",
+      "subtitle": "Melden Sie sich mit Ihren Kanzlei-Zugangsdaten an",
+      "email": "E-Mail-Adresse",
+      "emailPlaceholder": "name@kanzlei.de",
+      "password": "Passwort",
+      "passwordPlaceholder": "Ihr Passwort",
+      "totpCode": "Zwei-Faktor-Code (TOTP)",
+      "totpPlaceholder": "6-stelliger Code",
+      "totpHelp": "Geben Sie den Code aus Ihrer Authenticator-App ein",
+      "submit": "Anmelden",
+      "submitting": "Anmeldung läuft …",
+      "forgotPassword": "Passwort vergessen?",
+      "errors": {
+        "invalidCredentials": "E-Mail oder Passwort ungültig",
+        "totpInvalid": "TOTP-Code ungültig oder abgelaufen",
+        "accountLocked": "Konto gesperrt. Bitte wenden Sie sich an Ihren Kanzlei-Administrator.",
+        "sessionExpired": "Sitzung abgelaufen. Bitte melden Sie sich erneut an.",
+        "unknown": "Ein unbekannter Fehler ist aufgetreten"
+      }
+    },
+    "totp": {
+      "setupTitle": "Zwei-Faktor-Authentifizierung einrichten",
+      "setupSubtitle": "Scannen Sie den QR-Code mit Ihrer Authenticator-App (z. B. Google Authenticator, 1Password)",
+      "scanQrCode": "QR-Code scannen",
+      "manualEntry": "Oder geben Sie diesen Schlüssel manuell ein",
+      "verifyCode": "Bestätigungscode eingeben",
+      "verifySubmit": "Code bestätigen und aktivieren",
+      "enabled": "TOTP erfolgreich aktiviert",
+      "recoveryCodesTitle": "Wiederherstellungscodes",
+      "recoveryCodesSubtitle": "Speichern Sie diese Codes an einem sicheren Ort. Jeder Code kann einmal verwendet werden.",
+      "recoveryCodesWarning": "Diese Codes werden nur einmal angezeigt",
+      "skip": "Später einrichten",
+      "complete": "Einrichtung abschließen"
+    },
+    "logout": {
+      "title": "Abmeldung erfolgreich",
+      "message": "Sie wurden sicher abgemeldet.",
+      "loginAgain": "Erneut anmelden"
+    }
+  },
+  "navigation": {
+    "dashboard": "Übersicht",
+    "mandanten": "Mandanten",
+    "bilanz": "Bilanz",
+    "guv": "Gewinn- und Verlustrechnung",
+    "anhang": "Anhang",
+    "jahresabschluss": "Jahresabschluss",
+    "submissions": "BAnz-Einreichungen",
+    "audit": "Audit-Log",
+    "users": "Benutzer",
+    "kanzlei": "Kanzlei",
+    "settings": "Einstellungen",
+    "help": "Hilfe"
+  },
+  "dashboard": {
+    "title": "Übersicht",
+    "welcome": "Willkommen zurück, {name}",
+    "activeMandant": "Aktiver Mandant",
+    "selectMandant": "Mandant auswählen",
+    "noMandantSelected": "Kein Mandant ausgewählt",
+    "stats": {
+      "aktiveMandanten": "Aktive Mandanten",
+      "offeneAbschluesse": "Offene Abschlüsse",
+      "eingereichtDiesesJahr": "Dieses Jahr eingereicht",
+      "faelligeFristen": "Anstehende Fristen"
+    },
+    "recentActivity": "Letzte Aktivitäten",
+    "upcomingDeadlines": "Anstehende Fristen",
+    "noDeadlines": "Keine anstehenden Fristen"
+  },
+  "mandant": {
+    "title": "Mandanten",
+    "subtitle": "Verwaltung aller Mandanten Ihrer Kanzlei",
+    "listTitle": "Mandantenliste",
+    "newMandant": "Neuen Mandanten anlegen",
+    "fields": {
+      "firmenname": "Firmenname",
+      "rechtsform": "Rechtsform",
+      "handelsregister": "Handelsregister-Nr.",
+      "ustId": "USt-IdNr.",
+      "strasse": "Straße und Hausnummer",
+      "plz": "Postleitzahl",
+      "ort": "Ort",
+      "land": "Land",
+      "gruendungsdatum": "Gründungsdatum",
+      "bilanzsummeVorjahr": "Bilanzsumme Vorjahr (€)",
+      "umsatzVorjahr": "Umsatz Vorjahr (€)",
+      "mitarbeiterAnzahl": "Mitarbeiteranzahl",
+      "groessenklasse": "Größenklasse (§ 267 HGB)",
+      "publishChannel": "Veröffentlichungskanal"
+    },
+    "groessenklasse": {
+      "KLEINST": "Kleinstkapitalgesellschaft",
+      "KLEIN": "Kleine Kapitalgesellschaft",
+      "MITTEL": "Mittlere Kapitalgesellschaft",
+      "GROSS": "Große Kapitalgesellschaft"
+    },
+    "publishChannel": {
+      "PDF_DIRECT": "PDF-Hinterlegung (Kleinst)",
+      "XML_XBRL": "BAnz XML/XBRL",
+      "EBILANZ_TAXONOMIE": "E-Bilanz TAXONOMIE"
+    },
+    "actions": {
+      "create": "Mandant anlegen",
+      "edit": "Mandant bearbeiten",
+      "delete": "Mandant löschen",
+      "deleteConfirm": "Sind Sie sicher, dass Sie diesen Mandanten löschen möchten? Diese Aktion kann nicht rückgängig gemacht werden."
+    }
+  },
+  "errors": {
+    "403": {
+      "title": "Zugriff verweigert",
+      "message": "Sie haben keine Berechtigung für diese Aktion."
+    },
+    "404": {
+      "title": "Nicht gefunden",
+      "message": "Die angeforderte Ressource konnte nicht gefunden werden."
+    },
+    "500": {
+      "title": "Serverfehler",
+      "message": "Es ist ein interner Fehler aufgetreten. Bitte versuchen Sie es später erneut."
+    },
+    "network": {
+      "title": "Verbindungsfehler",
+      "message": "Die Verbindung zum Server konnte nicht hergestellt werden."
+    }
+  }
+}

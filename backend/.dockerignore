@@ -1,0 +1,44 @@
+# ============================================================================
+# Bundesanzeiger Jahresabschluss — Backend .dockerignore
+# ============================================================================
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — secrets must NEVER reach the image
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+!.env.example
+
+# E2E
+e2e/screenshots/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Coverage / Test artifacts
+coverage/
+test-results/
+playwright-report/
+
+# Generated Prisma client (will be re-generated inside Docker)
+prisma/migrations/
+
+# MinIO / S3 data (Dev)
+minio-data/

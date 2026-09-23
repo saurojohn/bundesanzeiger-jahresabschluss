@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.turbo/
+
+# Environment
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+!.env.example
+
+# Secrets (NIEMALS committen)
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test outputs
+coverage/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Prisma
+backend/prisma/migrations/migration_lock.toml
+!backend/prisma/migrations/
+
+# Database
+*.db
+*.sqlite
+postgres-data/
+
+# Redis
+redis-data/
+
+# Docker volumes
+.docker-data/
+
+# Cache
+.cache/
+.eslintcache
+.tsbuildinfo
+
+# MinIO / S3 data (Dev)
+minio-data/
+
+# PDF generation artifacts (Temp)
+tmp-pdf/
+*.pdf.tmp
+
+# Audit logs (raw, encrypted)
+raw-audit/
+
+# WORM storage (local fallback, dev only)
+worm-storage/

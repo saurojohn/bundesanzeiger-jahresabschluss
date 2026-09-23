@@ -5,6 +5,9 @@
  *   - 1 Kanzlei "Musterkanzlei Steuerberatung GmbH"
  *   - 3 Mandanten (Demo GmbH, Beispiel GmbH, Test AG)
  *   - 5 User (admin, kanzlei-admin, steuerberater, wp, gf-demo)
+ *   - 1 leere Bilanz (DRAFT, GJ 2025) für Demo GmbH
+ *   - 1 leere GuV (GKV, DRAFT, GJ 2025) für Demo GmbH
+ *   - 1 leerer Anhang (DRAFT, GJ 2025) für Demo GmbH
  *
  * Ausführung:
  *   npx prisma db seed
@@ -12,7 +15,7 @@
  * Im Dev-Setup (kein DB): dieses Skript läuft erst NACH `prisma migrate dev`.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -27,6 +30,12 @@ async function main(): Promise<void> {
 
   // Reset — defensive; idempotent nur wenn DB leer.
   await prisma.auditLog.deleteMany();
+  await prisma.anhangAbschnitt.deleteMany();
+  await prisma.anhang.deleteMany();
+  await prisma.guVPosition.deleteMany();
+  await prisma.guV.deleteMany();
+  await prisma.bilanzPosition.deleteMany();
+  await prisma.bilanz.deleteMany();
   await prisma.userSession.deleteMany();
   await prisma.userMandantRole.deleteMany();
   await prisma.user.deleteMany();
@@ -223,6 +232,175 @@ async function main(): Promise<void> {
   console.log(
     `[seed] User angelegt: ${admin.email}, ${kanzleiAdmin.email}, ${steuerberater.email}, ${wp.email}, ${gfDemo.email}`,
   );
+
+  // ----------------------------------------------------------------------------
+  // Demo-Bilanz/GuV/Anhang für Mandant "Demo GmbH" (GJ 2025, DRAFT)
+  // ----------------------------------------------------------------------------
+
+  // HGB § 266 Bilanzschema (vereinfachtes Mapping auf SKR03-Kontonummern).
+  const aktivaSeedPositionen: Prisma.BilanzPositionCreateManyInput[] = [
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.I.1.', bezeichnung: 'Selbst geschaffene gewerbliche Schutzrechte und ähnliche Rechte und Werte', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 1 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.I.2.', bezeichnung: 'Entgeltlich erworbene Konzessionen, gewerbliche Schutzrechte', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 2 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.I.3.', bezeichnung: 'Geschäfts- oder Firmenwert', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 3 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.I.4.', bezeichnung: 'Geleistete Anzahlungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 4 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.II.1.', bezeichnung: 'Grundstücke, grundstücksgleiche Rechte und Bauten', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 5 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.II.2.', bezeichnung: 'Technische Anlagen und Maschinen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 6 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.II.3.', bezeichnung: 'Andere Anlagen, Betriebs- und Geschäftsausstattung', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 7 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.II.4.', bezeichnung: 'Geleistete Anzahlungen und Anlagen im Bau', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 8 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.III.1.', bezeichnung: 'Anteile an verbundenen Unternehmen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 9 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.III.2.', bezeichnung: 'Ausleihungen an verbundene Unternehmen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 10 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.III.3.', bezeichnung: 'Beteiligungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 11 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.III.4.', bezeichnung: 'Ausleihungen an Unternehmen, mit denen Beteiligungsverhältnis besteht', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 12 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.III.5.', bezeichnung: 'Wertpapiere des Anlagevermögens', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 13 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'A.III.6.', bezeichnung: 'Sonstige Ausleihungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 14 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.I.1.', bezeichnung: 'Roh-, Hilfs- und Betriebsstoffe', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 15 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.I.2.', bezeichnung: 'Unfertige Erzeugnisse, unfertige Leistungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 16 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.I.3.', bezeichnung: 'Fertige Erzeugnisse und Waren', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 17 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.I.4.', bezeichnung: 'Geleistete Anzahlungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 18 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.II.1.', bezeichnung: 'Forderungen aus Lieferungen und Leistungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 19 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.II.2.', bezeichnung: 'Forderungen gegen verbundene Unternehmen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 20 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.II.3.', bezeichnung: 'Forderungen gegen Unternehmen, mit denen Beteiligungsverhältnis besteht', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 21 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.II.4.', bezeichnung: 'Sonstige Vermögensgegenstände', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 22 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.III.1.', bezeichnung: 'Anteile an verbundenen Unternehmen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 23 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.III.2.', bezeichnung: 'Sonstige Wertpapiere', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 24 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kassenbestand, Bundesbankguthaben, Guthaben bei Kreditinstituten', betragVorjahr: '150000.00', betragAktuell: '150000.00', reihenfolge: 25 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'C.', bezeichnung: 'Rechnungsabgrenzungsposten', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 26 },
+    { bilanzId: '', seite: 'AKTIVA', kontonummer: 'D.', bezeichnung: 'Aktive latente Steuern', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 27 },
+  ];
+
+  const passivaSeedPositionen: Prisma.BilanzPositionCreateManyInput[] = [
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Gezeichnetes Kapital', betragVorjahr: '25000.00', betragAktuell: '25000.00', reihenfolge: 1 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.II.', bezeichnung: 'Kapitalrücklage', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 2 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.III.1.', bezeichnung: 'Gesetzliche Rücklage', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 3 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.III.2.', bezeichnung: 'Rücklage für eigene Anteile', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 4 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.III.3.', bezeichnung: 'Satzungsmäßige Rücklagen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 5 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.III.4.', bezeichnung: 'Andere Gewinnrücklagen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 6 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.IV.', bezeichnung: 'Gewinnvortrag/Verlustvortrag', betragVorjahr: '115000.00', betragAktuell: '115000.00', reihenfolge: 7 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'A.V.', bezeichnung: 'Jahresüberschuss/Jahresfehlbetrag', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 8 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'B.1.', bezeichnung: 'Rückstellungen für Pensionen und ähnliche Verpflichtungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 9 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'B.2.', bezeichnung: 'Steuerrückstellungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 10 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'B.3.', bezeichnung: 'Sonstige Rückstellungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 11 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.1.', bezeichnung: 'Anleihen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 12 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.2.', bezeichnung: 'Verbindlichkeiten gegenüber Kreditinstituten', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 13 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.3.', bezeichnung: 'Erhaltene Anzahlungen auf Bestellungen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 14 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.4.', bezeichnung: 'Verbindlichkeiten aus Lieferungen und Leistungen', betragVorjahr: '10000.00', betragAktuell: '10000.00', reihenfolge: 15 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.5.', bezeichnung: 'Verbindlichkeiten aus Wechseln', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 16 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.6.', bezeichnung: 'Verbindlichkeiten gegenüber verbundenen Unternehmen', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 17 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.7.', bezeichnung: 'Verbindlichkeiten gegenüber Unternehmen, mit denen Beteiligungsverhältnis besteht', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 18 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'C.8.', bezeichnung: 'Sonstige Verbindlichkeiten', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 19 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'D.', bezeichnung: 'Rechnungsabgrenzungsposten', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 20 },
+    { bilanzId: '', seite: 'PASSIVA', kontonummer: 'E.', bezeichnung: 'Passive latente Steuern', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 21 },
+  ];
+
+  const bilanz = await prisma.bilanz.create({
+    data: {
+      mandantId: mandant1.id,
+      geschaeftsjahr: 2025,
+      status: 'DRAFT',
+      hinweise: 'Seed-Daten — bitte durch echte Buchhaltungsdaten ersetzen.',
+      createdById: steuerberater.id,
+      positionen: {
+        create: [...aktivaSeedPositionen, ...passivaSeedPositionen],
+      },
+    },
+  });
+  console.log(`[seed] Bilanz angelegt für ${MANDANT_DEMO} GJ 2025 (${bilanz.id})`);
+
+  // ----------------------------------------------------------------------------
+  // Demo-GuV (GKV) für Demo GmbH
+  // ----------------------------------------------------------------------------
+  const guvSeedPositionen: Prisma.GuVPositionCreateManyInput[] = [
+    { guvId: '', kontonummer: '1.', bezeichnung: 'Umsatzerlöse', kategorie: 'ERLOES', betragVorjahr: '400000.00', betragAktuell: '400000.00', reihenfolge: 1 },
+    { guvId: '', kontonummer: '2.', bezeichnung: 'Bestandsveränderungen', kategorie: 'ERLOES', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 2 },
+    { guvId: '', kontonummer: '3.', bezeichnung: 'Andere aktivierte Eigenleistungen', kategorie: 'ERLOES', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 3 },
+    { guvId: '', kontonummer: '4.', bezeichnung: 'Sonstige betriebliche Erträge', kategorie: 'ERLOES', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 4 },
+    { guvId: '', kontonummer: '5a.', bezeichnung: 'Aufwendungen für Roh-, Hilfs- und Betriebsstoffe', kategorie: 'MATERIAL', betragVorjahr: '150000.00', betragAktuell: '150000.00', reihenfolge: 5 },
+    { guvId: '', kontonummer: '5b.', bezeichnung: 'Aufwendungen für bezogene Leistungen', kategorie: 'MATERIAL', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 6 },
+    { guvId: '', kontonummer: '6a.', bezeichnung: 'Löhne und Gehälter', kategorie: 'PERSONAL', betragVorjahr: '120000.00', betragAktuell: '120000.00', reihenfolge: 7 },
+    { guvId: '', kontonummer: '6b.', bezeichnung: 'Soziale Abgaben und Aufwendungen für Altersversorgung', kategorie: 'PERSONAL', betragVorjahr: '25000.00', betragAktuell: '25000.00', reihenfolge: 8 },
+    { guvId: '', kontonummer: '7a.', bezeichnung: 'Abschreibungen auf Sachanlagen', kategorie: 'ABSCHREIBUNG', betragVorjahr: '5000.00', betragAktuell: '5000.00', reihenfolge: 9 },
+    { guvId: '', kontonummer: '7b.', bezeichnung: 'Abschreibungen auf Umlaufvermögen', kategorie: 'ABSCHREIBUNG', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 10 },
+    { guvId: '', kontonummer: '8.', bezeichnung: 'Sonstige betriebliche Aufwendungen', kategorie: 'SONSTIGE', betragVorjahr: '50000.00', betragAktuell: '50000.00', reihenfolge: 11 },
+    { guvId: '', kontonummer: '9.', bezeichnung: 'Erträge aus Beteiligungen', kategorie: 'FINANZ', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 12 },
+    { guvId: '', kontonummer: '10.', bezeichnung: 'Erträge aus anderen Wertpapieren und Ausleihungen', kategorie: 'FINANZ', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 13 },
+    { guvId: '', kontonummer: '11.', bezeichnung: 'Sonstige Zinsen und ähnliche Erträge', kategorie: 'FINANZ', betragVorjahr: '100.00', betragAktuell: '100.00', reihenfolge: 14 },
+    { guvId: '', kontonummer: '12.', bezeichnung: 'Abschreibungen auf Finanzanlagen', kategorie: 'FINANZ', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 15 },
+    { guvId: '', kontonummer: '13.', bezeichnung: 'Zinsen und ähnliche Aufwendungen', kategorie: 'FINANZ', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 16 },
+    { guvId: '', kontonummer: '14.', bezeichnung: 'Steuern vom Einkommen und vom Ertrag', kategorie: 'STEUER', betragVorjahr: '15000.00', betragAktuell: '15000.00', reihenfolge: 17 },
+    { guvId: '', kontonummer: '15.', bezeichnung: 'Ergebnis nach Steuern', kategorie: 'STEUER', betragVorjahr: '35100.00', betragAktuell: '35100.00', reihenfolge: 18 },
+    { guvId: '', kontonummer: '16.', bezeichnung: 'Sonstige Steuern', kategorie: 'STEUER', betragVorjahr: '0.00', betragAktuell: '0.00', reihenfolge: 19 },
+    { guvId: '', kontonummer: '17.', bezeichnung: 'Jahresüberschuss/Jahresfehlbetrag', kategorie: 'STEUER', betragVorjahr: '35100.00', betragAktuell: '35100.00', reihenfolge: 20 },
+  ];
+
+  const guv = await prisma.guV.create({
+    data: {
+      mandantId: mandant1.id,
+      bilanzId: bilanz.id,
+      geschaeftsjahr: 2025,
+      verfahren: 'GKV',
+      status: 'DRAFT',
+      hinweise: 'Seed-Daten (Gesamtkostenverfahren).',
+      ergebnis: '35100.00',
+      createdById: steuerberater.id,
+      positionen: {
+        create: guvSeedPositionen,
+      },
+    },
+  });
+  console.log(`[seed] GuV angelegt für ${MANDANT_DEMO} GJ 2025 (${guv.id})`);
+
+  // ----------------------------------------------------------------------------
+  // Demo-Anhang für Demo GmbH
+  // ----------------------------------------------------------------------------
+  const anhang = await prisma.anhang.create({
+    data: {
+      mandantId: mandant1.id,
+      geschaeftsjahr: 2025,
+      status: 'DRAFT',
+      bilanzierungsMethoden:
+        'Die Bilanz wurde nach den Vorschriften des Handelsgesetzbuches (HGB) aufgestellt. Die Bewertung der Vermögensgegenstände und Schulden erfolgte nach den Grundsätzen ordnungsmäßiger Buchführung.',
+      bewertungsMethoden:
+        'Die Sachanlagen wurden zu Anschaffungskosten bewertet. Forderungen und sonstige Vermögensgegenstände wurden zum Nennwert angesetzt. Verbindlichkeiten wurden mit ihrem Erfüllungsbetrag passiviert.',
+      sonstigePflichtangaben:
+        'Geschäftsführer: Max Demo. Mitarbeiterzahl im Geschäftsjahr: 3.',
+      createdById: steuerberater.id,
+      abschnitte: {
+        create: [
+          {
+            titel: 'Allgemeine Angaben',
+            inhalt:
+              'Die Gesellschaft ist im Handelsregister des Amtsgerichts Hamburg unter HRB 123456 eingetragen. Der Sitz der Gesellschaft befindet sich in Hamburg.',
+            reihenfolge: 1,
+          },
+          {
+            titel: 'Bilanzierungs- und Bewertungsmethoden',
+            inhalt:
+              'Die Bilanz wurde nach den Vorschriften des Handelsgesetzbuches (HGB) aufgestellt. Die Bewertung der Vermögensgegenstände und Schulden erfolgte nach den Grundsätzen ordnungsmäßiger Buchführung (§ 252 HGB).',
+            reihenfolge: 2,
+          },
+          {
+            titel: 'Erläuterungen zur Bilanz',
+            inhalt:
+              'Sämtliche Forderungen haben eine Restlaufzeit von unter einem Jahr. Das gezeichnete Kapital ist voll eingezahlt.',
+            reihenfolge: 3,
+          },
+          {
+            titel: 'Erläuterungen zur GuV',
+            inhalt:
+              'Die Umsatzerlöse wurden im Inland erzielt. Die Erfassung erfolgt zum Zeitpunkt der Leistungserbringung.',
+            reihenfolge: 4,
+          },
+          {
+            titel: 'Sonstige Pflichtangaben',
+            inhalt:
+              'Geschäftsführer: Max Demo. Die Gesellschaft beschäftigte im Geschäftsjahr durchschnittlich 3 Mitarbeiter. Der Jahresüberschuss wird auf neue Rechnung vorgetragen.',
+            reihenfolge: 5,
+          },
+        ],
+      },
+    },
+  });
+  console.log(`[seed] Anhang angelegt für ${MANDANT_DEMO} GJ 2025 (${anhang.id})`);
 
   console.log('[seed] Done.');
 }

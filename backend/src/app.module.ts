@@ -8,6 +8,9 @@ import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { MandantModule } from './modules/mandant/mandant.module';
+import { BilanzModule } from './modules/bilanz/bilanz.module';
+import { GuVModule } from './modules/guv/guv.module';
+import { AnhangModule } from './modules/anhang/anhang.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -23,6 +26,9 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - AuthModule         (Login, TOTP, Refresh, /me, Logout)
  *   - AuditModule        (Audit-Trail lesen + Service)
  *   - MandantModule      (Mandanten CRUD)
+ *   - BilanzModule       (HGB §266 Bilanz CRUD + Validation)
+ *   - GuVModule          (HGB §275 GuV CRUD + Validation)
+ *   - AnhangModule       (HGB §284-289 Anhang CRUD)
  */
 @Module({
   imports: [
@@ -42,6 +48,9 @@ import { PrismaModule } from './prisma/prisma.module';
     AuthModule,
     AuditModule,
     MandantModule,
+    BilanzModule,
+    GuVModule,
+    AnhangModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

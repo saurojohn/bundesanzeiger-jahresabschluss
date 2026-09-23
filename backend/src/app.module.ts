@@ -11,6 +11,8 @@ import { MandantModule } from './modules/mandant/mandant.module';
 import { BilanzModule } from './modules/bilanz/bilanz.module';
 import { GuVModule } from './modules/guv/guv.module';
 import { AnhangModule } from './modules/anhang/anhang.module';
+import { PdfModule } from './modules/pdf/pdf.module';
+import { StorageModule } from './modules/storage/storage.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -29,6 +31,8 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - BilanzModule       (HGB §266 Bilanz CRUD + Validation)
  *   - GuVModule          (HGB §275 GuV CRUD + Validation)
  *   - AnhangModule       (HGB §284-289 Anhang CRUD)
+ *   - StorageModule      (WORM-Object-Lock-Storage, global)
+ *   - PdfModule          (PDF-Generierung + WORM-Upload + Download)
  */
 @Module({
   imports: [
@@ -51,6 +55,8 @@ import { PrismaModule } from './prisma/prisma.module';
     BilanzModule,
     GuVModule,
     AnhangModule,
+    StorageModule,
+    PdfModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -402,6 +402,22 @@ async function main(): Promise<void> {
   });
   console.log(`[seed] Anhang angelegt für ${MANDANT_DEMO} GJ 2025 (${anhang.id})`);
 
+  // ----------------------------------------------------------------------------
+  // PDF-Generation (M1)
+  // ----------------------------------------------------------------------------
+  // PDFs werden NICHT im Dev-Seed erzeugt (kein S3/MinIO im Default-Setup).
+  // Trigger manuell via API:
+  //   curl -X POST -H "Authorization: Bearer $TOKEN" \
+  //        -H "Content-Type: application/json" \
+  //        -d '{"mandantId":"<uuid>"}' \
+  //        http://localhost:3000/api/pdf/bilanz/<bilanzId>/generate
+  //
+  // Voraussetzung: MinIO läuft + S3_BUCKET ist mit Object-Lock angelegt.
+  // siehe SETUP.md § "MinIO / S3 Object Lock".
+  console.log(
+    '[seed] PDFs wurden NICHT automatisch generiert — manuell via /api/pdf/{bilanz,guv,anhang}/:id/generate triggern.',
+  );
+
   console.log('[seed] Done.');
 }
 

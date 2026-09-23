@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { MandantSwitcher } from './MandantSwitcher';
 
 type SessionUser = {
@@ -18,9 +18,17 @@ type SessionUser = {
   }>;
 };
 
+const NAV_ITEMS = [
+  { href: '/dashboard', key: 'dashboard' },
+  { href: '/bilanz', key: 'bilanz' },
+  { href: '/guv', key: 'guv' },
+  { href: '/anhang', key: 'anhang' },
+] as const;
+
 export function AppHeader() {
   const t = useTranslations();
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -93,6 +101,27 @@ export function AppHeader() {
           </span>
           <MandantSwitcher userMandanten={user?.mandanten ?? []} />
         </div>
+
+        <nav className="flex items-center gap-1">
+          {NAV_ITEMS.map((item) => {
+            const href = `/de-DE${item.href}`;
+            const active = pathname?.endsWith(item.href) ?? false;
+            return (
+              <a
+                key={item.key}
+                href={href}
+                className={
+                  'px-3 py-1.5 rounded-md text-sm font-medium transition-colors ' +
+                  (active
+                    ? 'bg-brand-50 text-brand-700'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900')
+                }
+              >
+                {t(`navigation.${item.key}`)}
+              </a>
+            );
+          })}
+        </nav>
 
         <div className="flex items-center gap-4">
           {user && (

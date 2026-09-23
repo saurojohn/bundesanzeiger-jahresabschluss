@@ -132,6 +132,109 @@
       "deleteConfirm": "Sind Sie sicher, dass Sie diesen Mandanten löschen möchten? Diese Aktion kann nicht rückgängig gemacht werden."
     }
   },
+  "bilanz": {
+    "title": "Bilanz",
+    "subtitle": "Bilanz nach § 266 HGB",
+    "newBilanz": "Neue Bilanz erstellen",
+    "editBilanz": "Bilanz bearbeiten",
+    "noBilanz": "Noch keine Bilanz für diesen Mandanten erfasst",
+    "geschaeftsjahr": "Geschäftsjahr",
+    "hinweise": "Hinweise",
+    "fields": {
+      "kontonummer": "Kontonummer",
+      "bezeichnung": "Bezeichnung",
+      "betragVorjahr": "Betrag Vorjahr (€)",
+      "betragAktuell": "Betrakt Geschäftsjahr (€)",
+      "bemerkung": "Bemerkung"
+    },
+    "validation": {
+      "title": "Validierung",
+      "aktivaSumme": "Summe Aktiva",
+      "passivaSumme": "Summe Passiva",
+      "differenz": "Differenz",
+      "saldostimmt": "Saldo stimmt",
+      "saldostimmtNein": "Saldo stimmt NICHT (Differenz {differenz} €)",
+      "fehlendePflichtfelder": "Fehlende Pflichtfelder: {felder}",
+      "validieren": "Saldo prüfen",
+      "validierungLäuft": "Validierung läuft …",
+      "validierungErfolgreich": "Bilanz ist saldostimmend"
+    },
+    "actions": {
+      "create": "Bilanz anlegen",
+      "save": "Speichern",
+      "delete": "Bilanz löschen",
+      "deleteConfirm": "Möchten Sie diese Bilanz wirklich löschen?"
+    },
+    "status": {
+      "DRAFT": "Entwurf",
+      "VALIDATED": "Geprüft",
+      "ARCHIVED": "Archiviert"
+    }
+  },
+  "guv": {
+    "title": "Gewinn- und Verlustrechnung",
+    "subtitle": "GuV nach § 275 HGB",
+    "newGuv": "Neue GuV erstellen",
+    "editGuv": "GuV bearbeiten",
+    "noGuv": "Noch keine GuV erfasst",
+    "verfahren": "Verfahren",
+    "GKV": "Gesamtkostenverfahren (§ 275 Abs. 2 HGB)",
+    "UKV": "Umsatzkostenverfahren (§ 275 Abs. 1 HGB)",
+    "geschaeftsjahr": "Geschäftsjahr",
+    "fields": {
+      "bezeichnung": "Bezeichnung",
+      "betragVorjahr": "Betrag Vorjahr (€)",
+      "betragAktuell": "Betrag Geschäftsjahr (€)",
+      "bemerkung": "Bemerkung"
+    },
+    "validation": {
+      "title": "Ergebnis-Berechnung",
+      "summeErloese": "Summe Erträge",
+      "summeAufwendungen": "Summe Aufwendungen",
+      "jahresueberschuss": "Jahresüberschuss",
+      "jahresfehlbetrag": "Jahresfehlbetrag",
+      "validieren": "Ergebnis prüfen"
+    },
+    "actions": {
+      "create": "GuV anlegen",
+      "save": "Speichern",
+      "delete": "GuV löschen"
+    }
+  },
+  "anhang": {
+    "title": "Anhang",
+    "subtitle": "Anhang zum Jahresabschluss (§ 284 HGB)",
+    "newAnhang": "Neuen Anhang erstellen",
+    "editAnhang": "Anhang bearbeiten",
+    "noAnhang": "Noch kein Anhang erfasst",
+    "geschaeftsjahr": "Geschäftsjahr",
+    "fields": {
+      "titel": "Titel des Abschnitts",
+      "inhalt": "Inhalt",
+      "reihenfolge": "Reihenfolge"
+    },
+    "standardAbschnitte": {
+      "allgemeineAngaben": "Allgemeine Angaben",
+      "bilanzierungsMethoden": "Bilanzierungs- und Bewertungsmethoden",
+      "erlauterungenBilanz": "Erläuterungen zur Bilanz",
+      "erlauterungenGuV": "Erläuterungen zur GuV",
+      "sonstigePflichtangaben": "Sonstige Pflichtangaben"
+    },
+    "placeholders": {
+      "allgemeineAngaben": "z. B. Firma, Sitz, Handelsregister, Geschäftsjahr",
+      "bilanzierungsMethoden": "z. B. Bewertungsgrundsätze gem. § 252 HGB",
+      "erlauterungenBilanz": "Erläuterungen zu einzelnen Bilanzpositionen",
+      "erlauterungenGuV": "Erläuterungen zu einzelnen GuV-Positionen",
+      "sonstigePflichtangaben": "z. B. Geschäftsführerbezüge, Haftungsverhältnisse"
+    },
+    "actions": {
+      "create": "Anhang anlegen",
+      "save": "Speichern",
+      "addAbschnitt": "Abschnitt hinzufügen",
+      "deleteAbschnitt": "Abschnitt entfernen",
+      "delete": "Anhang löschen"
+    }
+  },
   "errors": {
     "403": {
       "title": "Zugriff verweigert",

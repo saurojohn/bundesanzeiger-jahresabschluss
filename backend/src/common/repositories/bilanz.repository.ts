@@ -61,13 +61,43 @@ export class BilanzRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<BilanzWithoutPositionen[]> {
-    return this.prismaService.bilanz.findMany({
+    const bilanzen = await this.prismaService.bilanz.findMany({
       where: {
         mandantId,
         ...(typeof jahr === 'number' ? { geschaeftsjahr: jahr } : {}),
       },
       orderBy: { geschaeftsjahr: 'desc' },
     });
+    return bilanzen;
+  }
+
+  /**
+   * Findet alle Bilanzen inkl. letztes WORM-PDF-ObjectKey pro Bilanz.
+   * Performance: 1 zusätzlicher grouped query statt N+1.
+   */
+  async findByMandantAndJahrWithWorm(
+    mandantId: string,
+    jahr?: number,
+  ): Promise<
+    Array<BilanzWithoutPositionen & { wormObjectKey: string | null }>
+  > {
+    const bilanzen = await this.findByMandantAndJahr(mandantId, jahr);
+    if (bilanzen.length === 0) return [];
+    const wormObjects = await this.prismaService.wormObject.findMany({
+      where: {
+        entityType: 'BILANZ_PDF',
+        entityId: { in: bilanzen.map((b) => b.id) },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    const map = new Map<string, string>();
+    for (const w of wormObjects) {
+      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+    }
+    return bilanzen.map((b) => ({
+      ...b,
+      wormObjectKey: map.get(b.id) ?? null,
+    }));
   }
 
   /**

@@ -23,6 +23,7 @@ const NAV_ITEMS = [
   { href: '/bilanz', key: 'bilanz' },
   { href: '/guv', key: 'guv' },
   { href: '/anhang', key: 'anhang' },
+  { href: '/audit', key: 'audit' },
 ] as const;
 
 export function AppHeader() {

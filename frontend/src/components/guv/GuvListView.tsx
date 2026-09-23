@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
+import { PdfActions } from '@/components/pdf/PdfActions';
 
 type GuvPosition = {
   id?: string;
@@ -25,6 +26,7 @@ type Guv = {
   hinweise: string | null;
   ergebnis: number;
   positionen: GuvPosition[];
+  wormObjectKey: string | null;
 };
 
 export function GuvListView() {
@@ -116,6 +118,9 @@ export function GuvListView() {
                 <th className="px-4 py-3 text-left font-medium text-slate-700">
                   Status
                 </th>
+                <th className="px-4 py-3 text-center font-medium text-slate-700">
+                  PDF
+                </th>
                 <th className="px-4 py-3 text-right font-medium text-slate-700">
                   {t('common.actions')}
                 </th>
@@ -145,6 +150,14 @@ export function GuvListView() {
                     >
                       {t(`bilanz.status.${g.status}`)}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <PdfActions
+                      entityType="guv"
+                      entityId={g.id}
+                      wormObjectKey={g.wormObjectKey}
+                      onGenerated={() => void loadList()}
+                    />
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button

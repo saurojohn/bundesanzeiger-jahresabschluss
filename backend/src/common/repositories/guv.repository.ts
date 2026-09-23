@@ -81,6 +81,34 @@ export class GuVRepository {
   }
 
   /**
+   * Wie findByMandantAndJahr, aber zusätzlich mit jüngstem
+   * WORM-PDF-ObjectKey pro Datensatz. Performance: 1 zusätzlicher
+   * grouped query statt N+1.
+   */
+  async findByMandantAndJahrWithWorm(
+    mandantId: string,
+    jahr?: number,
+  ): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null }>> {
+    const guvs = await this.findByMandantAndJahr(mandantId, jahr);
+    if (guvs.length === 0) return [];
+    const wormObjects = await this.prismaService.wormObject.findMany({
+      where: {
+        entityType: 'GUV_PDF',
+        entityId: { in: guvs.map((g) => g.id) },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    const map = new Map<string, string>();
+    for (const w of wormObjects) {
+      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+    }
+    return guvs.map((g) => ({
+      ...g,
+      wormObjectKey: map.get(g.id) ?? null,
+    }));
+  }
+
+  /**
    * Findet eine GuV per ID, mandant-gefiltert, ohne Positionen.
    */
   async findById(id: string, mandantId: string): Promise<GuVWithoutPositionen | null> {

@@ -131,7 +131,7 @@ export class BilanzService {
    */
   async findAll(mandantId: string, user: AuthUser, jahr?: number) {
     this.assertMandantAccess(mandantId, user);
-    return this.bilanzRepository.findByMandantAndJahr(mandantId, jahr);
+    return this.bilanzRepository.findByMandantAndJahrWithWorm(mandantId, jahr);
   }
 
   /**

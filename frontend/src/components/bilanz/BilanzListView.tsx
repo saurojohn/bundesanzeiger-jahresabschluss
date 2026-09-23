@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { BilanzForm } from './BilanzForm';
+import { PdfActions } from '@/components/pdf/PdfActions';
 
 type BilanzPosition = {
   id?: string;
@@ -22,6 +23,7 @@ type BilanzSummary = {
   hinweise: string | null;
   positionen: BilanzPosition[];
   updatedAt: string;
+  wormObjectKey: string | null;
 };
 
 export function BilanzListView() {
@@ -138,6 +140,9 @@ export function BilanzListView() {
                 <th className="px-4 py-3 text-center font-medium text-slate-700">
                   Saldo
                 </th>
+                <th className="px-4 py-3 text-center font-medium text-slate-700">
+                  PDF
+                </th>
                 <th className="px-4 py-3 text-right font-medium text-slate-700">
                   {t('common.actions')}
                 </th>
@@ -181,6 +186,14 @@ export function BilanzListView() {
                     ) : (
                       <span className="inline-flex h-2 w-2 rounded-full bg-red-500" />
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <PdfActions
+                      entityType="bilanz"
+                      entityId={b.id}
+                      wormObjectKey={b.wormObjectKey}
+                      onGenerated={() => void loadList()}
+                    />
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button

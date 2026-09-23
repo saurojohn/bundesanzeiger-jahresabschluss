@@ -235,6 +235,54 @@
       "delete": "Anhang löschen"
     }
   },
+  "pdf": {
+    "generate": "PDF erzeugen",
+    "generating": "PDF wird erzeugt …",
+    "download": "PDF herunterladen",
+    "view": "PDF anzeigen",
+    "preview": "PDF-Vorschau",
+    "generated": "PDF erfolgreich erzeugt",
+    "error": "PDF konnte nicht erzeugt werden",
+    "downloadError": "PDF konnte nicht heruntergeladen werden",
+    "noPdfYet": "Noch kein PDF erzeugt",
+    "wormHint": "WORM-archiviert (10 Jahre, § 147 AO)",
+    "abschluss": {
+      "title": "Jahresabschluss",
+      "subtitle": "Kombinierter Jahresabschluss (Bilanz + GuV + Anhang)",
+      "generateAll": "Jahresabschluss-PDF erzeugen"
+    }
+  },
+  "audit": {
+    "title": "Audit-Log",
+    "subtitle": "Revisionssichere Protokollierung aller Aktionen (§ 147 AO)",
+    "noEntries": "Keine Audit-Einträge für die gewählten Filter",
+    "filters": {
+      "action": "Aktion",
+      "entityType": "Entitätstyp",
+      "from": "Von",
+      "to": "Bis",
+      "apply": "Filter anwenden",
+      "reset": "Filter zurücksetzen"
+    },
+    "actions": {
+      "GENERATE_PDF": "PDF generiert",
+      "READ_PDF": "PDF heruntergeladen",
+      "CREATE": "Erstellt",
+      "UPDATE": "Geändert",
+      "DELETE": "Gelöscht",
+      "LOGIN": "Anmeldung",
+      "LOGOUT": "Abmeldung",
+      "SIGN": "Signiert"
+    },
+    "columns": {
+      "timestamp": "Zeitstempel",
+      "user": "Benutzer",
+      "action": "Aktion",
+      "entity": "Entität",
+      "ipAddress": "IP-Adresse",
+      "mandant": "Mandant"
+    }
+  },
   "errors": {
     "403": {
       "title": "Zugriff verweigert",

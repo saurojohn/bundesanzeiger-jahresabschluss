@@ -59,6 +59,36 @@ export class AnhangRepository {
     });
   }
 
+  /**
+   * Wie findByMandantAndJahr, aber zusätzlich mit jüngstem
+   * WORM-PDF-ObjectKey pro Datensatz. Performance: 1 zusätzlicher
+   * grouped query statt N+1.
+   */
+  async findByMandantAndJahrWithWorm(
+    mandantId: string,
+    jahr?: number,
+  ): Promise<
+    Array<AnhangWithoutAbschnitte & { wormObjectKey: string | null }>
+  > {
+    const anhaenge = await this.findByMandantAndJahr(mandantId, jahr);
+    if (anhaenge.length === 0) return [];
+    const wormObjects = await this.prismaService.wormObject.findMany({
+      where: {
+        entityType: 'ANHANG_PDF',
+        entityId: { in: anhaenge.map((a) => a.id) },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    const map = new Map<string, string>();
+    for (const w of wormObjects) {
+      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+    }
+    return anhaenge.map((a) => ({
+      ...a,
+      wormObjectKey: map.get(a.id) ?? null,
+    }));
+  }
+
   async findById(id: string, mandantId: string): Promise<AnhangWithoutAbschnitte | null> {
     return this.prismaService.anhang.findFirst({
       where: { id, mandantId },

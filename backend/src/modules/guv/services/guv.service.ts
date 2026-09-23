@@ -133,7 +133,7 @@ export class GuVService {
 
   async findAll(mandantId: string, user: AuthUser, jahr?: number) {
     this.assertMandantAccess(mandantId, user);
-    return this.guvRepository.findByMandantAndJahr(mandantId, jahr);
+    return this.guvRepository.findByMandantAndJahrWithWorm(mandantId, jahr);
   }
 
   async findOne(id: string, mandantId: string, user: AuthUser): Promise<GuVEntity> {

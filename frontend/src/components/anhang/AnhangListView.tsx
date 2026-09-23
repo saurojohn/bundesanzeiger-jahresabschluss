@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
+import { PdfActions } from '@/components/pdf/PdfActions';
 
 type AnhangAbschnitt = {
   id?: string;
@@ -20,6 +21,7 @@ type Anhang = {
   bewertungsMethoden: string | null;
   sonstigePflichtangaben: string | null;
   abschnitte: AnhangAbschnitt[];
+  wormObjectKey: string | null;
 };
 
 const STANDARD_TITEL = [
@@ -107,9 +109,9 @@ export function AnhangListView() {
           {anhaenge.map((a) => (
             <div
               key={a.id}
-              className="bg-white rounded-lg border border-slate-200 p-4 flex items-center justify-between"
+              className="bg-white rounded-lg border border-slate-200 p-4 flex items-center justify-between gap-4"
             >
-              <div>
+              <div className="flex-1">
                 <div className="font-medium text-slate-900 num-de">
                   {t('anhang.geschaeftsjahr')}: {a.geschaeftsjahr}
                 </div>
@@ -119,6 +121,12 @@ export function AnhangListView() {
                   {t(`bilanz.status.${a.status}`)}
                 </div>
               </div>
+              <PdfActions
+                entityType="anhang"
+                entityId={a.id}
+                wormObjectKey={a.wormObjectKey}
+                onGenerated={() => void loadList()}
+              />
               <button
                 type="button"
                 onClick={() => setEditingId(a.id)}

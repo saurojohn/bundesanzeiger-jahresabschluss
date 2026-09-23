@@ -85,7 +85,7 @@ export class AnhangService {
 
   async findAll(mandantId: string, user: AuthUser, jahr?: number) {
     this.assertMandantAccess(mandantId, user);
-    return this.anhangRepository.findByMandantAndJahr(mandantId, jahr);
+    return this.anhangRepository.findByMandantAndJahrWithWorm(mandantId, jahr);
   }
 
   async findOne(

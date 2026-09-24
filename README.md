@@ -72,28 +72,32 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 
 ## Roadmap (4 Meilensteine × 3 Monate = 12 Monate)
 
-### M1 (Monate 1-3) — Fundament & Pilot-Mandant
+### M1 (Monate 1-3) — Fundament & Pilot-Mandant ✅
 - Multi-Mandanten-Datenmodell + RBAC (5 Rollen)
 - Bilanz + GuV Eingabeformulare (manuell, ohne DATEV)
 - PDF-Generierung (GoBD-konform) für Kleinstkapitalgesellschaften
 - Auth + Audit-Trail (vollständig, unveränderlich)
+- WORM-Storage (S3 Object Lock, 10 Jahre)
 - Pilot: 1 Steuerberater mit 3 Mandanten
+- **Status**: ✅ Pilot-Ready (Git-Tag `m1-pilot-ready`)
 
-### M2 (Monate 4-6) — BAnz-XML/XBRL & Kanzlei-Modus
-- BAnz XML/XBRL Generator + Schema-Validierung
-- BAnz-Portal-Submission (Test-Sandbox → Produktion)
-- Anhang + Lagebericht
-- Kanzlei-Modus (1 Admin → n Mandanten)
-- Pilot: 1 Kanzlei mit 8-10 Mandanten
+### M2 (Monate 4-6) — BAnz-Submission-Pipeline ✅
+- **Marktanpassung (Sep 2026)**: BAnz-Verlag hat keine externe XML/XBRL-Submission-API mehr
+- E-Bilanz-XBRL-Generator (HGB-Kerntaxonomie v6 / 2025-04-01) für ERiC → Finanzamt (§ 5b EStG)
+- DATEV-Buchungsstapel-Export (EXTF v700+, SKR03/SKR04) für DATEV/Addison
+- Qualifizierte elektronische Signatur (qeS) via P12-Token + signpdf + TSA
+- Frontend-Integration: E-Bilanz/DATEV/Signatur-UI
+- Pilot-Phase-2: 3 Kanzleien + 15 Mandanten
+- **Status**: ✅ Backend + Frontend fertig (Tag `m2-pilot-ready`)
 
-### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss
-- DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping)
-- E-Bilanz / TAXONOMIE für § 11 PublG
-- Konzernabschluss-Modul (Konsolidierung)
+### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss ⏳
+- DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping, reverse direction)
+- E-Bilanz / TAXONOMIE für § 11 PublG (Konzern)
+- Konzernabschluss-Modul (Konsolidierung Mutter-Tochter)
 - Wirtschaftsprüfer-Prüfungsmodul mit Plausibilitätsregeln
 - Pilot: 2 Kanzleien + 1 Konzern
 
-### M4 (Monate 10-12) — White-Label & Cloud-Migration
+### M4 (Monate 10-12) — White-Label & Cloud-Migration ⏳
 - White-Label (Kanzlei-Branding, eigene Domain)
 - Cloud-Migration (Hetzner S3 → S3-Cloud, Multi-VM, K8s optional)
 - Public-API für DATEV-/Add-on-Integrationen
@@ -102,10 +106,10 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 
 ## Erfolgsmetriken (Go-Live-Kriterien)
 
-| Metrik | M1 | M2 | M3 | M4 (GA) |
+| Metrik | M1 ✅ | M2 ✅ | M3 | M4 (GA) |
 |---|---|---|---|---|
-| Aktive Mandanten | 3 | 15 | 50 | 200 |
-| Erfolgreiche BAnz-Einreichungen | 3 | 15 | 50 | 200 |
+| Aktive Mandanten | 3 (Demo) | 15 (Pilot) | 50 | 200 |
+| Erfolgreiche BAnz-Einreichungen | 3 (intern) | 15 (Pilot) | 50 | 200 |
 | DSGVO-/GoBD-Audit | intern | extern | bestanden | rezertifiziert |
 | E2E-Test-Coverage | 60% | 75% | 85% | 90% |
 | Uptime | 99% | 99.5% | 99.9% | 99.95% |

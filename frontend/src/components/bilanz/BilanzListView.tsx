@@ -6,6 +6,7 @@ import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { BilanzForm } from './BilanzForm';
 import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
+import { DatevImportDialog } from '@/components/datev-import/DatevImportDialog';
 
 type BilanzPosition = {
   id?: string;
@@ -34,6 +35,8 @@ export function BilanzListView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [datevImportOpen, setDatevImportOpen] = useState(false);
+  const [datevImportJahr, setDatevImportJahr] = useState<number>(new Date().getFullYear() - 1);
 
   useEffect(() => {
     void loadList();
@@ -99,7 +102,14 @@ export function BilanzListView() {
 
   return (
     <div>
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex justify-between items-center flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setDatevImportOpen(true)}
+          className="rounded-md border border-purple-300 bg-white px-3 py-2 text-sm font-medium text-purple-700 hover:bg-purple-50"
+        >
+          {t('datevImport.action')}
+        </button>
         <button
           type="button"
           onClick={() => setCreatingNew(true)}
@@ -211,6 +221,14 @@ export function BilanzListView() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {datevImportOpen && (
+        <DatevImportDialog
+          geschaeftsjahr={datevImportJahr}
+          onClose={() => setDatevImportOpen(false)}
+          onImported={() => void loadList()}
+        />
       )}
     </div>
   );

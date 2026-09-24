@@ -406,5 +406,74 @@
       "title": "Verbindungsfehler",
       "message": "Die Verbindung zum Server konnte nicht hergestellt werden."
     }
+  },
+  "datevImport": {
+    "title": "DATEV-Buchungsstapel importieren",
+    "action": "DATEV-Import",
+    "description": "Importiert einen DATEV-Buchungsstapel (EXTF_Buchungsstapel.csv) und befüllt Bilanz/GuV automatisch.",
+    "warnings": "Warnungen",
+    "steps": {
+      "upload": "Datei-Upload",
+      "parsePreview": "Parse-Vorschau",
+      "saldovortrag": "Saldovortrag",
+      "mapping": "Mapping-Vorschau",
+      "resolver": "Konflikte lösen",
+      "confirm": "Bestätigen"
+    },
+    "columns": {
+      "konto": "Konto",
+      "datevKonto": "DATEV-Konto",
+      "soll": "Soll",
+      "haben": "Haben",
+      "saldo": "Saldo",
+      "buchungsCount": "Buchungen",
+      "hgbPosition": "HGB-Position",
+      "kategorie": "Kategorie",
+      "confidence": "Konfidenz",
+      "status": "Status"
+    },
+    "status": {
+      "autoMapped": "Auto",
+      "userOverride": "Manuell",
+      "unmapped": "Offen"
+    },
+    "upload": {
+      "description": "Wählen Sie eine EXTF_Buchungsstapel.csv (UTF-8, Semikolon-getrennt) oder ziehen Sie sie in das Feld.",
+      "dropzone": "CSV-Datei hier ablegen",
+      "chooseFile": "Datei auswählen",
+      "selected": "Ausgewählt",
+      "parsing": "Wird geparst …"
+    },
+    "parsePreview": {
+      "header": "Header-Daten",
+      "bookingsCount": "{count} Sachkonten erkannt"
+    },
+    "saldovortrag": {
+      "title": "Saldovortrag pro Sachkonto"
+    },
+    "mapping": {
+      "title": "DATEV-Konto → HGB-Position"
+    },
+    "resolver": {
+      "title": "Manuelle Zuordnung",
+      "description": "{count} Konten konnten nicht automatisch zugeordnet werden. Bitte wählen Sie eine HGB-Position.",
+      "allMapped": "Alle Konten wurden automatisch zugeordnet.",
+      "overwriteExisting": "Bestehende Bilanz/GuV für dieses Geschäftsjahr überschreiben",
+      "import": "Import starten",
+      "importing": "Wird importiert …"
+    },
+    "confirm": {
+      "success": "Import erfolgreich abgeschlossen",
+      "imported": "Importierte Positionen",
+      "skipped": "Übersprungen",
+      "bilanzId": "Bilanz-ID",
+      "guvId": "GuV-ID",
+      "overwriteWarned": "Bestehende Daten wurden überschrieben."
+    },
+    "errors": {
+      "notACsvFile": "Bitte eine .csv-Datei auswählen.",
+      "parseFailed": "CSV konnte nicht geparst werden.",
+      "importFailed": "Import fehlgeschlagen."
+    }
   }
 }

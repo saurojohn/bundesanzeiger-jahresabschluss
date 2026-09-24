@@ -17,6 +17,7 @@ export const AUDIT_ACTIONS = [
   'LOGIN',
   'LOGOUT',
   'EXPORT',
+  'IMPORT',
 ] as const;
 
 export type AuditActionLiteral = (typeof AUDIT_ACTIONS)[number];

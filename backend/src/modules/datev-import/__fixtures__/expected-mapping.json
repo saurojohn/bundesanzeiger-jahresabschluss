@@ -1,0 +1,113 @@
+{
+  "comment": "Expected Mapping-Result für example-buchungsstapel-gmbh.csv",
+  "header": {
+    "formatName": "EXTF_Buchungsstapel",
+    "version": 12,
+    "beraternummer": "12345",
+    "mandantennummer": "67890",
+    "wirtschaftsjahrBeginn": "2026-01-01T00:00:00.000Z",
+    "wirtschaftsjahrEnde": "2026-12-31T00:00:00.000Z",
+    "sachkontenlaenge": 4,
+    "buchungstyp": 1
+  },
+  "buchungsZeilenCount": 22,
+  "saldovortrag": [
+    {
+      "konto": "1800",
+      "soll": 338000,
+      "haben": 338000,
+      "saldo": 0,
+      "buchungsCount": 22
+    },
+    {
+      "konto": "4400",
+      "soll": 150000,
+      "haben": 0,
+      "saldo": 150000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "4410",
+      "soll": 50000,
+      "haben": 0,
+      "saldo": 50000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "5000",
+      "soll": 0,
+      "haben": 12000,
+      "saldo": -12000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "6000",
+      "soll": 0,
+      "haben": 80000,
+      "saldo": -80000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "6020",
+      "soll": 0,
+      "haben": 30000,
+      "saldo": -30000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "6030",
+      "soll": 0,
+      "haben": 15000,
+      "saldo": -15000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "6200",
+      "soll": 0,
+      "haben": 12000,
+      "saldo": -12000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "6310",
+      "soll": 0,
+      "haben": 18000,
+      "saldo": -18000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "7000",
+      "soll": 0,
+      "haben": 5000,
+      "saldo": -5000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "7500",
+      "soll": 0,
+      "haben": 3000,
+      "saldo": -3000,
+      "buchungsCount": 1
+    },
+    {
+      "konto": "7600",
+      "soll": 0,
+      "haben": 8000,
+      "saldo": -8000,
+      "buchungsCount": 1
+    }
+  ],
+  "expectedGuV": [
+    { "kontonummer": "1.", "kategorie": "ERLOES", "betrag": 200000 },
+    { "kontonummer": "5a.", "kategorie": "MATERIAL", "betrag": 12000 },
+    { "kontonummer": "6.", "kategorie": "PERSONAL", "betrag": 125000 },
+    { "kontonummer": "7a.", "kategorie": "ABSCHREIBUNG", "betrag": 12000 },
+    { "kontonummer": "8.", "kategorie": "SONSTIGE", "betrag": 23000 },
+    { "kontonummer": "13.", "kategorie": "FINANZ", "betrag": 3000 },
+    { "kontonummer": "14.", "kategorie": "STEUER", "betrag": 8000 }
+  ],
+  "expectedBilanzPositionen": [],
+  "expectedErgebnis": 16000,
+  "autoMappedCount": 11,
+  "unmappedKonten": []
+}

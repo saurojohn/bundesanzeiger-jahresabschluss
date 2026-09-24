@@ -1,0 +1,4 @@
+"Formatname";"Version";"Berater";"Mandant";"WJ-Beginn";"WJ-Ende";"Sachkontenlaenge";"Datum-von";"Datum-bis";"Bezeichnung";"Diktat";"Buchungstyp";"Rechnungslegungszweck"
+"WRONG_FORMAT";"12";"12345";"67890";"01.01.2026";"31.12.2026";"4";"01.01.2026";"31.12.2026";"Falscher Formatname";"Buchhaltung";"1";"00"
+"Umsatz";"SH";"WKZ";"Kurs";"Basis";"BWKZ";"Konto";"Gegenkonto";"BUSchluessel";"Belegdatum";"Belegfeld1";"Belegfeld2";"Skonto";"Buchungstext";"Postensperre";"Adressnummer";"PartnerBLZ"
+"100,00";"S";"EUR";"";"";"";"1800";"4400";"0";"3112";"TEST";"";"";"Test-Buchung";"0";"";""

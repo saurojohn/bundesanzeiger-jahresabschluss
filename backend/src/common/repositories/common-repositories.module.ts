@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CommonModule } from '../common.module';
 import { BilanzRepository } from './bilanz.repository';
 import { GuVRepository } from './guv.repository';
 import { AnhangRepository } from './anhang.repository';
@@ -14,6 +15,7 @@ import { KonsolidierungRepository } from './konsolidierung.repository';
  * daher reicht hier ein einfaches providers-Array.
  */
 @Module({
+  imports: [CommonModule],
   providers: [
     BilanzRepository,
     GuVRepository,

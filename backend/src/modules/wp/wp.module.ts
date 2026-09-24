@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { CommonModule } from '../../common/common.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { WPController } from './controllers/wp.controller';
 import { IdwPruefungService } from './services/idw-pruefung.service';
@@ -17,10 +18,11 @@ import { WPRepository } from './wp.repository';
  *
  * Abhängigkeiten:
  *   - AuditModule (für AuditService)
+ *   - CommonModule (für Pagination + Cache)
  *   - PrismaModule (global)
  */
 @Module({
-  imports: [AuditModule, PrismaModule],
+  imports: [AuditModule, CommonModule, PrismaModule],
   controllers: [WPController],
   providers: [WPRepository, IdwPruefungService, WPNotizService, WPPruefungService],
   exports: [WPRepository, IdwPruefungService, WPNotizService, WPPruefungService],

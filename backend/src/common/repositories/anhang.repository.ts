@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CursorCodec } from '../dto/pagination.dto';
 
 /**
  * Typen für Anhang-spezifische Eingaben.
@@ -87,6 +88,73 @@ export class AnhangRepository {
       ...a,
       wormObjectKey: map.get(a.id) ?? null,
     }));
+  }
+
+  /**
+   * Cursor-paginierte Variante für Performance-Skalierung (M3+).
+   *
+   * - Sortierung: `updatedAt DESC` (Tiebreaker: id ASC)
+   * - Filter: mandantId (+ optional Jahr)
+   */
+  async findByMandantPaginated(args: {
+    mandantId: string;
+    cursor?: string;
+    pageSize: number;
+    jahr?: number;
+  }): Promise<
+    Array<AnhangWithoutAbschnitte & { wormObjectKey: string | null }>
+  > {
+    const where: Prisma.AnhangWhereInput = {
+      mandantId: args.mandantId,
+      ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
+    };
+
+    if (args.cursor) {
+      const { sortValue } = CursorCodec.decode(args.cursor);
+      const cursorDate = new Date(sortValue);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        where.OR = [{ updatedAt: { lt: cursorDate } }];
+      }
+    }
+
+    const anhaenge = await this.prismaService.anhang.findMany({
+      where,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      take: args.pageSize + 1,
+    });
+
+    if (anhaenge.length === 0) return [];
+    const wormObjects = await this.prismaService.wormObject.findMany({
+      where: {
+        entityType: 'ANHANG_PDF',
+        entityId: { in: anhaenge.map((a) => a.id) },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    const map = new Map<string, string>();
+    for (const w of wormObjects) {
+      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+    }
+    return anhaenge.map((a) => ({
+      ...a,
+      wormObjectKey: map.get(a.id) ?? null,
+    }));
+  }
+
+  /**
+   * Anzahl Anhang pro Mandant (optional Jahr-Filter). Parallel zum
+   * `findByMandantPaginated` via `Promise.all`.
+   */
+  async countByMandant(args: {
+    mandantId: string;
+    jahr?: number;
+  }): Promise<number> {
+    return this.prismaService.anhang.count({
+      where: {
+        mandantId: args.mandantId,
+        ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
+      },
+    });
   }
 
   async findById(id: string, mandantId: string): Promise<AnhangWithoutAbschnitte | null> {

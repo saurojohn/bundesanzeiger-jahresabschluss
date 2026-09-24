@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { PaginationService } from '../../../common/services/pagination.service';
+import { type PaginatedResult } from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { WP_NOTIZ_ACK_STATUS, type WPNotizStatus } from '../constants/wp-status.constants';
@@ -171,15 +173,22 @@ export class WPNotizService {
 
   /**
    * Liste Notizen für eine Bilanz / GuV (mandant-gefiltert).
+   *
+   * Optionale Cursor-Pagination via `cursor` + `pageSize`.
+   * Ohne diese Parameter liefert die Methode weiterhin ein Array
+   * (Backwards-Compat) — intern via `findNotizenPaginated` mit
+   * sehr hohem Limit (= effektiv alle).
    */
   async listNotizen(
     args: {
       bilanzId?: string;
       guvId?: string;
       status?: WPNotizStatus;
+      cursor?: string;
+      pageSize?: number;
     },
     user: AuthUser,
-  ): Promise<WPNotizEntity[]> {
+  ): Promise<WPNotizEntity[] | PaginatedResult<WPNotizEntity>> {
     if (!args.bilanzId && !args.guvId) {
       throw new BadRequestException(
         'Mindestens bilanzId oder guvId muss gesetzt sein',
@@ -202,6 +211,32 @@ export class WPNotizService {
       this.assertMandantAccess(mandantId, user);
     }
 
+    // Modern: Cursor-Pagination
+    if (args.cursor !== undefined || args.pageSize !== undefined) {
+      const pageSize = Math.min(args.pageSize ?? 20, 100);
+      const [items, total] = await Promise.all([
+        this.wpRepository.findNotizenPaginated({
+          bilanzId: args.bilanzId,
+          guvId: args.guvId,
+          status: args.status,
+          cursor: args.cursor,
+          pageSize,
+        }),
+        this.wpRepository.countNotizen({
+          bilanzId: args.bilanzId,
+          guvId: args.guvId,
+          status: args.status,
+        }),
+      ]);
+      return PaginationService.buildResponse(
+        items,
+        total,
+        pageSize,
+        (item) => item.createdAt.toISOString(),
+      );
+    }
+
+    // Legacy: alle Notizen (typischerweise < 20 pro Bilanz)
     return this.wpRepository.findNotizen({
       bilanzId: args.bilanzId,
       guvId: args.guvId,

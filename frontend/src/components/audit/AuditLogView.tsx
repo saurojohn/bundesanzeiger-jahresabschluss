@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
+import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type AuditEntry = {
   id: string;
@@ -20,6 +21,15 @@ type AuditFilter = {
   from?: string;
   to?: string;
 };
+
+type AuditListResponse =
+  | { items: AuditEntry[]; total: number; page: number; pageSize: number }
+  | {
+      items: AuditEntry[];
+      nextCursor: string | null;
+      total: number;
+      hasMore: boolean;
+    };
 
 const ACTION_KEYS = [
   'GENERATE_PDF',
@@ -42,10 +52,17 @@ const ENTITY_KEYS = [
   'WormObject',
 ];
 
+const PAGE_SIZE = 50;
+
 export function AuditLogView() {
   const t = useTranslations();
+  const paginationLabels = usePaginationLabels('audit');
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState<number>(0);
+  const [hasMore, setHasMore] = useState(false);
   const [filter, setFilter] = useState<AuditFilter>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -67,15 +84,69 @@ export function AuditLogView() {
       if (filter.entityType) params.set('entityType', filter.entityType);
       if (filter.from) params.set('from', filter.from);
       if (filter.to) params.set('to', filter.to);
-      const result = await apiFetch<{ items: AuditEntry[]; total: number }>(
+      params.set('pageSize', String(PAGE_SIZE));
+      const result = await apiFetch<AuditListResponse>(
         `/audit?${params.toString()}`,
         { accessToken: token },
       );
-      setEntries(result.items);
+      applyResponse(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.network.message'));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMore(cursor: string) {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const token = getAccessToken();
+      const mandantId = getActiveMandantId();
+      if (!token) return;
+      const params = new URLSearchParams();
+      if (mandantId) params.set('mandantId', mandantId);
+      if (filter.action) params.set('action', filter.action);
+      if (filter.entityType) params.set('entityType', filter.entityType);
+      if (filter.from) params.set('from', filter.from);
+      if (filter.to) params.set('to', filter.to);
+      params.set('pageSize', String(PAGE_SIZE));
+      params.set('cursor', cursor);
+      const result = await apiFetch<AuditListResponse>(
+        `/audit?${params.toString()}`,
+        { accessToken: token },
+      );
+      appendResponse(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function applyResponse(data: AuditListResponse) {
+    setEntries(data.items);
+    if ('hasMore' in data) {
+      setTotal(data.total);
+      setHasMore(data.hasMore);
+      setNextCursor(data.nextCursor);
+    } else {
+      setTotal(data.total);
+      setHasMore(data.page * data.pageSize < data.total);
+      setNextCursor(null);
+    }
+  }
+
+  function appendResponse(data: AuditListResponse) {
+    setEntries((prev) => [...prev, ...data.items]);
+    if ('hasMore' in data) {
+      setTotal(data.total);
+      setHasMore(data.hasMore);
+      setNextCursor(data.nextCursor);
+    } else {
+      setHasMore(false);
+      setNextCursor(null);
     }
   }
 
@@ -253,6 +324,19 @@ export function AuditLogView() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Pagination (M3+ Performance) */}
+      {!loading && entries.length > 0 && (
+        <Pagination
+          hasMore={hasMore}
+          nextCursor={nextCursor}
+          total={total}
+          loadedCount={entries.length}
+          onLoadMore={(cursor) => void loadMore(cursor)}
+          loading={loadingMore}
+          labels={paginationLabels}
+        />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CursorCodec } from '../../common/dto/pagination.dto';
 
 /**
  * Repository für WP-spezifische Persistenz.
@@ -70,6 +71,53 @@ export class WPRepository {
         status: filter.status ?? undefined,
       },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Cursor-paginierte Notiz-Liste (M3+ Performance-Skalierung).
+   *
+   * Sortierung: createdAt DESC (Tiebreaker: id ASC)
+   */
+  async findNotizenPaginated(args: {
+    bilanzId?: string;
+    guvId?: string;
+    status?: string;
+    cursor?: string;
+    pageSize: number;
+  }): Promise<WPNotizEntity[]> {
+    const where: Prisma.WPNotizWhereInput = {
+      bilanzId: args.bilanzId ?? undefined,
+      guvId: args.guvId ?? undefined,
+      status: args.status ?? undefined,
+    };
+
+    if (args.cursor) {
+      const { sortValue } = CursorCodec.decode(args.cursor);
+      const cursorDate = new Date(sortValue);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        where.OR = [{ createdAt: { lt: cursorDate } }];
+      }
+    }
+
+    return this.prisma.wPNotiz.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      take: args.pageSize + 1,
+    });
+  }
+
+  async countNotizen(args: {
+    bilanzId?: string;
+    guvId?: string;
+    status?: string;
+  }): Promise<number> {
+    return this.prisma.wPNotiz.count({
+      where: {
+        bilanzId: args.bilanzId ?? undefined,
+        guvId: args.guvId ?? undefined,
+        status: args.status ?? undefined,
+      },
     });
   }
 

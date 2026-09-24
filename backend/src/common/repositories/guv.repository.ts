@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CursorCodec } from '../dto/pagination.dto';
 
 /**
  * Typen für GuV-spezifische Eingaben.
@@ -106,6 +107,72 @@ export class GuVRepository {
       ...g,
       wormObjectKey: map.get(g.id) ?? null,
     }));
+  }
+
+  /**
+   * Cursor-paginierte Variante für Performance-Skalierung (M3+).
+   *
+   * - Sortierung: `updatedAt DESC` (Tiebreaker: id ASC)
+   * - Filter: mandantId (+ optional Jahr)
+   * - Cursor: opak base64-codiert (id + updatedAt-ISO)
+   */
+  async findByMandantPaginated(args: {
+    mandantId: string;
+    cursor?: string;
+    pageSize: number;
+    jahr?: number;
+  }): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null }>> {
+    const where: Prisma.GuVWhereInput = {
+      mandantId: args.mandantId,
+      ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
+    };
+
+    if (args.cursor) {
+      const { sortValue } = CursorCodec.decode(args.cursor);
+      const cursorDate = new Date(sortValue);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        where.OR = [{ updatedAt: { lt: cursorDate } }];
+      }
+    }
+
+    const guvs = await this.prismaService.guV.findMany({
+      where,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      take: args.pageSize + 1,
+    });
+
+    if (guvs.length === 0) return [];
+    const wormObjects = await this.prismaService.wormObject.findMany({
+      where: {
+        entityType: 'GUV_PDF',
+        entityId: { in: guvs.map((g) => g.id) },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    const map = new Map<string, string>();
+    for (const w of wormObjects) {
+      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+    }
+    return guvs.map((g) => ({
+      ...g,
+      wormObjectKey: map.get(g.id) ?? null,
+    }));
+  }
+
+  /**
+   * Anzahl GuV pro Mandant (optional Jahr-Filter). Parallel zum
+   * `findByMandantPaginated` via `Promise.all`.
+   */
+  async countByMandant(args: {
+    mandantId: string;
+    jahr?: number;
+  }): Promise<number> {
+    return this.prismaService.guV.count({
+      where: {
+        mandantId: args.mandantId,
+        ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
+      },
+    });
   }
 
   /**

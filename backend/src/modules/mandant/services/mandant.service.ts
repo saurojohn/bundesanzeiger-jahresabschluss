@@ -6,6 +6,9 @@ import {
 } from '@nestjs/common';
 import { Prisma, Mandant } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { InMemoryCacheService } from '../../../common/cache/in-memory-cache.service';
+import { PaginationService } from '../../../common/services/pagination.service';
+import { CursorCodec, type PaginatedResult } from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
 import { CreateMandantDto } from '../dto/create-mandant.dto';
 import { UpdateMandantDto } from '../dto/update-mandant.dto';
@@ -30,6 +33,7 @@ export class MandantService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly cache: InMemoryCacheService,
   ) {}
 
   /**
@@ -79,6 +83,9 @@ export class MandantService {
       userAgent: context.userAgent ?? null,
     });
 
+    // Cache invalidieren: neue Mandant-Config → alle Cache-Keys pro Mandant entfernen.
+    this.cache.invalidate(`mandant:${mandant.id}`);
+
     return mandant;
   }
 
@@ -89,25 +96,73 @@ export class MandantService {
    * kanzlei-übergreifend, aber hier auf die Kanlei des ersten
    * Mandanten beschränkt).
    */
-  async findAll(user: AuthUser): Promise<Mandant[]> {
-    if (user.globalRole === 'SYSTEM_ADMIN') {
-      // Plattform-Admin sieht alle Mandanten.
-      return this.prisma.mandant.findMany({ orderBy: { firmenname: 'asc' } });
+  async findAll(
+    user: AuthUser,
+    pagination?: {
+      cursor?: string;
+      pageSize?: number;
+      kanzleiId?: string;
+    },
+  ): Promise<PaginatedResult<Mandant> | Mandant[]> {
+    const pageSize = Math.min(pagination?.pageSize ?? 100, 100);
+    const where: Prisma.MandantWhereInput =
+      user.globalRole === 'SYSTEM_ADMIN'
+        ? pagination?.kanzleiId
+          ? { kanzleiId: pagination.kanzleiId }
+          : {}
+        : { id: { in: user.mandanten.map((m) => m.id) } };
+
+    // SYSTEM_ADMIN mit kleinem Pilot-Scope (< pageSize) bekommt die volle Liste.
+    if (
+      user.globalRole === 'SYSTEM_ADMIN' &&
+      !pagination?.cursor &&
+      pagination?.pageSize === undefined
+    ) {
+      return this.prisma.mandant.findMany({
+        where,
+        orderBy: { firmenname: 'asc' },
+      });
     }
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (accessibleMandantIds.length === 0) return [];
-    return this.prisma.mandant.findMany({
-      where: { id: { in: accessibleMandantIds } },
-      orderBy: { firmenname: 'asc' },
-    });
+
+    const cursorWhere: Prisma.MandantWhereInput = {};
+    if (pagination?.cursor) {
+      const { sortValue } = CursorCodec.decode(pagination.cursor);
+      cursorWhere.OR = [{ firmenname: { lt: sortValue } }];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.mandant.findMany({
+        where: { ...where, ...cursorWhere },
+        orderBy: [{ firmenname: 'asc' }, { id: 'asc' }],
+        take: pageSize + 1,
+      }),
+      this.prisma.mandant.count({ where }),
+    ]);
+
+    return PaginationService.buildResponse(
+      items,
+      total,
+      pageSize,
+      (item) => item.firmenname,
+    );
   }
 
   /**
    * Einzelner Mandant mit Zugriffsprüfung.
+   *
+   * Cached mit TTL 5min (Mandant-Config ändert sich selten). Cache
+   * wird bei UPDATE/DELETE invalidiert.
    */
   async findOne(id: string, user: AuthUser): Promise<Mandant> {
     this.assertMandantAccess(id, user);
-    const mandant = await this.prisma.mandant.findUnique({ where: { id } });
+    const mandant = await this.cache.memoize(
+      `mandant:${id}`,
+      5 * 60_000,
+      async () => {
+        const found = await this.prisma.mandant.findUnique({ where: { id } });
+        return found;
+      },
+    );
     if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
     return mandant;
   }
@@ -157,6 +212,9 @@ export class MandantService {
       userAgent: context.userAgent ?? null,
     });
 
+    // Cache invalidieren: Mandant-Config hat sich geändert.
+    this.cache.invalidate(`mandant:${updated.id}`);
+
     return updated;
   }
 
@@ -187,6 +245,9 @@ export class MandantService {
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,
     });
+
+    // Cache invalidieren.
+    this.cache.invalidate(`mandant:${before.id}`);
   }
 
   /**

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { PdfActions } from '@/components/pdf/PdfActions';
+import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type GuvPosition = {
   id?: string;
@@ -29,10 +30,26 @@ type Guv = {
   wormObjectKey: string | null;
 };
 
+type GuvListResponse =
+  | Guv[]
+  | {
+      items: Guv[];
+      nextCursor: string | null;
+      total: number;
+      hasMore: boolean;
+    };
+
+const PAGE_SIZE = 20;
+
 export function GuvListView() {
   const t = useTranslations();
+  const paginationLabels = usePaginationLabels('guv');
   const [guvs, setGuvs] = useState<Guv[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState<number>(0);
+  const [hasMore, setHasMore] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,16 +65,63 @@ export function GuvListView() {
       const mandantId = getActiveMandantId();
       const token = getAccessToken();
       if (!mandantId || !token) return;
-      const data = await apiFetch<Guv[]>(
-        `/guv?mandantId=${mandantId}`,
+      const data = await apiFetch<GuvListResponse>(
+        `/guv?mandantId=${mandantId}&pageSize=${PAGE_SIZE}`,
         { accessToken: token },
       );
-      setGuvs(data);
+      applyResponse(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.network.message'));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadMore(cursor: string) {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const mandantId = getActiveMandantId();
+      const token = getAccessToken();
+      if (!mandantId || !token) return;
+      const data = await apiFetch<GuvListResponse>(
+        `/guv?mandantId=${mandantId}&pageSize=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`,
+        { accessToken: token },
+      );
+      appendResponse(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function applyResponse(data: GuvListResponse) {
+    if (Array.isArray(data)) {
+      setGuvs(data);
+      setTotal(data.length);
+      setHasMore(false);
+      setNextCursor(null);
+      return;
+    }
+    setGuvs(data.items);
+    setTotal(data.total);
+    setHasMore(data.hasMore);
+    setNextCursor(data.nextCursor);
+  }
+
+  function appendResponse(data: GuvListResponse) {
+    if (Array.isArray(data)) {
+      setGuvs((prev) => [...prev, ...data]);
+      setHasMore(false);
+      setNextCursor(null);
+      return;
+    }
+    setGuvs((prev) => [...prev, ...data.items]);
+    setTotal(data.total);
+    setHasMore(data.hasMore);
+    setNextCursor(data.nextCursor);
   }
 
   if (creatingNew || editingId) {
@@ -173,6 +237,19 @@ export function GuvListView() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Pagination (M3+ Performance) */}
+      {!loading && guvs.length > 0 && (
+        <Pagination
+          hasMore={hasMore}
+          nextCursor={nextCursor}
+          total={total}
+          loadedCount={guvs.length}
+          onLoadMore={(cursor) => void loadMore(cursor)}
+          loading={loadingMore}
+          labels={paginationLabels}
+        />
       )}
     </div>
   );

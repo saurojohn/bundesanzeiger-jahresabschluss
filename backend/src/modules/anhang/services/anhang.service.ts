@@ -6,7 +6,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { AnhangRepository, type AnhangEntity } from '../../../common/repositories/anhang.repository';
+import {
+  AnhangRepository,
+  type AnhangEntity,
+  type AnhangWithoutAbschnitte,
+} from '../../../common/repositories/anhang.repository';
+import { PaginationService } from '../../../common/services/pagination.service';
+import {
+  type LegacyPaginatedResult,
+  type PaginatedResult,
+} from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import {
@@ -14,6 +23,10 @@ import {
 } from '../constants/anhang.constants';
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
+
+export type AnhangSummaryWithWorm = AnhangWithoutAbschnitte & {
+  wormObjectKey: string | null;
+};
 
 export interface AnhangServiceContext {
   ip?: string | null;
@@ -83,9 +96,99 @@ export class AnhangService {
     return anhang;
   }
 
-  async findAll(mandantId: string, user: AuthUser, jahr?: number) {
+  async findAll(
+    mandantId: string,
+    user: AuthUser,
+    jahr?: number,
+    pagination?: {
+      cursor?: string;
+      pageSize?: number;
+      page?: number;
+    },
+  ): Promise<
+    | Array<AnhangSummaryWithWorm>
+    | PaginatedResult<AnhangSummaryWithWorm>
+    | LegacyPaginatedResult<AnhangSummaryWithWorm>
+  > {
     this.assertMandantAccess(mandantId, user);
+
+    if (pagination?.page !== undefined && pagination?.cursor === undefined) {
+      return this.findAllLegacy({
+        mandantId,
+        user,
+        jahr,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      });
+    }
+
+    if (pagination?.cursor !== undefined || pagination?.pageSize !== undefined) {
+      return this.findAllPaginated({
+        mandantId,
+        user,
+        jahr,
+        cursor: pagination.cursor,
+        pageSize: pagination.pageSize,
+      });
+    }
+
     return this.anhangRepository.findByMandantAndJahrWithWorm(mandantId, jahr);
+  }
+
+  /**
+   * Cursor-paginierte Anhang-Liste (M3+ Performance).
+   */
+  async findAllPaginated(args: {
+    mandantId: string;
+    user: AuthUser;
+    jahr?: number;
+    cursor?: string;
+    pageSize?: number;
+  }): Promise<PaginatedResult<AnhangSummaryWithWorm>> {
+    this.assertMandantAccess(args.mandantId, args.user);
+    const pageSize = Math.min(args.pageSize ?? 20, 100);
+    const [items, total] = await Promise.all([
+      this.anhangRepository.findByMandantPaginated({
+        mandantId: args.mandantId,
+        cursor: args.cursor,
+        pageSize,
+        jahr: args.jahr,
+      }),
+      this.anhangRepository.countByMandant({
+        mandantId: args.mandantId,
+        jahr: args.jahr,
+      }),
+    ]);
+    return PaginationService.buildResponse(
+      items,
+      total,
+      pageSize,
+      (item) => item.updatedAt.toISOString(),
+    );
+  }
+
+  /**
+   * Legacy Offset-Pagination (Backwards-Compat).
+   */
+  async findAllLegacy(args: {
+    mandantId: string;
+    user: AuthUser;
+    jahr?: number;
+    page: number;
+    pageSize?: number;
+  }): Promise<LegacyPaginatedResult<AnhangSummaryWithWorm>> {
+    this.assertMandantAccess(args.mandantId, args.user);
+    const pageSize = Math.min(args.pageSize ?? 20, 100);
+    const offset = (args.page - 1) * pageSize;
+    const [items, total] = await Promise.all([
+      this.anhangRepository.findByMandantAndJahrWithWorm(args.mandantId, args.jahr),
+      this.anhangRepository.countByMandant({
+        mandantId: args.mandantId,
+        jahr: args.jahr,
+      }),
+    ]);
+    const sliced = items.slice(offset, offset + pageSize);
+    return PaginationService.buildLegacyResponse(sliced, total, args.page, pageSize);
   }
 
   async findOne(

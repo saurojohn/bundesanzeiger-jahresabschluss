@@ -142,6 +142,12 @@
     "noBilanz": "Noch keine Bilanz für diesen Mandanten erfasst",
     "geschaeftsjahr": "Geschäftsjahr",
     "hinweise": "Hinweise",
+    "pagination": {
+      "loadMore": "Weitere Bilanzen laden",
+      "loading": "Lade weitere Bilanzen…",
+      "allLoaded": "Alle {count} Bilanzen geladen",
+      "showing": "{shown} von {total} angezeigt"
+    },
     "fields": {
       "kontonummer": "Kontonummer",
       "bezeichnung": "Bezeichnung",
@@ -183,6 +189,12 @@
     "GKV": "Gesamtkostenverfahren (§ 275 Abs. 2 HGB)",
     "UKV": "Umsatzkostenverfahren (§ 275 Abs. 1 HGB)",
     "geschaeftsjahr": "Geschäftsjahr",
+    "pagination": {
+      "loadMore": "Weitere GuVs laden",
+      "loading": "Lade weitere GuVs…",
+      "allLoaded": "Alle {count} GuVs geladen",
+      "showing": "{shown} von {total} angezeigt"
+    },
     "fields": {
       "bezeichnung": "Bezeichnung",
       "betragVorjahr": "Betrag Vorjahr (€)",
@@ -210,6 +222,12 @@
     "editAnhang": "Anhang bearbeiten",
     "noAnhang": "Noch kein Anhang erfasst",
     "geschaeftsjahr": "Geschäftsjahr",
+    "pagination": {
+      "loadMore": "Weitere Anhänge laden",
+      "loading": "Lade weitere Anhänge…",
+      "allLoaded": "Alle {count} Anhänge geladen",
+      "showing": "{shown} von {total} angezeigt"
+    },
     "fields": {
       "titel": "Titel des Abschnitts",
       "inhalt": "Inhalt",
@@ -371,6 +389,12 @@
       "to": "Bis",
       "apply": "Filter anwenden",
       "reset": "Filter zurücksetzen"
+    },
+    "pagination": {
+      "loadMore": "Weitere Einträge laden",
+      "loading": "Lade weitere Einträge…",
+      "allLoaded": "Alle {count} Einträge geladen",
+      "showing": "{shown} von {total} angezeigt"
     },
     "actions": {
       "GENERATE_PDF": "PDF generiert",
@@ -613,6 +637,12 @@
       "placeholder": "Notiz-Text (max. 500 Zeichen)…",
       "emptyText": "Noch keine WP-Notizen vorhanden.",
       "createError": "WP-Notiz konnte nicht erstellt werden.",
+      "pagination": {
+        "loadMore": "Weitere Notizen laden",
+        "loading": "Lade weitere Notizen…",
+        "allLoaded": "Alle {count} Notizen geladen",
+        "showing": "{shown} von {total} angezeigt"
+      },
       "statusError": "WP-Notiz-Status konnte nicht aktualisiert werden.",
       "acknowledgedBy": "Bestätigt von",
       "selfAckBlocked": "Self-Acknowledgement verboten: Sie können Ihre eigenen Notizen nicht bestätigen."

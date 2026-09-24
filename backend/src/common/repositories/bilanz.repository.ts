@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CursorCodec } from '../dto/pagination.dto';
 
 /**
  * Typen für Bilanz-spezifische Eingaben.
@@ -98,6 +99,77 @@ export class BilanzRepository {
       ...b,
       wormObjectKey: map.get(b.id) ?? null,
     }));
+  }
+
+  /**
+   * Cursor-paginierte Variante für Performance-Skalierung (M3+).
+   *
+   * - Sortierung: `updatedAt DESC` (Tiebreaker: id ASC)
+   * - Filter: mandantId (+ optional Jahr)
+   * - Cursor: opak base64-codiert (id + updatedAt-ISO)
+   * - Rückgabe: max `pageSize + 1` Items (+ 1 zur hasMore-Detection)
+   */
+  async findByMandantPaginated(args: {
+    mandantId: string;
+    cursor?: string;
+    pageSize: number;
+    jahr?: number;
+  }): Promise<
+    Array<BilanzWithoutPositionen & { wormObjectKey: string | null }>
+  > {
+    const where: Prisma.BilanzWhereInput = {
+      mandantId: args.mandantId,
+      ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
+    };
+
+    if (args.cursor) {
+      const { sortValue } = CursorCodec.decode(args.cursor);
+      const cursorDate = new Date(sortValue);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        where.OR = [{ updatedAt: { lt: cursorDate } }];
+      }
+    }
+
+    const bilanzen = await this.prismaService.bilanz.findMany({
+      where,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      take: args.pageSize + 1,
+    });
+
+    if (bilanzen.length === 0) return [];
+    // WORM-ObjectKeys in einem einzigen Query nachladen (kein N+1).
+    const wormObjects = await this.prismaService.wormObject.findMany({
+      where: {
+        entityType: 'BILANZ_PDF',
+        entityId: { in: bilanzen.map((b) => b.id) },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    const map = new Map<string, string>();
+    for (const w of wormObjects) {
+      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+    }
+    return bilanzen.map((b) => ({
+      ...b,
+      wormObjectKey: map.get(b.id) ?? null,
+    }));
+  }
+
+  /**
+   * Anzahl Bilanzen pro Mandant (optional Jahr-Filter).
+   *
+   * Parallel zum `findByMandantPaginated` ausgeführt via `Promise.all`.
+   */
+  async countByMandant(args: {
+    mandantId: string;
+    jahr?: number;
+  }): Promise<number> {
+    return this.prismaService.bilanz.count({
+      where: {
+        mandantId: args.mandantId,
+        ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
+      },
+    });
   }
 
   /**

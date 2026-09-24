@@ -103,9 +103,15 @@ export class WPController {
     @Query('bilanzId') bilanzId: string | undefined,
     @Query('guvId') guvId: string | undefined,
     @Query('status') status: string | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @Query('pageSize') pageSizeRaw: string | undefined,
     @CurrentUser() user: AuthUser,
-  ): Promise<WPNotizDto[]> {
-    const notizen = await this.wpNotizService.listNotizen(
+  ): Promise<unknown> {
+    const pageSize =
+      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
+        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
+        : undefined;
+    const result = await this.wpNotizService.listNotizen(
       {
         bilanzId,
         guvId,
@@ -116,10 +122,19 @@ export class WPController {
           status === 'NEEDS_REVISION'
             ? status
             : undefined,
+        cursor,
+        pageSize,
       },
       user,
     );
-    return notizen.map(toNotizDto);
+    // Backwards-Compat: ohne Pagination = Array, mit = PaginatedResult
+    if (Array.isArray(result)) {
+      return result.map(toNotizDto);
+    }
+    return {
+      ...result,
+      items: result.items.map(toNotizDto),
+    };
   }
 
   // ===========================================================================

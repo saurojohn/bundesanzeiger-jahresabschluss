@@ -44,7 +44,10 @@ export class AnhangController {
   }
 
   /**
-   * GET /api/anhang?mandantId=&geschaeftsjahr=
+   * GET /api/anhang?mandantId=&geschaeftsjahr=&cursor=&pageSize=&page=
+   *
+   * Cursor-Pagination: `cursor` + `pageSize` (1..100, default 20).
+   * Legacy Offset: `page` + `pageSize`.
    */
   @Get()
   @RequireMandant()
@@ -52,13 +55,28 @@ export class AnhangController {
   findAll(
     @Query('mandantId') mandantId: string,
     @Query('geschaeftsjahr') geschaeftsjahr: string | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @Query('pageSize') pageSizeRaw: string | undefined,
+    @Query('page') pageRaw: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
     const jahr =
       typeof geschaeftsjahr === 'string' && geschaeftsjahr.length > 0
         ? Number.parseInt(geschaeftsjahr, 10)
         : undefined;
-    return this.anhangService.findAll(mandantId, user, jahr);
+    const pageSize =
+      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
+        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
+        : undefined;
+    const page =
+      typeof pageRaw === 'string' && pageRaw.length > 0
+        ? Number.parseInt(pageRaw, 10)
+        : undefined;
+    return this.anhangService.findAll(mandantId, user, jahr, {
+      cursor,
+      pageSize,
+      page,
+    });
   }
 
   /**

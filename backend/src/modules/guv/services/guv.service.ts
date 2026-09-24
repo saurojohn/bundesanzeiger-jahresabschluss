@@ -6,7 +6,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { GuVRepository, type GuVEntity } from '../../../common/repositories/guv.repository';
+import {
+  GuVRepository,
+  type GuVEntity,
+  type GuVWithoutPositionen,
+} from '../../../common/repositories/guv.repository';
+import { PaginationService } from '../../../common/services/pagination.service';
+import {
+  type LegacyPaginatedResult,
+  type PaginatedResult,
+} from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import {
@@ -21,6 +30,10 @@ import {
   CreateGuVResponse,
   GuVValidierungDto,
 } from '../dto/guv-validierung.dto';
+
+export type GuVSummaryWithWorm = GuVWithoutPositionen & {
+  wormObjectKey: string | null;
+};
 
 export interface GuVServiceContext {
   ip?: string | null;
@@ -131,9 +144,99 @@ export class GuVService {
     };
   }
 
-  async findAll(mandantId: string, user: AuthUser, jahr?: number) {
+  async findAll(
+    mandantId: string,
+    user: AuthUser,
+    jahr?: number,
+    pagination?: {
+      cursor?: string;
+      pageSize?: number;
+      page?: number;
+    },
+  ): Promise<
+    | Array<GuVSummaryWithWorm>
+    | PaginatedResult<GuVSummaryWithWorm>
+    | LegacyPaginatedResult<GuVSummaryWithWorm>
+  > {
     this.assertMandantAccess(mandantId, user);
+
+    if (pagination?.page !== undefined && pagination?.cursor === undefined) {
+      return this.findAllLegacy({
+        mandantId,
+        user,
+        jahr,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      });
+    }
+
+    if (pagination?.cursor !== undefined || pagination?.pageSize !== undefined) {
+      return this.findAllPaginated({
+        mandantId,
+        user,
+        jahr,
+        cursor: pagination.cursor,
+        pageSize: pagination.pageSize,
+      });
+    }
+
     return this.guvRepository.findByMandantAndJahrWithWorm(mandantId, jahr);
+  }
+
+  /**
+   * Cursor-paginierte GuV-Liste (M3+ Performance).
+   */
+  async findAllPaginated(args: {
+    mandantId: string;
+    user: AuthUser;
+    jahr?: number;
+    cursor?: string;
+    pageSize?: number;
+  }): Promise<PaginatedResult<GuVSummaryWithWorm>> {
+    this.assertMandantAccess(args.mandantId, args.user);
+    const pageSize = Math.min(args.pageSize ?? 20, 100);
+    const [items, total] = await Promise.all([
+      this.guvRepository.findByMandantPaginated({
+        mandantId: args.mandantId,
+        cursor: args.cursor,
+        pageSize,
+        jahr: args.jahr,
+      }),
+      this.guvRepository.countByMandant({
+        mandantId: args.mandantId,
+        jahr: args.jahr,
+      }),
+    ]);
+    return PaginationService.buildResponse(
+      items,
+      total,
+      pageSize,
+      (item) => item.updatedAt.toISOString(),
+    );
+  }
+
+  /**
+   * Legacy Offset-Pagination (Backwards-Compat).
+   */
+  async findAllLegacy(args: {
+    mandantId: string;
+    user: AuthUser;
+    jahr?: number;
+    page: number;
+    pageSize?: number;
+  }): Promise<LegacyPaginatedResult<GuVSummaryWithWorm>> {
+    this.assertMandantAccess(args.mandantId, args.user);
+    const pageSize = Math.min(args.pageSize ?? 20, 100);
+    const offset = (args.page - 1) * pageSize;
+    const [items, total] = await Promise.all([
+      this.guvRepository.findByMandantAndJahrWithWorm(args.mandantId, args.jahr),
+      this.guvRepository.countByMandant({
+        mandantId: args.mandantId,
+        jahr: args.jahr,
+      }),
+    ]);
+    const sliced = items.slice(offset, offset + pageSize);
+    return PaginationService.buildLegacyResponse(sliced, total, args.page, pageSize);
   }
 
   async findOne(id: string, mandantId: string, user: AuthUser): Promise<GuVEntity> {

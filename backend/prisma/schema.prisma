@@ -74,6 +74,8 @@ model Mandant {
   @@unique([kanzleiId, firmenname])
   @@index([kanzleiId])
   @@index([groessenklasse])
+  @@index([kanzleiId, groessenklasse])
+  @@index([kanzleiId, publishChannel])
   @@map("mandant")
 }
 
@@ -176,6 +178,9 @@ model Bilanz {
   @@unique([mandantId, geschaeftsjahr])
   @@index([mandantId])
   @@index([status])
+  @@index([mandantId, status, geschaeftsjahr(sort: Desc)])
+  @@index([mandantId, geschaeftsjahr(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
   @@map("bilanz")
 }
 
@@ -229,6 +234,8 @@ model GuV {
 
   @@unique([mandantId, geschaeftsjahr])
   @@index([mandantId])
+  @@index([mandantId, status, geschaeftsjahr(sort: Desc)])
+  @@index([mandantId, geschaeftsjahr(sort: Desc)])
   @@map("guv")
 }
 
@@ -275,6 +282,7 @@ model Anhang {
   jahresabschluesse Jahresabschluss[]
 
   @@unique([mandantId, geschaeftsjahr])
+  @@index([mandantId, geschaeftsjahr(sort: Desc)])
   @@map("anhang")
 }
 
@@ -418,6 +426,8 @@ model WormObject {
   @@index([entityType, entityId])
   @@index([mandantId])
   @@index([retentionExpiresAt])
+  @@index([entityType, entityId, uploadedAt(sort: Desc)])
+  @@index([mandantId, retentionExpiresAt])
   @@map("worm_object")
 }
 
@@ -453,6 +463,9 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([entityType, entityId])
   @@index([action])
+  @@index([kanzleiId, action, createdAt(sort: Desc)])
+  @@index([mandantId, action, createdAt(sort: Desc)])
+  @@index([entityType, entityId, createdAt(sort: Desc)])
   @@map("audit_log")
 }
 
@@ -539,6 +552,7 @@ model KonsolidierungsBuchung {
 
   @@index([einheitId])
   @@index([buchungsArt])
+  @@index([einheitId, buchungsArt])
   @@map("konsolidierungs_buchung")
 }
 
@@ -574,6 +588,7 @@ model WPNotiz {
   @@index([guvId])
   @@index([wpUserId])
   @@index([status])
+  @@index([bilanzPositionId, status])
   @@map("wp_notiz")
 }
 
@@ -611,6 +626,7 @@ model BilanzPruefungsResult {
   @@unique([bilanzId, regelCode])
   @@index([bilanzId])
   @@index([status])
+  @@index([status, geprueftAm(sort: Desc)])
   @@map("bilanz_pruefungs_result")
 }
 
@@ -634,5 +650,6 @@ model WPPruefungsAbschluss {
 
   @@index([bilanzId])
   @@index([status])
+  @@index([bilanzId, status])
   @@map("wp_pruefungs_abschluss")
 }

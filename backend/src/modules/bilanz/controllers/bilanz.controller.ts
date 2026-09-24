@@ -54,7 +54,11 @@ export class BilanzController {
   }
 
   /**
-   * GET /api/bilanz?mandantId=...&geschaeftsjahr=YYYY
+   * GET /api/bilanz?mandantId=...&geschaeftsjahr=YYYY&cursor=...&pageSize=20
+   *
+   * Cursor-Pagination: `cursor` (opak) + `pageSize` (1..100, default 20).
+   * Legacy Offset: `page` (1-indexed) + `pageSize`.
+   * Ohne Pagination-Parameter: alle Bilanzen des Mandanten (Array).
    *
    * `mandantId` kommt aus Query (oder Header `x-mandant-id`).
    */
@@ -64,13 +68,28 @@ export class BilanzController {
   findAll(
     @Query('mandantId') mandantId: string,
     @Query('geschaeftsjahr') geschaeftsjahr: string | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @Query('pageSize') pageSizeRaw: string | undefined,
+    @Query('page') pageRaw: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
     const jahr =
       typeof geschaeftsjahr === 'string' && geschaeftsjahr.length > 0
         ? Number.parseInt(geschaeftsjahr, 10)
         : undefined;
-    return this.bilanzService.findAll(mandantId, user, jahr);
+    const pageSize =
+      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
+        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
+        : undefined;
+    const page =
+      typeof pageRaw === 'string' && pageRaw.length > 0
+        ? Number.parseInt(pageRaw, 10)
+        : undefined;
+    return this.bilanzService.findAll(mandantId, user, jahr, {
+      cursor,
+      pageSize,
+      page,
+    });
   }
 
   /**

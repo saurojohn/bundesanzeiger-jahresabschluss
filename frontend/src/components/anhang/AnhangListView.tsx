@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { PdfActions } from '@/components/pdf/PdfActions';
+import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type AnhangAbschnitt = {
   id?: string;
@@ -24,6 +25,15 @@ type Anhang = {
   wormObjectKey: string | null;
 };
 
+type AnhangListResponse =
+  | Anhang[]
+  | {
+      items: Anhang[];
+      nextCursor: string | null;
+      total: number;
+      hasMore: boolean;
+    };
+
 const STANDARD_TITEL = [
   'allgemeineAngaben',
   'bilanzierungsMethoden',
@@ -32,10 +42,17 @@ const STANDARD_TITEL = [
   'sonstigePflichtangaben',
 ] as const;
 
+const PAGE_SIZE = 20;
+
 export function AnhangListView() {
   const t = useTranslations();
+  const paginationLabels = usePaginationLabels('anhang');
   const [anhaenge, setAnhaenge] = useState<Anhang[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState<number>(0);
+  const [hasMore, setHasMore] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,16 +68,63 @@ export function AnhangListView() {
       const mandantId = getActiveMandantId();
       const token = getAccessToken();
       if (!mandantId || !token) return;
-      const data = await apiFetch<Anhang[]>(
-        `/anhang?mandantId=${mandantId}`,
+      const data = await apiFetch<AnhangListResponse>(
+        `/anhang?mandantId=${mandantId}&pageSize=${PAGE_SIZE}`,
         { accessToken: token },
       );
-      setAnhaenge(data);
+      applyResponse(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.network.message'));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadMore(cursor: string) {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const mandantId = getActiveMandantId();
+      const token = getAccessToken();
+      if (!mandantId || !token) return;
+      const data = await apiFetch<AnhangListResponse>(
+        `/anhang?mandantId=${mandantId}&pageSize=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`,
+        { accessToken: token },
+      );
+      appendResponse(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function applyResponse(data: AnhangListResponse) {
+    if (Array.isArray(data)) {
+      setAnhaenge(data);
+      setTotal(data.length);
+      setHasMore(false);
+      setNextCursor(null);
+      return;
+    }
+    setAnhaenge(data.items);
+    setTotal(data.total);
+    setHasMore(data.hasMore);
+    setNextCursor(data.nextCursor);
+  }
+
+  function appendResponse(data: AnhangListResponse) {
+    if (Array.isArray(data)) {
+      setAnhaenge((prev) => [...prev, ...data]);
+      setHasMore(false);
+      setNextCursor(null);
+      return;
+    }
+    setAnhaenge((prev) => [...prev, ...data.items]);
+    setTotal(data.total);
+    setHasMore(data.hasMore);
+    setNextCursor(data.nextCursor);
   }
 
   if (creatingNew || editingId) {
@@ -137,6 +201,19 @@ export function AnhangListView() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Pagination (M3+ Performance) */}
+      {!loading && anhaenge.length > 0 && (
+        <Pagination
+          hasMore={hasMore}
+          nextCursor={nextCursor}
+          total={total}
+          loadedCount={anhaenge.length}
+          onLoadMore={(cursor) => void loadMore(cursor)}
+          loading={loadingMore}
+          labels={paginationLabels}
+        />
       )}
     </div>
   );

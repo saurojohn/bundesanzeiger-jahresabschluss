@@ -7,6 +7,7 @@ import { BilanzForm } from './BilanzForm';
 import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
 import { DatevImportDialog } from '@/components/datev-import/DatevImportDialog';
+import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type BilanzPosition = {
   id?: string;
@@ -28,10 +29,26 @@ type BilanzSummary = {
   wormObjectKey: string | null;
 };
 
+type BilanzListResponse =
+  | BilanzSummary[]
+  | {
+      items: BilanzSummary[];
+      nextCursor: string | null;
+      total: number;
+      hasMore: boolean;
+    };
+
+const PAGE_SIZE = 20;
+
 export function BilanzListView() {
   const t = useTranslations();
+  const paginationLabels = usePaginationLabels('bilanz');
   const [bilanzen, setBilanzen] = useState<BilanzSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState<number>(0);
+  const [hasMore, setHasMore] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,16 +66,64 @@ export function BilanzListView() {
       const mandantId = getActiveMandantId();
       const token = getAccessToken();
       if (!mandantId || !token) return;
-      const data = await apiFetch<BilanzSummary[]>(
-        `/bilanz?mandantId=${mandantId}`,
+      // pageSize aktivieren → Backend liefert cursor-paginierte Response
+      const data = await apiFetch<BilanzListResponse>(
+        `/bilanz?mandantId=${mandantId}&pageSize=${PAGE_SIZE}`,
         { accessToken: token },
       );
-      setBilanzen(data);
+      applyResponse(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.network.message'));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadMore(cursor: string) {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const mandantId = getActiveMandantId();
+      const token = getAccessToken();
+      if (!mandantId || !token) return;
+      const data = await apiFetch<BilanzListResponse>(
+        `/bilanz?mandantId=${mandantId}&pageSize=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`,
+        { accessToken: token },
+      );
+      appendResponse(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function applyResponse(data: BilanzListResponse) {
+    if (Array.isArray(data)) {
+      setBilanzen(data);
+      setTotal(data.length);
+      setHasMore(false);
+      setNextCursor(null);
+      return;
+    }
+    setBilanzen(data.items);
+    setTotal(data.total);
+    setHasMore(data.hasMore);
+    setNextCursor(data.nextCursor);
+  }
+
+  function appendResponse(data: BilanzListResponse) {
+    if (Array.isArray(data)) {
+      setBilanzen((prev) => [...prev, ...data]);
+      setHasMore(false);
+      setNextCursor(null);
+      return;
+    }
+    setBilanzen((prev) => [...prev, ...data.items]);
+    setTotal(data.total);
+    setHasMore(data.hasMore);
+    setNextCursor(data.nextCursor);
   }
 
   function summarize(b: BilanzSummary) {
@@ -228,6 +293,19 @@ export function BilanzListView() {
           geschaeftsjahr={datevImportJahr}
           onClose={() => setDatevImportOpen(false)}
           onImported={() => void loadList()}
+        />
+      )}
+
+      {/* Pagination (M3+ Performance) */}
+      {!loading && bilanzen.length > 0 && (
+        <Pagination
+          hasMore={hasMore}
+          nextCursor={nextCursor}
+          total={total}
+          loadedCount={bilanzen.length}
+          onLoadMore={(cursor) => void loadMore(cursor)}
+          loading={loadingMore}
+          labels={paginationLabels}
         />
       )}
     </div>

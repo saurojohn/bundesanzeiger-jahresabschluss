@@ -6,7 +6,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { BilanzRepository, type BilanzEntity } from '../../../common/repositories/bilanz.repository';
+import {
+  BilanzRepository,
+  type BilanzEntity,
+  type BilanzWithoutPositionen,
+} from '../../../common/repositories/bilanz.repository';
+import { PaginationService } from '../../../common/services/pagination.service';
+import {
+  type LegacyPaginatedResult,
+  type PaginatedResult,
+} from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import {
@@ -19,6 +28,10 @@ import {
   BilanzValidierungDto,
   CreateBilanzResponse,
 } from '../dto/bilanz-validierung.dto';
+
+export type BilanzSummaryWithWorm = BilanzWithoutPositionen & {
+  wormObjectKey: string | null;
+};
 
 export interface BilanzServiceContext {
   ip?: string | null;
@@ -128,10 +141,110 @@ export class BilanzService {
 
   /**
    * Liste aller Bilanzen eines Mandanten, optional gefiltert auf Jahr.
+   *
+   * Backwards-Compat: ohne Cursor liefert eine Legacy-Response mit
+   * `items/page/pageSize/total/hasMore`. Mit Cursor eine moderne
+   * `PaginatedResult<T>`-Antwort.
    */
-  async findAll(mandantId: string, user: AuthUser, jahr?: number) {
+  async findAll(
+    mandantId: string,
+    user: AuthUser,
+    jahr?: number,
+    pagination?: {
+      cursor?: string;
+      pageSize?: number;
+      page?: number;
+    },
+  ): Promise<
+    | Array<BilanzSummaryWithWorm>
+    | PaginatedResult<BilanzSummaryWithWorm>
+    | LegacyPaginatedResult<BilanzSummaryWithWorm>
+  > {
     this.assertMandantAccess(mandantId, user);
+
+    // Legacy Offset-Modus: explizites `page` ohne `cursor`
+    if (pagination?.page !== undefined && pagination?.cursor === undefined) {
+      return this.findAllLegacy({
+        mandantId,
+        user,
+        jahr,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      });
+    }
+
+    // Cursor-Pagination: explizites `cursor` oder `pageSize`
+    if (pagination?.cursor !== undefined || pagination?.pageSize !== undefined) {
+      return this.findAllPaginated({
+        mandantId,
+        user,
+        jahr,
+        cursor: pagination.cursor,
+        pageSize: pagination.pageSize,
+      });
+    }
+
+    // Default: alle (kleine Mandanten haben < 20 Bilanzen)
     return this.bilanzRepository.findByMandantAndJahrWithWorm(mandantId, jahr);
+  }
+
+  /**
+   * Cursor-paginierte Bilanz-Liste (M3+ Performance).
+   *
+   * Liefert `items + nextCursor + total + hasMore`. Items sind nach
+   * `updatedAt DESC` sortiert, mit `id ASC` als Tiebreaker.
+   */
+  async findAllPaginated(args: {
+    mandantId: string;
+    user: AuthUser;
+    jahr?: number;
+    cursor?: string;
+    pageSize?: number;
+  }): Promise<PaginatedResult<BilanzSummaryWithWorm>> {
+    this.assertMandantAccess(args.mandantId, args.user);
+    const pageSize = Math.min(args.pageSize ?? 20, 100);
+    const [items, total] = await Promise.all([
+      this.bilanzRepository.findByMandantPaginated({
+        mandantId: args.mandantId,
+        cursor: args.cursor,
+        pageSize,
+        jahr: args.jahr,
+      }),
+      this.bilanzRepository.countByMandant({
+        mandantId: args.mandantId,
+        jahr: args.jahr,
+      }),
+    ]);
+    return PaginationService.buildResponse(
+      items,
+      total,
+      pageSize,
+      (item) => item.updatedAt.toISOString(),
+    );
+  }
+
+  /**
+   * Legacy Offset-Pagination (Backwards-Compat).
+   */
+  async findAllLegacy(args: {
+    mandantId: string;
+    user: AuthUser;
+    jahr?: number;
+    page: number;
+    pageSize?: number;
+  }): Promise<LegacyPaginatedResult<BilanzSummaryWithWorm>> {
+    this.assertMandantAccess(args.mandantId, args.user);
+    const pageSize = Math.min(args.pageSize ?? 20, 100);
+    const offset = (args.page - 1) * pageSize;
+    const [items, total] = await Promise.all([
+      this.bilanzRepository.findByMandantAndJahrWithWorm(args.mandantId, args.jahr),
+      this.bilanzRepository.countByMandant({
+        mandantId: args.mandantId,
+        jahr: args.jahr,
+      }),
+    ]);
+    const sliced = items.slice(offset, offset + pageSize);
+    return PaginationService.buildLegacyResponse(sliced, total, args.page, pageSize);
   }
 
   /**

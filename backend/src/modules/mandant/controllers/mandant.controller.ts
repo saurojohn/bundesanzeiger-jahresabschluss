@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -29,12 +30,27 @@ export class MandantController {
   constructor(private readonly mandantService: MandantService) {}
 
   /**
-   * GET /api/mandant
-   * Liefert alle Mandanten, auf die der User Zugriff hat.
+   * GET /api/mandant?cursor=&pageSize=&kanzleiId=
+   *
+   * Ohne Pagination: alle Mandanten des Users (Array, Backwards-Compat).
+   * Mit `cursor` oder `pageSize`: cursor-paginierte Antwort.
    */
   @Get()
-  findAll(@CurrentUser() user: AuthUser): ReturnType<MandantService['findAll']> {
-    return this.mandantService.findAll(user);
+  findAll(
+    @CurrentUser() user: AuthUser,
+    @Query('cursor') cursor?: string,
+    @Query('pageSize') pageSizeRaw?: string,
+    @Query('kanzleiId') kanzleiId?: string,
+  ): ReturnType<MandantService['findAll']> {
+    const pageSize =
+      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
+        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
+        : undefined;
+    return this.mandantService.findAll(user, {
+      cursor,
+      pageSize,
+      kanzleiId,
+    });
   }
 
   /**

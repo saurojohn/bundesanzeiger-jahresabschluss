@@ -1,6 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import {
+  CursorCodec,
+  type PaginatedResult,
+} from '../../../common/dto/pagination.dto';
+import { PaginationService } from '../../../common/services/pagination.service';
+import { InMemoryCacheService } from '../../../common/cache/in-memory-cache.service';
 import type { AuditActionLiteral } from '../constants/audit-actions';
 
 export interface RecordAuditParams {
@@ -28,7 +34,20 @@ export interface AuditFilterParams {
   to?: Date;
   page?: number;
   pageSize?: number;
+  cursor?: string;
 }
+
+export interface AuditListItem {
+  id: string;
+  userId: string | null;
+  mandantId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  createdAt: Date;
+}
+
+export type AuditPaginatedResult = PaginatedResult<AuditListItem>;
 
 /**
  * Append-only Audit-Trail (GoBD § 147 AO, 10 Jahre Aufbewahrungspflicht).
@@ -41,7 +60,10 @@ export interface AuditFilterParams {
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: InMemoryCacheService,
+  ) {}
 
   /**
    * Erzeugt einen AuditLog-Eintrag.
@@ -67,6 +89,13 @@ export class AuditService {
           userAgent: params.userAgent ?? null,
         },
       });
+      // Cache invalidieren: neue Audit-Einträge → alte Counts veraltet
+      if (params.kanzleiId) {
+        this.cache.invalidate(`audit-count:kanzlei:${params.kanzleiId}`);
+      }
+      if (params.mandantId) {
+        this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
+      }
     } catch (err) {
       // Audit darf nie eine Hauptoperation crashen — loggen, aber werfen.
       this.logger.error(
@@ -78,36 +107,79 @@ export class AuditService {
   }
 
   /**
-   * Paginiert Audit-Logs nach Filter.
+   * Paginiert Audit-Logs nach Filter. Cursor-basiert (M3+) mit
+   * Backwards-Compat zu legacy page/pageSize.
    */
-  async findAll(filter: AuditFilterParams): Promise<{
-    items: Array<{
-      id: string;
-      userId: string | null;
-      mandantId: string | null;
-      action: string;
-      entityType: string;
-      entityId: string | null;
-      createdAt: Date;
-    }>;
+  async findAll(filter: AuditFilterParams): Promise<
+    | AuditPaginatedResult
+    | {
+        items: AuditListItem[];
+        total: number;
+        page: number;
+        pageSize: number;
+        hasMore: boolean;
+      }
+  > {
+    const where: Prisma.AuditLogWhereInput = this.buildWhere(filter);
+
+    // Legacy: Offset-Pagination (page/pageSize)
+    if (!filter.cursor && filter.page !== undefined) {
+      return this.findAllLegacy(filter, where);
+    }
+
+    // Modern: Cursor-Pagination
+    const pageSize = Math.min(filter.pageSize ?? 50, 500);
+
+    if (filter.cursor) {
+      const { sortValue } = CursorCodec.decode(filter.cursor);
+      const cursorDate = new Date(sortValue);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        where.OR = [{ createdAt: { lt: cursorDate } }];
+      }
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        take: pageSize + 1,
+        select: {
+          id: true,
+          userId: true,
+          mandantId: true,
+          action: true,
+          entityType: true,
+          entityId: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    return PaginationService.buildResponse<AuditListItem>(
+      items,
+      total,
+      pageSize,
+      (item) => item.createdAt.toISOString(),
+    );
+  }
+
+  /**
+   * Legacy Offset-Pagination (Backwards-Compat).
+   */
+  private async findAllLegacy(
+    filter: AuditFilterParams,
+    where: Prisma.AuditLogWhereInput,
+  ): Promise<{
+    items: AuditListItem[];
     total: number;
+    page: number;
+    pageSize: number;
+    hasMore: boolean;
   }> {
     const page = filter.page ?? 1;
     const pageSize = Math.min(filter.pageSize ?? 50, 500);
     const skip = (page - 1) * pageSize;
-
-    const where: Prisma.AuditLogWhereInput = {};
-    if (filter.kanzleiId) where.kanzleiId = filter.kanzleiId;
-    if (filter.mandantId) where.mandantId = filter.mandantId;
-    if (filter.userId) where.userId = filter.userId;
-    if (filter.entityType) where.entityType = filter.entityType;
-    if (filter.entityId) where.entityId = filter.entityId;
-    if (filter.action) where.action = filter.action;
-    if (filter.from || filter.to) {
-      where.createdAt = {};
-      if (filter.from) where.createdAt.gte = filter.from;
-      if (filter.to) where.createdAt.lte = filter.to;
-    }
 
     const [items, total] = await Promise.all([
       this.prisma.auditLog.findMany({
@@ -128,7 +200,52 @@ export class AuditService {
       this.prisma.auditLog.count({ where }),
     ]);
 
-    return { items, total };
+    return PaginationService.buildLegacyResponse<AuditListItem>(
+      items,
+      total,
+      page,
+      pageSize,
+    );
+  }
+
+  private buildWhere(filter: AuditFilterParams): Prisma.AuditLogWhereInput {
+    const where: Prisma.AuditLogWhereInput = {};
+    if (filter.kanzleiId) where.kanzleiId = filter.kanzleiId;
+    if (filter.mandantId) where.mandantId = filter.mandantId;
+    if (filter.userId) where.userId = filter.userId;
+    if (filter.entityType) where.entityType = filter.entityType;
+    if (filter.entityId) where.entityId = filter.entityId;
+    if (filter.action) where.action = filter.action;
+    if (filter.from || filter.to) {
+      where.createdAt = {};
+      if (filter.from) where.createdAt.gte = filter.from;
+      if (filter.to) where.createdAt.lte = filter.to;
+    }
+    return where;
+  }
+
+  /**
+   * Gecachte Audit-Count-Berechnung (für Dashboard-Übersichten).
+   *
+   * TTL: 30s — genügt für typische Dashboard-Render-Zyklen.
+   */
+  async countForMandant(mandantId: string): Promise<number> {
+    return this.cache.memoize(
+      `audit-count:mandant:${mandantId}`,
+      30_000,
+      () => this.prisma.auditLog.count({ where: { mandantId } }),
+    );
+  }
+
+  /**
+   * Gecachte Audit-Count-Berechnung pro Kanzlei.
+   */
+  async countForKanzlei(kanzleiId: string): Promise<number> {
+    return this.cache.memoize(
+      `audit-count:kanzlei:${kanzleiId}`,
+      30_000,
+      () => this.prisma.auditLog.count({ where: { kanzleiId } }),
+    );
   }
 
   async findByEntity(

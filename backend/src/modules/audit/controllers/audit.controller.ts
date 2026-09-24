@@ -37,20 +37,8 @@ export class AuditController {
     @Query('to') to?: string,
     @Query('page') pageRaw?: string,
     @Query('pageSize') pageSizeRaw?: string,
-  ): Promise<{
-    items: Array<{
-      id: string;
-      userId: string | null;
-      mandantId: string | null;
-      action: string;
-      entityType: string;
-      entityId: string | null;
-      createdAt: Date;
-    }>;
-    total: number;
-    page: number;
-    pageSize: number;
-  }> {
+    @Query('cursor') cursor?: string,
+  ): Promise<unknown> {
     let effectiveMandantId = mandantId;
     if (user.globalRole !== 'SYSTEM_ADMIN') {
       const allowedMandantIds = user.mandanten.map((m) => m.id);
@@ -59,11 +47,11 @@ export class AuditController {
       }
     }
 
-    const page = pageRaw ? Number.parseInt(pageRaw, 10) : 1;
-    const pageSize = pageSizeRaw ? Number.parseInt(pageSizeRaw, 10) : 50;
+    const page = pageRaw ? Number.parseInt(pageRaw, 10) : undefined;
+    const pageSize = pageSizeRaw ? Number.parseInt(pageSizeRaw, 10) : undefined;
 
     const validAction: AuditActionLiteral | undefined = action && isAuditAction(action) ? action : undefined;
-    const result = await this.auditService.findAll({
+    return this.auditService.findAll({
       mandantId: effectiveMandantId,
       entityType,
       action: validAction,
@@ -71,7 +59,7 @@ export class AuditController {
       to: to ? new Date(to) : undefined,
       page,
       pageSize,
+      cursor,
     });
-    return { ...result, page, pageSize };
   }
 }

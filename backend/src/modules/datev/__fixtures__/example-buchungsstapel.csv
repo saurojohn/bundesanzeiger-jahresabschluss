@@ -1,0 +1,7 @@
+"Formatname";"Version";"Berater";"Mandant";"WJ-Beginn";"WJ-Ende";"Sachkontenlaenge";"Datum-von";"Datum-bis";"Bezeichnung";"Diktat";"Buchungstyp";"Rechnungslegungszweck"
+"EXTF_Buchungsstapel";"12";"12345";"67890";"01.01.2026";"31.12.2026";"4";"01.01.2026";"31.12.2026";"Buchungsstapel aus Banz-Jahresabschluss";"Buchhaltung";"1";"00"
+"Umsatz";"SH";"WKZ";"Kurs";"Basis";"BWKZ";"Konto";"Gegenkonto";"BUSchluessel";"Belegdatum";"Belegfeld1";"Belegfeld2";"Skonto";"Buchungstext";"Postensperre";"Adressnummer";"PartnerBLZ"
+"50000,00";"S";"EUR";"";"";"";"1800";"4400";"0";"3112";"Banz-2026-1.";"";"";"Beratungserloese (GuV 2026)";"0";"";""
+"-50000,00";"H";"EUR";"";"";"";"1800";"4400";"0";"3112";"Banz-2026-1.";"";"";"Beratungserloese (GuV 2026)";"0";"";""
+"12000,00";"S";"EUR";"";"";"";"5000";"1800";"0";"3112";"Banz-2026-5a.";"";"";"Materialaufwand (GuV 2026)";"0";"";""
+"-12000,00";"H";"EUR";"";"";"";"5000";"1800";"0";"3112";"Banz-2026-5a.";"";"";"Materialaufwand (GuV 2026)";"0";"";""

@@ -13,6 +13,7 @@ import { GuVModule } from './modules/guv/guv.module';
 import { AnhangModule } from './modules/anhang/anhang.module';
 import { PdfModule } from './modules/pdf/pdf.module';
 import { EbilanzModule } from './modules/ebilanz/ebilanz.module';
+import { DatevModule } from './modules/datev/datev.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -33,6 +34,7 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - GuVModule          (HGB §275 GuV CRUD + Validation)
  *   - AnhangModule       (HGB §284-289 Anhang CRUD)
  *   - EbilanzModule      (E-Bilanz-XBRL-Generierung + Validierung)
+ *   - DatevModule        (DATEV-Buchungsstapel-CSV-Export)
  *   - StorageModule      (WORM-Object-Lock-Storage, global)
  *   - PdfModule          (PDF-Generierung + WORM-Upload + Download)
  */
@@ -58,6 +60,7 @@ import { PrismaModule } from './prisma/prisma.module';
     GuVModule,
     AnhangModule,
     EbilanzModule,
+    DatevModule,
     StorageModule,
     PdfModule,
   ],

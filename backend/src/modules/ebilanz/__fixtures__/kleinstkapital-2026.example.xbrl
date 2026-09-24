@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example XBRL — Kleinstkapitalgesellschaft (§ 267a HGB) für GJ 2026.
+  Demonstriert die erwartete Struktur des E-Bilanz-Exports.
+  Erzeugt von `XbrlGeneratorService.generateEbilanzXbrl()`.
+  Taxonomie: hgb-kt-2025-04-01 (HGB-Kerntaxonomie v6).
+-->
+<xbrli:xbrl
+  xmlns:xbrli="http://www.xbrl.org/2003/instance"
+  xmlns:xbrldi="http://xbrl.org/2003/xbrldi-2003-12-31"
+  xmlns:link="http://www.xbrl.org/2003/linkbase"
+  xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+  xmlns:bs="http://www.xbrl.de/taxonomies/hgb-kt-2025-04-01/bs"
+  xmlns:pl="http://www.xbrl.de/taxonomies/hgb-kt-2025-04-01/pl"
+  xmlns:genInfo="http://www.xbrl.de/taxonomies/hgb-kt-2025-04-01/genInfo"
+  xmlns:de-gaap-ci="http://www.xbrl.de/taxonomies/hgb-kt-2025-04-01/de-gaap-ci">
+
+  <link:schemaRef xlink:type="simple" xlink:href="http://www.xbrl.de/taxonomies/hgb-kt-2025-04-01/bs.xsd"/>
+
+  <!-- Context: V_D (Duration, fiscalYearBegin → fiscalYearEnd) -->
+  <xbrli:context id="V_D">
+    <xbrli:entity>
+      <xbrli:identifier scheme="http://www.xbrl.de/taxonomies/de-gaap-ci">DE-00000001</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period>
+      <xbrli:startDate>2026-01-01</xbrli:startDate>
+      <xbrli:endDate>2026-12-31</xbrli:endDate>
+    </xbrli:period>
+  </xbrli:context>
+
+  <!-- Context: V_Y (Instant, fiscalYearEnd) -->
+  <xbrli:context id="V_Y">
+    <xbrli:entity>
+      <xbrli:identifier scheme="http://www.xbrl.de/taxonomies/de-gaap-ci">DE-00000001</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period>
+      <xbrli:instant>2026-12-31</xbrli:instant>
+    </xbrli:period>
+  </xbrli:context>
+
+  <xbrli:unit id="EUR">
+    <xbrli:measure>iso4217:EUR</xbrli:measure>
+  </xbrli:unit>
+
+  <!-- GenInfo -->
+  <genInfo.companyInfo.companyName contextRef="V_Y">Beispiel Kleinstkapital GmbH</genInfo.companyInfo.companyName>
+  <genInfo.companyInfo.legalForm contextRef="V_Y">GmbH</genInfo.companyInfo.legalForm>
+  <genInfo.companyInfo.taxNumber contextRef="V_Y">123/456/78901</genInfo.companyInfo.taxNumber>
+  <genInfo.companyInfo.commercialRegister contextRef="V_Y">HRB 99999</genInfo.companyInfo.commercialRegister>
+  <genInfo.reporting.fiscalYearBegin contextRef="V_Y">2026-01-01</genInfo.reporting.fiscalYearBegin>
+  <genInfo.reporting.fiscalYearEnd contextRef="V_Y">2026-12-31</genInfo.reporting.fiscalYearEnd>
+  <genInfo.reporting.periodStart contextRef="V_Y">2026-01-01</genInfo.reporting.periodStart>
+  <genInfo.reporting.periodEnd contextRef="V_Y">2026-12-31</genInfo.reporting.periodEnd>
+  <genInfo.preparer.name contextRef="V_Y">Musterkanzlei Steuerberatung</genInfo.preparer.name>
+  <genInfo.preparer.memberNumber contextRef="V_Y">12345</genInfo.preparer.memberNumber>
+  <genInfo.preparer.clientNumber contextRef="V_Y">67890</genInfo.preparer.clientNumber>
+
+  <!-- Bilanz Aktiva -->
+  <bs.ass.currAss.recv.trade contextRef="V_Y" decimals="240" unit="EUR">50000.00</bs.ass.currAss.recv.trade>
+  <bs.ass.currAss.cashEquiv.bank contextRef="V_Y" decimals="240" unit="EUR">50000.00</bs.ass.currAss.cashEquiv.bank>
+  <bs.ass total="true" contextRef="V_Y" decimals="240" unit="EUR">100000.00</bs.ass>
+
+  <!-- Bilanz Passiva -->
+  <bs.eqLiab.equity.subscribed contextRef="V_Y" decimals="240" unit="EUR">25000.00</bs.eqLiab.equity.subscribed>
+  <bs.eqLiab.liab.trade contextRef="V_Y" decimals="240" unit="EUR">50000.00</bs.eqLiab.liab.trade>
+  <bs.eqLiab.equity.netIncome contextRef="V_Y" decimals="240" unit="EUR">25000.00</bs.eqLiab.equity.netIncome>
+  <bs.eqLiab total="true" contextRef="V_Y" decimals="240" unit="EUR">100000.00</bs.eqLiab>
+
+  <!-- GuV (Aufwände als POSITIVE WERTE!) -->
+  <pl.rev contextRef="V_D" decimals="240" unit="EUR">500000.00</pl.rev>
+  <pl.costOfMat.rawMat contextRef="V_D" decimals="240" unit="EUR">100000.00</pl.costOfMat.rawMat>
+  <pl.costOfEmpl.wages contextRef="V_D" decimals="240" unit="EUR">200000.00</pl.costOfEmpl.wages>
+  <pl.costOfEmpl.socialExp contextRef="V_D" decimals="240" unit="EUR">50000.00</pl.costOfEmpl.socialExp>
+  <pl.deprAmort.fixAss contextRef="V_D" decimals="240" unit="EUR">25000.00</pl.deprAmort.fixAss>
+  <pl.otherCost contextRef="V_D" decimals="240" unit="EUR">100000.00</pl.otherCost>
+  <pl.finResult.interestIncome contextRef="V_D" decimals="240" unit="EUR">500.00</pl.finResult.interestIncome>
+  <pl.finResult.interestExpense contextRef="V_D" decimals="240" unit="EUR">500.00</pl.finResult.interestExpense>
+  <pl.tax.incomeTax contextRef="V_D" decimals="240" unit="EUR">0.00</pl.tax.incomeTax>
+  <pl.netIncome contextRef="V_D" decimals="240" unit="EUR">25000.00</pl.netIncome>
+</xbrli:xbrl>

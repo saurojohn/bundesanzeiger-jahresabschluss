@@ -1,0 +1,156 @@
+{
+  "$comment": "Validation-Cases für E-Bilanz-XBRL. Wird von Unit-Tests und e2e-Tests verwendet. Cases: saldostimmend, mismatch, missing-fields, malformed.",
+  "version": "1.0.0",
+  "taxonomieVersion": "hgb-kt-2025-04-01",
+  "cases": [
+    {
+      "id": "saldostimmend-standard",
+      "name": "Standard-Kleinstkapitalgesellschaft mit saldostimmender Bilanz",
+      "description": "Demo-GmbH-Fall: Bankguthaben 100k, Eigenkapital 25k, Jahresüberschuss 75k. AktivaSumme == PassivaSumme.",
+      "input": {
+        "aktiva": [
+          { "kontonummer": "B.IV.", "betragAktuell": 100000.00 }
+        ],
+        "passiva": [
+          { "kontonummer": "A.I.", "betragAktuell": 25000.00 },
+          { "kontonummer": "A.V.", "betragAktuell": 75000.00 }
+        ],
+        "guv": [
+          { "kontonummer": "1.", "betragAktuell": 500000.00 },
+          { "kontonummer": "5a.", "betragAktuell": 100000.00 },
+          { "kontonummer": "6a.", "betragAktuell": 200000.00 },
+          { "kontonummer": "6b.", "betragAktuell": 50000.00 },
+          { "kontonummer": "8.", "betragAktuell": 75000.00 }
+        ],
+        "mandant": {
+          "firmenname": "Demo GmbH",
+          "rechtsform": "GmbH",
+          "handelsregister": "HRB 12345"
+        }
+      },
+      "expected": {
+        "aktivaSumme": 100000.00,
+        "passivaSumme": 100000.00,
+        "saldostimmt": true,
+        "netIncome": 75000.00,
+        "erloeseSumme": 500000.00,
+        "aufwandSumme": 425000.00,
+        "valid": true
+      }
+    },
+    {
+      "id": "aktiva-passiva-mismatch",
+      "name": "Unausgeglichene Bilanz (Aktiva ≠ Passiva)",
+      "description": "Bankguthaben 100k, Eigenkapital 50k. Differenz = 50k.",
+      "input": {
+        "aktiva": [
+          { "kontonummer": "B.IV.", "betragAktuell": 100000.00 }
+        ],
+        "passiva": [
+          { "kontonummer": "A.I.", "betragAktuell": 50000.00 }
+        ],
+        "guv": [],
+        "mandant": {
+          "firmenname": "Musterfehler GmbH",
+          "rechtsform": "GmbH",
+          "handelsregister": null
+        }
+      },
+      "expected": {
+        "aktivaSumme": 100000.00,
+        "passivaSumme": 50000.00,
+        "saldostimmt": false,
+        "valid": false,
+        "errorCodes": ["BILANCE_MISMATCH"]
+      }
+    },
+    {
+      "id": "missing-firmenname",
+      "name": "Firmenname fehlt (leer)",
+      "description": "Erwarteter Validation-Error: MISSING_COMPANY_NAME.",
+      "input": {
+        "aktiva": [],
+        "passiva": [],
+        "guv": [],
+        "mandant": {
+          "firmenname": "",
+          "rechtsform": "GmbH",
+          "handelsregister": null
+        }
+      },
+      "expected": {
+        "valid": false,
+        "errorCodes": ["MISSING_COMPANY_NAME"]
+      }
+    },
+    {
+      "id": "missing-steuernummer",
+      "name": "Steuernummer fehlt",
+      "description": "Erwarteter Validation-Error: MISSING_TAX_NUMBER.",
+      "input": {
+        "aktiva": [],
+        "passiva": [],
+        "guv": [],
+        "mandant": {
+          "firmenname": "Demo GmbH",
+          "rechtsform": "GmbH",
+          "handelsregister": null
+        }
+      },
+      "expected": {
+        "valid": false,
+        "errorCodes": ["MISSING_TAX_NUMBER"]
+      }
+    },
+    {
+      "id": "malformed-xml",
+      "name": "Nicht well-formed XML",
+      "description": "Fehlende XML-Deklaration.",
+      "rawXml": "<xbrli:xbrl><xbrli:context id='V_Y'><xbrli:entity><xbrli:identifier scheme='test'>1</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-12-31</xbrli:instant></xbrli:period></xbrli:context>",
+      "expected": {
+        "valid": false,
+        "errorCodes": ["MALFORMED_XML"]
+      }
+    },
+    {
+      "id": "sign-convention-aufwand",
+      "name": "Aufwände müssen POSITIVE Werte haben",
+      "description": "Wenn costOfMat mit negativem Wert (-100000) erscheint, wäre das ein Sign-Convention-Fehler.",
+      "input": {
+        "guv": [
+          { "kontonummer": "5a.", "betragAktuell": -100000.00 }
+        ],
+        "mandant": {
+          "firmenname": "Vorzeichen-Fehler GmbH",
+          "rechtsform": "GmbH",
+          "handelsregister": null
+        }
+      },
+      "expected": {
+        "valid": false,
+        "errorCodes": ["NEGATIVE_EXPENSE_VALUE"],
+        "warning": "Sign-Convention: Aufwände MÜSSEN positive Werte haben. Calculation-Linkbase wendet weight=-1 an."
+      }
+    },
+    {
+      "id": "missing-context-vd",
+      "name": "V_D-Context fehlt",
+      "description": "Nur V_Y definiert, kein V_D → GuV-Positionen können nicht referenziert werden.",
+      "rawXml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"><xbrli:context id=\"V_Y\"><xbrli:entity><xbrli:identifier scheme=\"test\">1</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-12-31</xbrli:instant></xbrli:period></xbrli:context></xbrli:xbrl>",
+      "expected": {
+        "valid": false,
+        "errorCodes": ["MISSING_CONTEXT_V_D"]
+      }
+    },
+    {
+      "id": "missing-context-vy",
+      "name": "V_Y-Context fehlt",
+      "description": "Nur V_D definiert, kein V_Y → Bilanz-Positionen können nicht referenziert werden.",
+      "rawXml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"><xbrli:context id=\"V_D\"><xbrli:entity><xbrli:identifier scheme=\"test\">1</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-01-01</xbrli:startDate><xbrli:endDate>2026-12-31</xbrli:endDate></xbrli:period></xbrli:context></xbrli:xbrl>",
+      "expected": {
+        "valid": false,
+        "errorCodes": ["MISSING_CONTEXT_V_Y"]
+      }
+    }
+  ]
+}

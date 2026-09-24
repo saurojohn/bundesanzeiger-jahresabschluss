@@ -17,6 +17,7 @@ import { DatevModule } from './modules/datev/datev.module';
 import { DatevImportModule } from './modules/datev-import/datev-import.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { SignaturModule } from './modules/signatur/signatur.module';
+import { KonsolidierungModule } from './modules/konsolidierung/konsolidierung.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -40,6 +41,8 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - DatevImportModule  (DATEV-CSV → Bilanz/GuV via Reverse-Mapping)
  *   - StorageModule      (WORM-Object-Lock-Storage, global)
  *   - PdfModule          (PDF-Generierung + WORM-Upload + Download)
+ *   - SignaturModule     (qeS-Signatur)
+ *   - KonsolidierungModule (Konzernabschluss nach PublG §11)
  */
 @Module({
   imports: [
@@ -68,6 +71,7 @@ import { PrismaModule } from './prisma/prisma.module';
     StorageModule,
     PdfModule,
     SignaturModule,
+    KonsolidierungModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

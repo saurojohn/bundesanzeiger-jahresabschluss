@@ -1,0 +1,77 @@
+{
+  "$comment": "Erwartete Konsolidierungs-Buchungen für das Pilot-Beispiel (Mutter+Tochter).",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "mutter-tochter-standard",
+      "name": "Vollkonsolidierung Mutter + 1 Tochter (100%)",
+      "description": "Pilot-Standardszenario: AK 250k, EK-Tochter 200k, Beteiligung 100%.",
+      "input": {
+        "anschaffungskosten": 250000.00,
+        "eigenkapitalTochter": 200000.00,
+        "beteiligungsquote": 100.0,
+        "konsolidierungsArt": "VOLLKONSOLIDIERUNG"
+      },
+      "expectedBuchungen": [
+        {
+          "buchungsArt": "KAPITAL_KONSOLIDIERUNG",
+          "beschreibungPrefix": "Goodwill",
+          "betrag": 50000.00,
+          "kontoSoll": "2000",
+          "kontoHaben": "0500",
+          "reihenfolge": 1
+        }
+      ],
+      "expectedSalden": {
+        "konzernAktivaSumme": 800000.00,
+        "konzernPassivaSumme": 800000.00,
+        "konzernBilanzDifferenz": 0.0,
+        "goodwill": 50000.00,
+        "badwill": 0.0,
+        "eigenkapitalQuoteKonzern": 87.5
+      }
+    },
+    {
+      "id": "mutter-tochter-badwill",
+      "name": "Vollkonsolidierung mit Badwill (AK < anteiliges EK)",
+      "description": "Tochter wurde billiger gekauft als EK → Badwill.",
+      "input": {
+        "anschaffungskosten": 150000.00,
+        "eigenkapitalTochter": 200000.00,
+        "beteiligungsquote": 100.0,
+        "konsolidierungsArt": "VOLLKONSOLIDIERUNG"
+      },
+      "expectedBuchungen": [
+        {
+          "buchungsArt": "KAPITAL_KONSOLIDIERUNG",
+          "beschreibungPrefix": "Badwill",
+          "betrag": 50000.00,
+          "reihenfolge": 1
+        }
+      ],
+      "expectedSalden": {
+        "goodwill": 0.0,
+        "badwill": 50000.00
+      }
+    },
+    {
+      "id": "quote-50-prozent",
+      "name": "Quotenkonsolidierung 50% Beteiligung",
+      "description": "Pilot: 50% Beteiligung → anteilige Konsolidierung.",
+      "input": {
+        "anschaffungskosten": 100000.00,
+        "eigenkapitalTochter": 200000.00,
+        "beteiligungsquote": 50.0,
+        "konsolidierungsArt": "QUOTAL"
+      },
+      "expectedBuchungen": [
+        {
+          "buchungsArt": "KAPITAL_KONSOLIDIERUNG",
+          "beschreibungPrefix": "Goodwill",
+          "betrag": 0.00,
+          "reihenfolge": 1
+        }
+      ]
+    }
+  ]
+}

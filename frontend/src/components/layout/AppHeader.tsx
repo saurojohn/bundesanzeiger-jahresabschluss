@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { href: '/guv', key: 'guv' },
   { href: '/anhang', key: 'anhang' },
   { href: '/jahresabschluss', key: 'jahresabschluss' },
+  { href: '/konsolidierung', key: 'konsolidierung' },
   { href: '/audit', key: 'audit' },
 ] as const;
 

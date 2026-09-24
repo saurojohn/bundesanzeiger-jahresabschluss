@@ -33,9 +33,10 @@ model Kanzlei {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  mandanten Mandant[]
-  user      User[]
-  auditLogs AuditLog[]
+  mandanten                Mandant[]
+  user                     User[]
+  auditLogs                AuditLog[]
+  konsolidierungsEinheiten KonsolidierungsEinheit[]
 
   @@map("kanzlei")
 }
@@ -68,6 +69,7 @@ model Mandant {
   jahresabschluesse Jahresabschluss[]
   submissions       BanzSubmission[]
   auditLogs         AuditLog[]
+  alsMutterFuer     KonsolidierungsEinheit[] @relation("Mutter")
 
   @@unique([kanzleiId, firmenname])
   @@index([kanzleiId])
@@ -456,4 +458,75 @@ model SystemConfig {
   updatedAt   DateTime @updatedAt
 
   @@map("system_config")
+}
+
+// ============================================================================
+// Konzernabschluss / Konsolidierung (Phase M3 Sprint 1, PublG §11)
+// ============================================================================
+
+/// Eine Konsolidierungs-Einheit verbindet eine Mutter mit n Tochtern
+/// zu einem virtuellen Konzern für ein Geschäftsjahr.
+///
+/// Der Mutter-Mandant ist Eigentümer der resultierenden Konzern-Bilanz
+/// und Konzern-GuV. Alle Mandanten (Mutter + Tochtern) müssen zur selben
+/// Kanzlei gehören — Mandant-Trennung wird im Service erzwungen.
+model KonsolidierungsEinheit {
+  id                       String   @id @default(uuid()) @db.Uuid
+  kanzleiId                String   @db.Uuid
+  mutterMandantId          String   @db.Uuid
+  /// Postgres Array — Liste der Tochter-Mandant-IDs.
+  /// Prisma 5.x mappt `String[]` nativ auf `text[]`.
+  tochterMandantIds        String[]
+  geschaeftsjahr           Int
+  konsolidierungsArt       String   @default("VOLLKONSOLIDIERUNG") // VOLLKONSOLIDIERUNG | QUOTAL | AT_EQUITY
+  status                   String   @default("DRAFT") // DRAFT | IN_PROGRESS | COMPLETED | VALIDATED
+  konzernBilanzId          String?  @db.Uuid
+  konzernGuvId             String?  @db.Uuid
+  beteiligungsquote        Decimal  @db.Decimal(5, 2) // 0–100%
+  anschaffungskosten       Decimal  @db.Decimal(18, 2)
+  eigenkapitalTochter      Decimal  @db.Decimal(18, 2)
+  jahresueberschussTochter Decimal  @db.Decimal(18, 2)
+  erstellungsdatum         DateTime @default(now())
+  finalisiertAm            DateTime?
+  finalisiertVonId         String?  @db.Uuid
+  createdById              String?  @db.Uuid
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  kanzlei   Kanzlei                    @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
+  mutter    Mandant                    @relation("Mutter", fields: [mutterMandantId], references: [id])
+  buchungen KonsolidierungsBuchung[]
+
+  @@unique([mutterMandantId, geschaeftsjahr])
+  @@index([kanzleiId])
+  @@index([status])
+  @@map("konsolidierungs_einheit")
+}
+
+/// Eine einzelne Konsolidierungs-Buchung gem. §§ 301–306 HGB.
+/// Wird im Service automatisch generiert (calculateBuchungen) oder manuell
+/// vom Wirtschaftsprüfer ergänzt.
+model KonsolidierungsBuchung {
+  id             String   @id @default(uuid()) @db.Uuid
+  einheitId      String   @db.Uuid
+  /// KAPITAL_KONSOLIDIERUNG | SCHULDEN_KONSOLIDIERUNG | ZWISCHENERGEBNIS
+  /// | AUFWAND_ERTRAG | LATENTE_STEUERN
+  buchungsArt    String
+  beschreibung   String
+  kontoSoll      String // SKR04-Konto Soll
+  kontoHaben     String // SKR04-Konto Haben
+  betrag         Decimal  @db.Decimal(18, 2)
+  /// Optional: spezifischer Mandant, auf den sich die Buchung bezieht
+  mandantId      String?  @db.Uuid
+  /// Optional: Bezug auf Original-Buchung (z.B. konzerninterne Forderung)
+  bezugId        String?  @db.Uuid
+  reihenfolge    Int
+  istAutomatisch Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  einheit KonsolidierungsEinheit @relation(fields: [einheitId], references: [id], onDelete: Cascade)
+
+  @@index([einheitId])
+  @@index([buchungsArt])
+  @@map("konsolidierungs_buchung")
 }

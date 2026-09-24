@@ -3,13 +3,15 @@ import { BilanzRepository } from './bilanz.repository';
 import { GuVRepository } from './guv.repository';
 import { AnhangRepository } from './anhang.repository';
 import { SignatureRepository } from './signature.repository';
+import { KonsolidierungRepository } from './konsolidierung.repository';
 
 /**
- * Globale Bereitstellung der Repositories für Bilanz/GuV/Anhang/Signature.
+ * Globale Bereitstellung der Repositories für Bilanz/GuV/Anhang/Signature
+ * und Konsolidierung.
  *
- * Wird vom BilanzModule, GuVModule, AnhangModule und SignaturModule
- * importiert. PrismaModule ist global verfügbar, daher reicht hier
- * ein einfaches providers-Array.
+ * Wird vom BilanzModule, GuVModule, AnhangModule, SignaturModule und
+ * KonsolidierungModule importiert. PrismaModule ist global verfügbar,
+ * daher reicht hier ein einfaches providers-Array.
  */
 @Module({
   providers: [
@@ -17,12 +19,14 @@ import { SignatureRepository } from './signature.repository';
     GuVRepository,
     AnhangRepository,
     SignatureRepository,
+    KonsolidierungRepository,
   ],
   exports: [
     BilanzRepository,
     GuVRepository,
     AnhangRepository,
     SignatureRepository,
+    KonsolidierungRepository,
   ],
 })
 export class CommonRepositoriesModule {}

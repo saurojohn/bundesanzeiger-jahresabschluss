@@ -1,0 +1,63 @@
+{
+  "$comment": "Beispiel-Konsolidierungs-Einheit für Pilot (1 Mutter + 1 Tochter). Wird von Unit-Tests und e2e-Tests verwendet.",
+  "version": "1.0.0",
+  "mutter": {
+    "firmenname": "Mutter GmbH",
+    "rechtsform": "GmbH",
+    "handelsregister": "HRB 100000",
+    "ustId": "DE111111111"
+  },
+  "tochter": {
+    "firmenname": "Tochter GmbH",
+    "rechtsform": "GmbH",
+    "handelsregister": "HRB 100001",
+    "ustId": "DE111111112"
+  },
+  "konsolidierung": {
+    "geschaeftsjahr": 2025,
+    "konsolidierungsArt": "VOLLKONSOLIDIERUNG",
+    "beteiligungsquote": 100.0,
+    "anschaffungskosten": 250000.00,
+    "eigenkapitalTochter": 200000.00,
+    "jahresueberschussTochter": 50000.00
+  },
+  "mutterBilanz": {
+    "geschaeftsjahr": 2025,
+    "positionen": [
+      { "seite": "AKTIVA", "kontonummer": "B.IV.", "bezeichnung": "Bankguthaben", "betragAktuell": 500000.00, "reihenfolge": 1 },
+      { "seite": "AKTIVA", "kontonummer": "A.III.3.", "bezeichnung": "Beteiligungen", "betragAktuell": 250000.00, "reihenfolge": 2 },
+      { "seite": "PASSIVA", "kontonummer": "A.I.", "bezeichnung": "Gezeichnetes Kapital", "betragAktuell": 250000.00, "reihenfolge": 1 },
+      { "seite": "PASSIVA", "kontonummer": "A.III.4.", "bezeichnung": "Andere Gewinnrücklagen", "betragAktuell": 300000.00, "reihenfolge": 2 },
+      { "seite": "PASSIVA", "kontonummer": "A.V.", "bezeichnung": "Jahresüberschuss", "betragAktuell": 200000.00, "reihenfolge": 3 }
+    ]
+  },
+  "tochterBilanz": {
+    "geschaeftsjahr": 2025,
+    "positionen": [
+      { "seite": "AKTIVA", "kontonummer": "B.IV.", "bezeichnung": "Bankguthaben", "betragAktuell": 300000.00, "reihenfolge": 1 },
+      { "seite": "PASSIVA", "kontonummer": "A.I.", "bezeichnung": "Gezeichnetes Kapital", "betragAktuell": 100000.00, "reihenfolge": 1 },
+      { "seite": "PASSIVA", "kontonummer": "A.III.4.", "bezeichnung": "Andere Gewinnrücklagen", "betragAktuell": 100000.00, "reihenfolge": 2 },
+      { "seite": "PASSIVA", "kontonummer": "A.V.", "bezeichnung": "Jahresüberschuss", "betragAktuell": 100000.00, "reihenfolge": 3 }
+    ]
+  },
+  "mutterGuv": {
+    "geschaeftsjahr": 2025,
+    "verfahren": "GKV",
+    "positionen": [
+      { "kontonummer": "1.", "bezeichnung": "Umsatzerlöse", "kategorie": "ERLOES", "betragAktuell": 800000.00, "reihenfolge": 1 },
+      { "kontonummer": "5a.", "bezeichnung": "Materialaufwand", "kategorie": "MATERIAL", "betragAktuell": 200000.00, "reihenfolge": 2 },
+      { "kontonummer": "6a.", "bezeichnung": "Personalaufwand", "kategorie": "PERSONAL", "betragAktuell": 300000.00, "reihenfolge": 3 },
+      { "kontonummer": "8.", "bezeichnung": "Sonstige betriebliche Aufwendungen", "kategorie": "SONSTIGE", "betragAktuell": 100000.00, "reihenfolge": 4 }
+    ]
+  },
+  "tochterGuv": {
+    "geschaeftsjahr": 2025,
+    "verfahren": "GKV",
+    "positionen": [
+      { "kontonummer": "1.", "bezeichnung": "Umsatzerlöse", "kategorie": "ERLOES", "betragAktuell": 400000.00, "reihenfolge": 1 },
+      { "kontonummer": "5a.", "bezeichnung": "Materialaufwand", "kategorie": "MATERIAL", "betragAktuell": 100000.00, "reihenfolge": 2 },
+      { "kontonummer": "6a.", "bezeichnung": "Personalaufwand", "kategorie": "PERSONAL", "betragAktuell": 150000.00, "reihenfolge": 3 },
+      { "kontonummer": "8.", "bezeichnung": "Sonstige betriebliche Aufwendungen", "kategorie": "SONSTIGE", "betragAktuell": 50000.00, "reihenfolge": 4 }
+    ]
+  }
+}

@@ -70,6 +70,7 @@
     "guv": "Gewinn- und Verlustrechnung",
     "anhang": "Anhang",
     "jahresabschluss": "Jahresabschluss",
+    "konsolidierung": "Konsolidierung",
     "submissions": "BAnz-Einreichungen",
     "audit": "Audit-Log",
     "users": "Benutzer",
@@ -387,6 +388,74 @@
       "entity": "Entität",
       "ipAddress": "IP-Adresse",
       "mandant": "Mandant"
+    }
+  },
+  "konsolidierung": {
+    "title": "Konsolidierung",
+    "subtitle": "Konzernabschluss nach PublG §11 (HGB §§ 301–306)",
+    "listTitle": "Konsolidierungs-Einheiten",
+    "noEinheiten": "Noch keine Konsolidierungs-Einheiten vorhanden",
+    "wizard": {
+      "title": "Neue Konsolidierungs-Einheit anlegen",
+      "stepMutter": "Mutter auswählen",
+      "stepTochter": "Tochter auswählen",
+      "stepDetails": "Details",
+      "tochterHint": "Mehrfachauswahl mit gedrückter Strg-/Cmd-Taste. Pilot: 1 Tochter empfohlen."
+    },
+    "fields": {
+      "geschaeftsjahr": "Geschäftsjahr",
+      "mutter": "Mutter-Mandant",
+      "tochter": "Tochter-Mandanten",
+      "tochterCount": "Anzahl Töchter",
+      "beteiligungsquote": "Beteiligungsquote (%)",
+      "konsolidierungsArt": "Konsolidierungsart",
+      "status": "Status",
+      "buchungsArt": "Buchungsart",
+      "beschreibung": "Beschreibung",
+      "sollHaben": "Soll / Haben",
+      "betrag": "Betrag"
+    },
+    "konsolidierungsArt": {
+      "VOLLKONSOLIDIERUNG": "Vollkonsolidierung",
+      "QUOTAL": "Quotenkonsolidierung",
+      "AT_EQUITY": "At-Equity-Bewertung"
+    },
+    "buchungsArt": {
+      "KAPITAL_KONSOLIDIERUNG": "Kapitalkonsolidierung (§ 301 HGB)",
+      "SCHULDEN_KONSOLIDIERUNG": "Schuldenkonsolidierung (§ 303 HGB)",
+      "ZWISCHENERGEBNIS": "Zwischenergebniseliminierung (§ 304 HGB)",
+      "AUFWAND_ERTRAG": "Aufwands- und Ertragseliminierung (§ 305 HGB)",
+      "LATENTE_STEUERN": "Latente Steuern (§ 306 HGB)"
+    },
+    "actions": {
+      "new": "Neue Konsolidierung",
+      "calculate": "Buchungen berechnen",
+      "apply": "Anwenden",
+      "finalize": "Finalisieren",
+      "viewSalden": "Salden anzeigen"
+    },
+    "vorschau": {
+      "title": "Vorschau — Eliminations-Buchungen",
+      "empty": "Keine Buchungen automatisch generiert",
+      "auto": "automatisch generiert"
+    },
+    "result": {
+      "title": "Konsolidierung erfolgreich angewendet"
+    },
+    "salden": {
+      "aktiva": "Summe Aktiva (Konzern)",
+      "passiva": "Summe Passiva (Konzern)",
+      "differenz": "Saldo-Differenz",
+      "guVErgebnis": "Konzern-Jahresergebnis",
+      "eigenkapitalQuote": "Eigenkapitalquote (Konzern)",
+      "goodwill": "Goodwill (passive Differenz)",
+      "badwill": "Badwill (aktive Differenz)"
+    },
+    "status": {
+      "DRAFT": "Entwurf",
+      "IN_PROGRESS": "In Bearbeitung",
+      "COMPLETED": "Abgeschlossen",
+      "VALIDATED": "Freigegeben"
     }
   },
   "errors": {

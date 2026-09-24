@@ -15,6 +15,7 @@ import { PdfModule } from './modules/pdf/pdf.module';
 import { EbilanzModule } from './modules/ebilanz/ebilanz.module';
 import { DatevModule } from './modules/datev/datev.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { SignaturModule } from './modules/signatur/signatur.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -63,6 +64,7 @@ import { PrismaModule } from './prisma/prisma.module';
     DatevModule,
     StorageModule,
     PdfModule,
+    SignaturModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

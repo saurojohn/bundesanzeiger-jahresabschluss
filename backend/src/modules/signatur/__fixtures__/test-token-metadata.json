@@ -1,0 +1,9 @@
+{
+  "subject": "CN=Test User, O=BANZ Pilot Test Cert, C=DE",
+  "issuer": "CN=Test User, O=BANZ Pilot Test Cert, C=DE",
+  "serialNumber": "01",
+  "validFrom": "2026-01-01T00:00:00.000Z",
+  "validTo": "2027-01-01T00:00:00.000Z",
+  "signatureType": "FORTGESCHRITTEN",
+  "fingerprintSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

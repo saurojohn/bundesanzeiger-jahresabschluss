@@ -1,0 +1,51 @@
+{
+  "cases": [
+    {
+      "id": "valid-mock-signature",
+      "description": "Mock-signiertes PDF mit eingebetteter PKCS#7-Signatur",
+      "expected": {
+        "valid": true,
+        "signatureCount": 1,
+        "signedBy": "Test User",
+        "issuerTrusted": true,
+        "certificateExpired": false,
+        "documentIntegrity": true
+      }
+    },
+    {
+      "id": "tampered-pdf",
+      "description": "Signiertes PDF mit manipuliertem Body → documentIntegrity = false",
+      "expected": {
+        "valid": false,
+        "signatureCount": 1,
+        "issuerTrusted": true,
+        "certificateExpired": false,
+        "documentIntegrity": false
+      }
+    },
+    {
+      "id": "unsigned-pdf",
+      "description": "PDF ohne Signatur → signatureCount = 0",
+      "expected": {
+        "valid": false,
+        "signatureCount": 0,
+        "signedBy": null,
+        "issuerTrusted": false,
+        "certificateExpired": false,
+        "documentIntegrity": false
+      }
+    },
+    {
+      "id": "wrong-signer",
+      "description": "Signatur mit falscher expectedSignerEmail → issuerTrusted = false",
+      "expected": {
+        "valid": false,
+        "signatureCount": 1,
+        "signedBy": "Test User",
+        "issuerTrusted": false,
+        "certificateExpired": false,
+        "documentIntegrity": true
+      }
+    }
+  ]
+}

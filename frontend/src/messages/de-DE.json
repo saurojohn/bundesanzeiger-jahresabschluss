@@ -252,6 +252,112 @@
       "generateAll": "Jahresabschluss-PDF erzeugen"
     }
   },
+  "exports": {
+    "section": "Exporte & Einreichung",
+    "ebilanz": {
+      "title": "E-Bilanz (ELSTER)",
+      "description": "Generiert eine amtliche XBRL-Datei nach HGB-Kerntaxonomie für die Übermittlung an das Finanzamt via ERiC.",
+      "generate": "E-Bilanz-XBRL generieren",
+      "generating": "E-Bilanz wird generiert …",
+      "validate": "XML validieren",
+      "validating": "XML wird validiert …",
+      "download": "XBRL-Datei herunterladen",
+      "preview": "Mapping-Vorschau anzeigen",
+      "generated": "E-Bilanz-XBRL erfolgreich generiert",
+      "error": "E-Bilanz-XBRL konnte nicht generiert werden",
+      "taxonomieVersion": "Taxonomie-Version",
+      "validationOk": "Validierung erfolgreich (alle Pflicht-Felder befüllt, Saldo stimmt)",
+      "validationErrors": "{count} Validierungsfehler",
+      "validationWarnings": "{count} Warnungen"
+    },
+    "datev": {
+      "title": "DATEV-Buchungsstapel",
+      "description": "Generiert eine CSV-Datei nach DATEV-Format v700+ für den Import in DATEV/Addison.",
+      "generate": "DATEV-CSV generieren",
+      "generating": "DATEV-CSV wird generiert …",
+      "download": "CSV-Datei herunterladen",
+      "preview": "Mapping-Vorschau anzeigen",
+      "generated": "DATEV-Buchungsstapel erfolgreich generiert",
+      "error": "DATEV-Buchungsstapel konnte nicht generiert werden",
+      "skr": "Kontenplan",
+      "SKR03": "SKR03 (Standard-Kontenrahmen 03)",
+      "SKR04": "SKR04 (Standard-Kontenrahmen 04)",
+      "beraternummer": "DATEV-Beraternummer",
+      "mandantennummer": "DATEV-Mandantennummer",
+      "sachkontenlaenge": "Sachkontenlänge",
+      "buchungsZeilenCount": "{count} Buchungs-Zeilen"
+    },
+    "signatur": {
+      "title": "Qualifizierte Signatur (qeS)",
+      "description": "Signiert das PDF mit einer qualifizierten elektronischen Signatur nach eIDAS (Hardware-Token oder Software-P12).",
+      "inspect": "Token prüfen",
+      "sign": "PDF signieren",
+      "signing": "PDF wird signiert …",
+      "uploadP12": "P12-Token hochladen",
+      "p12Password": "Token-Passwort",
+      "signaturType": "Signatur-Typ",
+      "EINFACH": "Einfache Signatur",
+      "FORTGESCHRITTEN": "Fortgeschrittene Signatur",
+      "QUALIFIZIERT": "Qualifizierte Signatur (qeS)",
+      "includeTimestamp": "TSA-Zeitstempel hinzufügen",
+      "inspectResult": {
+        "subject": "Subject",
+        "issuer": "Aussteller",
+        "validFrom": "Gültig von",
+        "validTo": "Gültig bis",
+        "fingerprint": "Fingerabdruck (SHA-256)",
+        "serialNumber": "Seriennummer"
+      },
+      "result": {
+        "title": "Signatur erfolgreich",
+        "signatureId": "Signatur-ID",
+        "certSubject": "Zertifikat-Subject",
+        "timestamp": "Zeitstempel",
+        "wormKey": "WORM-Archivierungs-ID",
+        "downloadSigned": "Signiertes PDF herunterladen",
+        "viewSigned": "Signiertes PDF anzeigen"
+      },
+      "validation": {
+        "title": "Signatur-Validierung",
+        "validateSigned": "Signiertes PDF validieren",
+        "valid": "Signatur gültig",
+        "invalid": "Signatur ungültig",
+        "signedBy": "Signiert von",
+        "certExpired": "Zertifikat abgelaufen",
+        "timestampValid": "Zeitstempel gültig",
+        "documentIntegrity": "Dokument-Integrität",
+        "warnings": "Warnungen",
+        "errors": "Fehler"
+      }
+    }
+  },
+  "jahresabschluss": {
+    "title": "Jahresabschluss",
+    "subtitle": "Kombinierter Jahresabschluss (Bilanz + GuV + Anhang)",
+    "create": "Jahresabschluss erstellen",
+    "noAbschluss": "Noch kein Jahresabschluss für diesen Mandanten und dieses Geschäftsjahr erstellt",
+    "fields": {
+      "geschaeftsjahr": "Geschäftsjahr",
+      "status": "Status",
+      "abschlussdatum": "Erstellt am",
+      "bilanzSumme": "Bilanzsumme",
+      "guvErgebnis": "Jahresergebnis",
+      "actions": "Aktionen"
+    },
+    "status": {
+      "DRAFT": "Entwurf",
+      "FINALIZED": "Finalisiert",
+      "SIGNED": "Signiert",
+      "SUBMITTED": "Eingereicht",
+      "PUBLISHED": "Veröffentlicht"
+    },
+    "actions": {
+      "create": "Jahresabschluss anlegen",
+      "signAbschluss": "Jahresabschluss signieren",
+      "downloadAll": "Alle PDFs herunterladen",
+      "delete": "Löschen"
+    }
+  },
   "audit": {
     "title": "Audit-Log",
     "subtitle": "Revisionssichere Protokollierung aller Aktionen (§ 147 AO)",

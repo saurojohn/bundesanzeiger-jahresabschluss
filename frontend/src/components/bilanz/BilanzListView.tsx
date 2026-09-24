@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { BilanzForm } from './BilanzForm';
 import { PdfActions } from '@/components/pdf/PdfActions';
+import { ExportActions } from '@/components/exports/ExportActions';
 
 type BilanzPosition = {
   id?: string;

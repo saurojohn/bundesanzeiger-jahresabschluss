@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
+import { ExportActions } from '@/components/exports/ExportActions';
 
 type HgbPosition = {
   id: string;
@@ -66,6 +67,11 @@ export function BilanzForm({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [relatedIds, setRelatedIds] = useState<{
+    guvId?: string;
+    anhangId?: string;
+  }>({});
+  const [savedBilanzId, setSavedBilanzId] = useState<string | null>(bilanzId ?? null);
 
   useEffect(() => {
     void init();
@@ -89,6 +95,31 @@ export function BilanzForm({
         setGeschaeftsjahr(data.geschaeftsjahr);
         setHinweise(data.hinweise ?? '');
         setPositionen(data.positionen);
+
+        // Zugehörige GuV + Anhang für gleiches GJ finden
+        const mandantId = getActiveMandantId();
+        if (mandantId) {
+          const [guvList, anhangList] = await Promise.all([
+            apiFetch<Array<{ id: string; geschaeftsjahr: number }>>(
+              `/guv?mandantId=${mandantId}`,
+              { accessToken: token },
+            ),
+            apiFetch<Array<{ id: string; geschaeftsjahr: number }>>(
+              `/anhang?mandantId=${mandantId}`,
+              { accessToken: token },
+            ),
+          ]);
+          const related: { guvId?: string; anhangId?: string } = {};
+          const matchingGuv = guvList.find(
+            (g) => g.geschaeftsjahr === data.geschaeftsjahr,
+          );
+          const matchingAnhang = anhangList.find(
+            (a) => a.geschaeftsjahr === data.geschaeftsjahr,
+          );
+          if (matchingGuv) related.guvId = matchingGuv.id;
+          if (matchingAnhang) related.anhangId = matchingAnhang.id;
+          setRelatedIds(related);
+        }
       } else {
         // Initial positionen aus Schema
         const initial: BilanzPosition[] = [
@@ -170,12 +201,14 @@ export function BilanzForm({
           accessToken: token,
           body: JSON.stringify(payload),
         });
+        setSavedBilanzId(bilanzId);
       } else {
-        await apiFetch('/bilanz', {
+        const result = await apiFetch<Bilanz>('/bilanz', {
           method: 'POST',
           accessToken: token,
           body: JSON.stringify(payload),
         });
+        if (result?.id) setSavedBilanzId(result.id);
       }
       onSaved();
     } catch (err) {
@@ -339,6 +372,19 @@ export function BilanzForm({
           className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
       </div>
+
+      {bilanzId && savedBilanzId && (
+        <div className="mt-6">
+          <ExportActions
+            entityType="bilanz"
+            entityId={savedBilanzId}
+            bilanzId={savedBilanzId}
+            guvId={relatedIds.guvId}
+            anhangId={relatedIds.anhangId}
+            canSign
+          />
+        </div>
+      )}
     </div>
   );
 }

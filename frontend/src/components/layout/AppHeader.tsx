@@ -25,6 +25,7 @@ const NAV_ITEMS = [
   { href: '/anhang', key: 'anhang' },
   { href: '/jahresabschluss', key: 'jahresabschluss' },
   { href: '/konsolidierung', key: 'konsolidierung' },
+  { href: '/wp', key: 'wp' },
   { href: '/audit', key: 'audit' },
 ] as const;
 

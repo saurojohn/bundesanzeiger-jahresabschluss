@@ -71,6 +71,7 @@
     "anhang": "Anhang",
     "jahresabschluss": "Jahresabschluss",
     "konsolidierung": "Konsolidierung",
+    "wp": "Wirtschaftsprüfung",
     "submissions": "BAnz-Einreichungen",
     "audit": "Audit-Log",
     "users": "Benutzer",
@@ -544,5 +545,101 @@
       "parseFailed": "CSV konnte nicht geparst werden.",
       "importFailed": "Import fehlgeschlagen."
     }
+  },
+  "wp": {
+    "title": "Wirtschaftsprüfung",
+    "subtitle": "IDW PS 880 Plausi-Prüfung und WP-Workflow.",
+    "dashboard": {
+      "title": "Plausi-Dashboard",
+      "subtitle": "Übersicht aller Mandanten mit IDW-Plausi-Status.",
+      "noMandanten": "Keine Mandanten mit Bilanzen gefunden.",
+      "tableMandant": "Mandant",
+      "tableGeschaeftsjahr": "Geschäftsjahr",
+      "tableStatus": "Status",
+      "tableKritisch": "KRITISCH",
+      "tableWarnung": "WARNUNG",
+      "tablePassed": "PASSED",
+      "tableAktion": "Aktion",
+      "openPruefung": "Prüfung öffnen"
+    },
+    "status": {
+      "PASSED": "Bestanden",
+      "WARNUNG": "Warnung",
+      "KRITISCH": "Kritisch",
+      "PENDING": "Offen",
+      "APPROVED": "Freigegeben",
+      "REJECTED": "Abgelehnt",
+      "NEEDS_REVISION": "Überarbeitung nötig",
+      "IN_PROGRESS": "In Bearbeitung"
+    },
+    "regel": {
+      "IDW_EK_QUOTE": {
+        "name": "Eigenkapitalquote ≥ 0 (keine Überschuldung)",
+        "beschreibung": "Die Eigenkapitalquote muss ≥ 0 sein, sonst liegt eine bilanzielle Überschuldung gemäß § 19 InsO vor."
+      },
+      "IDW_LIQUIDITAET_1": {
+        "name": "Liquidität 1. Grades ≥ 0",
+        "beschreibung": "Die flüssigen Mittel (Kassenbestand + Bankguthaben) müssen ≥ 0 sein."
+      },
+      "IDW_VERSCHULDUNGSGRAD": {
+        "name": "Verschuldungsgrad ≤ 1000%",
+        "beschreibung": "Verbindlichkeiten + Rückstellungen / Eigenkapital × 100 ≤ 1000%. Branchenabhängig."
+      },
+      "IDW_ANLAGEVERMOEGEN_BIS_AKTIVA": {
+        "name": "Anlagevermögen ≤ Aktiva-Summe",
+        "beschreibung": "Das Anlagevermögen darf die Bilanzsumme nicht überschreiten."
+      },
+      "IDW_GOING_CONCERN": {
+        "name": "Going Concern: EK + langfristige Rückstellungen ≥ 50% Aktiva",
+        "beschreibung": "Wenn EK + langfr. Rückstellungen < 50% der Bilanzsumme, besteht ein Going-Concern-Risiko."
+      }
+    },
+    "actions": {
+      "startPruefung": "Prüfung starten",
+      "runPlausi": "Plausi neu ausführen",
+      "finalize": "Prüfung abschließen",
+      "approveNotiz": "Freigeben",
+      "rejectNotiz": "Ablehnen",
+      "needsRevisionNotiz": "Überarbeitung anfordern",
+      "showReport": "Bericht anzeigen",
+      "addNotiz": "Notiz hinzufügen",
+      "acknowledge": "Bestätigen",
+      "cancel": "Abbrechen",
+      "save": "Speichern"
+    },
+    "notiz": {
+      "title": "WP-Notizen",
+      "newTitle": "Neue WP-Notiz",
+      "placeholder": "Notiz-Text (max. 500 Zeichen)…",
+      "emptyText": "Noch keine WP-Notizen vorhanden.",
+      "createError": "WP-Notiz konnte nicht erstellt werden.",
+      "statusError": "WP-Notiz-Status konnte nicht aktualisiert werden.",
+      "acknowledgedBy": "Bestätigt von",
+      "selfAckBlocked": "Self-Acknowledgement verboten: Sie können Ihre eigenen Notizen nicht bestätigen."
+    },
+    "pruefung": {
+      "title": "WP-Prüfung",
+      "neuTitle": "Neue WP-Prüfung starten",
+      "zusammenfassung": "Zusammenfassung",
+      "zusammenfassungPlaceholder": "Kurze Zusammenfassung der Prüfung (max. 2000 Zeichen)…",
+      "finalizeTitle": "Prüfung abschließen",
+      "finalizePlaceholder": "Begründung (mind. 1 Zeichen)…",
+      "finalStatus": "Endstatus",
+      "resultsTitle": "Plausi-Ergebnisse",
+      "resultsAnzahl": "{anzahl} Regeln ausgeführt",
+      "noResults": "Noch keine Plausi-Ergebnisse vorhanden.",
+      "startError": "WP-Prüfung konnte nicht gestartet werden.",
+      "finalizeError": "WP-Prüfung konnte nicht abgeschlossen werden.",
+      "reportError": "Bericht konnte nicht geladen werden.",
+      "alreadyFinalized": "Prüfung wurde bereits finalisiert — Status: {status}",
+      "loadError": "WP-Prüfung konnte nicht geladen werden."
+    },
+    "report": {
+      "title": "WP-Prüfungsbericht",
+      "downloadMarkdown": "Als Markdown",
+      "kopieren": "In Zwischenablage kopieren"
+    },
+    "bilanzStatusAPPROVED": "Bilanz nach WP-Freigabe auf APPROVED gesetzt",
+    "noMandant": "Bitte einen Mandanten auswählen."
   }
 }

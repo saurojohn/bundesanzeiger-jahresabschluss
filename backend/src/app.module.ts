@@ -18,6 +18,7 @@ import { DatevImportModule } from './modules/datev-import/datev-import.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { SignaturModule } from './modules/signatur/signatur.module';
 import { KonsolidierungModule } from './modules/konsolidierung/konsolidierung.module';
+import { WPModule } from './modules/wp/wp.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -72,6 +73,7 @@ import { PrismaModule } from './prisma/prisma.module';
     PdfModule,
     SignaturModule,
     KonsolidierungModule,
+    WPModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -1,0 +1,318 @@
+/**
+ * E2E-Test: WP-/IDW-Prüfungs-Modul.
+ *
+ * Voraussetzungen:
+ *   - Postgres laeuft (z.B. via `npm run docker:stack`).
+ *   - Schema migriert und geseedet (`npm run prisma:migrate && npm run prisma:seed`).
+ *
+ * Tests (lt. Sprint-Plan):
+ *   1.  POST /api/wp/notizen ohne Auth → 401
+ *   2.  POST /api/wp/notizen ohne WIRTSCHAFTSPRUEFER-Rolle → 403
+ *   3.  POST /api/wp/notizen mit STEUERBERATER-Rolle → 403
+ *   4.  POST /api/wp/notizen ohne bilanzId/guvId → 400
+ *   5.  POST /api/wp/notizen mit notizText > 500 Zeichen → 400
+ *   6.  POST /api/wp/notizen → 201 + Notiz
+ *   7.  PATCH /api/wp/notizen/:id/status mit eigenem User → 403 (Self-Ack-Schutz)
+ *   8.  PATCH /api/wp/notizen/:id/status mit anderem WP → 200 + Status-APPROVED
+ *   9.  POST /api/wp/pruefungen → 201 + pruefung
+ *   10. Plausi-Pruefung läuft automatisch → 5 BilanzPruefungsResult vorhanden
+ *   11. POST /api/wp/pruefungen/:id/finalize mit APPROVED → 200 + Status
+ *   12. GET /api/wp/pruefungen/:id/report → 200 + markdownReport mit allen Daten
+ *
+ * Hinweis: Tests werden gegen die Live-App ausgefuehrt (Port 3000),
+ * nicht gegen den Nest-Testing-Module. Damit ist die App identisch
+ * zum Produktionsverhalten.
+ */
+
+import { Test, type TestingModule } from '@nestjs/testing';
+import { type INestApplication, ValidationPipe } from '@nestjs/common';
+import { AppModule } from '../src/app.module';
+
+const BASE = 'http://localhost:3000';
+
+interface LoginResponse {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string;
+    mandanten: Array<{ id: string; firmenname: string; rolle: string }>;
+  };
+}
+
+interface WPNotizResponse {
+  id: string;
+  bilanzId: string | null;
+  guvId: string | null;
+  status: string;
+  notizText: string;
+  wpUserId: string;
+}
+
+interface BilanzPruefungsResultDto {
+  regelCode: string;
+  status: string;
+  berechneterWert: number;
+  schwellwert: number;
+  meldung: string;
+  geprueftAm: string;
+}
+
+interface WPPruefungDto {
+  id: string;
+  bilanzId: string;
+  status: string;
+  zusammenfassung: string | null;
+  pruefungsResults: BilanzPruefungsResultDto[];
+  notizen: WPNotizResponse[];
+}
+
+interface BilanzSummary {
+  id: string;
+  mandantId: string;
+  geschaeftsjahr: number;
+  status: string;
+}
+
+describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true,
+        forbidNonWhitelisted: true,
+      }),
+    );
+    app.setGlobalPrefix('api', { exclude: ['health'] });
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  async function loginAs(email: string, password: string): Promise<LoginResponse> {
+    const res = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      throw new Error(`Login als ${email} fehlgeschlagen: ${res.status}`);
+    }
+    return (await res.json()) as LoginResponse;
+  }
+
+  async function authFetch(
+    token: string,
+    path: string,
+    init: RequestInit = {},
+  ): Promise<Response> {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      ...((init.headers as Record<string, string>) ?? {}),
+    };
+    headers['authorization'] = `Bearer ${token}`;
+    return fetch(`${BASE}${path}`, { ...init, headers });
+  }
+
+  it('1. POST /api/wp/notizen ohne Auth → 401', async () => {
+    const res = await fetch(`${BASE}/api/wp/notizen`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bilanzId: '00000000-0000-4000-8000-000000000000', notizText: 'Test' }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('2. POST /api/wp/notizen ohne WIRTSCHAFTSPRUEFER-Rolle (GF) → 403', async () => {
+    const gf = await loginAs('gf-demo@demo-gmbh.de', 'demo1234');
+    const res = await authFetch(gf.accessToken, '/api/wp/notizen', {
+      method: 'POST',
+      body: JSON.stringify({
+        bilanzId: '00000000-0000-4000-8000-000000000000',
+        notizText: 'Test',
+      }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('3. POST /api/wp/notizen mit STEUERBERATER-Rolle → 403', async () => {
+    const sb = await loginAs('steuerberater@kanzlei.de', 'demo1234');
+    const res = await authFetch(sb.accessToken, '/api/wp/notizen', {
+      method: 'POST',
+      body: JSON.stringify({
+        bilanzId: '00000000-0000-4000-8000-000000000000',
+        notizText: 'Test',
+      }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('4. POST /api/wp/notizen ohne bilanzId/guvId → 400', async () => {
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const res = await authFetch(wp.accessToken, '/api/wp/notizen', {
+      method: 'POST',
+      body: JSON.stringify({ notizText: 'Test-Notiz' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('5. POST /api/wp/notizen mit notizText > 500 Zeichen → 400', async () => {
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const sb = await loginAs('steuerberater@kanzlei.de', 'demo1234');
+    const bilanzRes = await authFetch(
+      sb.accessToken,
+      `/api/bilanz?mandantId=${sb.user.mandanten[0]?.id}`,
+    );
+    const bilanzList = (await bilanzRes.json()) as BilanzSummary[];
+    const bilanzId = bilanzList[0]?.id;
+    expect(bilanzId).toBeDefined();
+
+    const longText = 'a'.repeat(501);
+    const res = await authFetch(wp.accessToken, '/api/wp/notizen', {
+      method: 'POST',
+      body: JSON.stringify({ bilanzId, notizText: longText }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  let wpNotizId = '';
+  let wpBilanzId = '';
+
+  it('6. POST /api/wp/notizen → 201 + Notiz', async () => {
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const sb = await loginAs('steuerberater@kanzlei.de', 'demo1234');
+    const bilanzRes = await authFetch(
+      sb.accessToken,
+      `/api/bilanz?mandantId=${sb.user.mandanten[0]?.id}`,
+    );
+    const bilanzList = (await bilanzRes.json()) as BilanzSummary[];
+    wpBilanzId = bilanzList[0]?.id ?? '';
+    expect(wpBilanzId).toBeTruthy();
+
+    const res = await authFetch(wp.accessToken, '/api/wp/notizen', {
+      method: 'POST',
+      body: JSON.stringify({
+        bilanzId: wpBilanzId,
+        notizText: 'Bankguthaben wirken überdimensioniert.',
+      }),
+    });
+    expect(res.status).toBe(201);
+    const notiz = (await res.json()) as WPNotizResponse;
+    expect(notiz.status).toBe('PENDING');
+    expect(notiz.wpUserId).toBe(wp.user.id);
+    expect(notiz.notizText).toContain('Bankguthaben');
+    wpNotizId = notiz.id;
+  });
+
+  it('7. PATCH /api/wp/notizen/:id/status mit eigenem User → 403 (Self-Ack-Schutz)', async () => {
+    expect(wpNotizId).toBeTruthy();
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const res = await authFetch(
+      wp.accessToken,
+      `/api/wp/notizen/${wpNotizId}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'APPROVED' }),
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('8. PATCH /api/wp/notizen/:id/status mit anderem User (KANZLEI_ADMIN) → 200 + APPROVED', async () => {
+    expect(wpNotizId).toBeTruthy();
+    const admin = await loginAs('kanzlei-admin@kanzlei.de', 'demo1234');
+    const res = await authFetch(
+      admin.accessToken,
+      `/api/wp/notizen/${wpNotizId}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'APPROVED' }),
+      },
+    );
+    expect(res.status).toBe(200);
+    const updated = (await res.json()) as WPNotizResponse;
+    expect(updated.status).toBe('APPROVED');
+  });
+
+  let pruefungId = '';
+
+  it('9. POST /api/wp/pruefungen → 201 + pruefung', async () => {
+    expect(wpBilanzId).toBeTruthy();
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const res = await authFetch(wp.accessToken, '/api/wp/pruefungen', {
+      method: 'POST',
+      body: JSON.stringify({
+        bilanzId: wpBilanzId,
+        zusammenfassung: 'Pilot-Prüfung — Demo GmbH',
+      }),
+    });
+    expect(res.status).toBe(201);
+    const pruefung = (await res.json()) as WPPruefungDto;
+    expect(pruefung.status).toBe('IN_PROGRESS');
+    pruefungId = pruefung.id;
+  });
+
+  it('10. Plausi-Pruefung läuft automatisch → 5 BilanzPruefungsResult vorhanden', async () => {
+    expect(pruefungId).toBeTruthy();
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const res = await authFetch(wp.accessToken, `/api/wp/pruefungen/${pruefungId}`);
+    expect(res.status).toBe(200);
+    const pruefung = (await res.json()) as WPPruefungDto;
+    expect(pruefung.pruefungsResults.length).toBe(5);
+    const codes = pruefung.pruefungsResults.map((r) => r.regelCode).sort();
+    expect(codes).toEqual([
+      'IDW_ANLAGEVERMOEGEN_BIS_AKTIVA',
+      'IDW_EK_QUOTE',
+      'IDW_GOING_CONCERN',
+      'IDW_LIQUIDITAET_1',
+      'IDW_VERSCHULDUNGSGRAD',
+    ]);
+  });
+
+  it('11. POST /api/wp/pruefungen/:id/finalize mit APPROVED → 200 + Status-APPROVED', async () => {
+    expect(pruefungId).toBeTruthy();
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const res = await authFetch(
+      wp.accessToken,
+      `/api/wp/pruefungen/${pruefungId}/finalize`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          status: 'APPROVED',
+          zusammenfassung: 'Pilot erfolgreich abgeschlossen.',
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    const pruefung = (await res.json()) as WPPruefungDto;
+    expect(pruefung.status).toBe('APPROVED');
+    expect(pruefung.completedAt).not.toBeNull();
+  });
+
+  it('12. GET /api/wp/pruefungen/:id/report → 200 + markdownReport', async () => {
+    expect(pruefungId).toBeTruthy();
+    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const res = await authFetch(
+      wp.accessToken,
+      `/api/wp/pruefungen/${pruefungId}/report`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { pruefungId: string; markdownReport: string };
+    expect(body.pruefungId).toBe(pruefungId);
+    expect(body.markdownReport).toContain('# Wirtschaftsprüfungs-Bericht');
+    expect(body.markdownReport).toContain('IDW_EK_QUOTE');
+    expect(body.markdownReport).toContain('IDW_LIQUIDITAET_1');
+    expect(body.markdownReport).toContain('IDW_VERSCHULDUNGSGRAD');
+    expect(body.markdownReport).toContain('IDW_ANLAGEVERMOEGEN_BIS_AKTIVA');
+    expect(body.markdownReport).toContain('IDW_GOING_CONCERN');
+    expect(body.markdownReport).toContain('## Plausibilitäts-Ergebnisse (IDW PS 880)');
+  });
+});

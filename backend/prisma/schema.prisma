@@ -61,7 +61,7 @@ model Mandant {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  kanzlei           Kanzlei           @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
+  kanzlei           Kanzlei                  @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
   userAccess        UserMandantRole[]
   bilanzen          Bilanz[]
   guvs              GuV[]
@@ -100,10 +100,13 @@ model User {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  kanzlei      Kanzlei?          @relation(fields: [kanzleiId], references: [id])
-  mandantRoles UserMandantRole[]
-  auditLogs    AuditLog[]
-  sessions     UserSession[]
+  kanzlei               Kanzlei?               @relation(fields: [kanzleiId], references: [id])
+  mandantRoles          UserMandantRole[]
+  auditLogs             AuditLog[]
+  sessions              UserSession[]
+  wpNotizenErstellt     WPNotiz[]              @relation("WPNotizErstellt")
+  wpNotizenAcknowledged WPNotiz[]              @relation("WPNotizAcknowledged")
+  wpPruefungenErstellt  WPPruefungsAbschluss[] @relation("WPPruefungErstellt")
 
   @@map("user")
 }
@@ -156,16 +159,19 @@ model Bilanz {
   geschaeftsjahr Int // z.B. 2025
   erstelltAm     DateTime?
   gueltigBis     DateTime?
-  status         String    @default("DRAFT") // "DRAFT" | "VALIDATED" | "ARCHIVED"
+  status         String    @default("DRAFT") // "DRAFT" | "VALIDATED" | "ARCHIVED" | "APPROVED"
   hinweise       String? // Freitext-Notizen
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   createdById    String?   @db.Uuid
   updatedById    String?   @db.Uuid
 
-  mandant           Mandant           @relation(fields: [mandantId], references: [id], onDelete: Cascade)
-  positionen        BilanzPosition[]
-  jahresabschluesse Jahresabschluss[]
+  mandant                Mandant                 @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  positionen             BilanzPosition[]
+  jahresabschluesse      Jahresabschluss[]
+  pruefungsResults       BilanzPruefungsResult[]
+  wpNotizen              WPNotiz[]
+  wpPruefungsAbschluesse WPPruefungsAbschluss[]
 
   @@unique([mandantId, geschaeftsjahr])
   @@index([mandantId])
@@ -188,7 +194,8 @@ model BilanzPosition {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  bilanz Bilanz @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
+  bilanz    Bilanz    @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
+  wpNotizen WPNotiz[]
 
   @@index([bilanzId])
   @@index([seite])
@@ -213,9 +220,12 @@ model GuV {
   createdById    String?  @db.Uuid
   updatedById    String?  @db.Uuid
 
-  mandant           Mandant           @relation(fields: [mandantId], references: [id], onDelete: Cascade)
-  positionen        GuVPosition[]
-  jahresabschluesse Jahresabschluss[]
+  mandant                Mandant                 @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  positionen             GuVPosition[]
+  jahresabschluesse      Jahresabschluss[]
+  pruefungsResults       BilanzPruefungsResult[]
+  wpNotizen              WPNotiz[]
+  wpPruefungsAbschluesse WPPruefungsAbschluss[]
 
   @@unique([mandantId, geschaeftsjahr])
   @@index([mandantId])
@@ -235,7 +245,8 @@ model GuVPosition {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  guv GuV @relation(fields: [guvId], references: [id], onDelete: Cascade)
+  guv       GuV       @relation(fields: [guvId], references: [id], onDelete: Cascade)
+  wpNotizen WPNotiz[]
 
   @@index([guvId])
   @@index([kategorie])
@@ -471,30 +482,30 @@ model SystemConfig {
 /// und Konzern-GuV. Alle Mandanten (Mutter + Tochtern) müssen zur selben
 /// Kanzlei gehören — Mandant-Trennung wird im Service erzwungen.
 model KonsolidierungsEinheit {
-  id                       String   @id @default(uuid()) @db.Uuid
-  kanzleiId                String   @db.Uuid
-  mutterMandantId          String   @db.Uuid
+  id                       String    @id @default(uuid()) @db.Uuid
+  kanzleiId                String    @db.Uuid
+  mutterMandantId          String    @db.Uuid
   /// Postgres Array — Liste der Tochter-Mandant-IDs.
   /// Prisma 5.x mappt `String[]` nativ auf `text[]`.
   tochterMandantIds        String[]
   geschaeftsjahr           Int
-  konsolidierungsArt       String   @default("VOLLKONSOLIDIERUNG") // VOLLKONSOLIDIERUNG | QUOTAL | AT_EQUITY
-  status                   String   @default("DRAFT") // DRAFT | IN_PROGRESS | COMPLETED | VALIDATED
-  konzernBilanzId          String?  @db.Uuid
-  konzernGuvId             String?  @db.Uuid
-  beteiligungsquote        Decimal  @db.Decimal(5, 2) // 0–100%
-  anschaffungskosten       Decimal  @db.Decimal(18, 2)
-  eigenkapitalTochter      Decimal  @db.Decimal(18, 2)
-  jahresueberschussTochter Decimal  @db.Decimal(18, 2)
-  erstellungsdatum         DateTime @default(now())
+  konsolidierungsArt       String    @default("VOLLKONSOLIDIERUNG") // VOLLKONSOLIDIERUNG | QUOTAL | AT_EQUITY
+  status                   String    @default("DRAFT") // DRAFT | IN_PROGRESS | COMPLETED | VALIDATED
+  konzernBilanzId          String?   @db.Uuid
+  konzernGuvId             String?   @db.Uuid
+  beteiligungsquote        Decimal   @db.Decimal(5, 2) // 0–100%
+  anschaffungskosten       Decimal   @db.Decimal(18, 2)
+  eigenkapitalTochter      Decimal   @db.Decimal(18, 2)
+  jahresueberschussTochter Decimal   @db.Decimal(18, 2)
+  erstellungsdatum         DateTime  @default(now())
   finalisiertAm            DateTime?
-  finalisiertVonId         String?  @db.Uuid
-  createdById              String?  @db.Uuid
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  finalisiertVonId         String?   @db.Uuid
+  createdById              String?   @db.Uuid
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  kanzlei   Kanzlei                    @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
-  mutter    Mandant                    @relation("Mutter", fields: [mutterMandantId], references: [id])
+  kanzlei   Kanzlei                  @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
+  mutter    Mandant                  @relation("Mutter", fields: [mutterMandantId], references: [id])
   buchungen KonsolidierungsBuchung[]
 
   @@unique([mutterMandantId, geschaeftsjahr])
@@ -529,4 +540,99 @@ model KonsolidierungsBuchung {
   @@index([einheitId])
   @@index([buchungsArt])
   @@map("konsolidierungs_buchung")
+}
+
+// ============================================================================
+// Wirtschaftsprüfung (M3 Sprint 0) — IDW PS 880 Plausi + WP-Workflow
+// ============================================================================
+
+/// Anmerkung eines Wirtschaftsprüfers zu einer Bilanz, GuV oder
+/// einzelnen Position. Optional an `acknowledgedById` gebunden, wenn die
+/// Gegenseite (Steuerberater/Mandant) darauf reagiert.
+model WPNotiz {
+  id               String    @id @default(uuid()) @db.Uuid
+  bilanzId         String?   @db.Uuid
+  guvId            String?   @db.Uuid
+  bilanzPositionId String?   @db.Uuid
+  guvPositionId    String?   @db.Uuid
+  wpUserId         String    @db.Uuid
+  notizText        String    @db.Text
+  status           String    @default("PENDING") // PENDING | APPROVED | REJECTED | NEEDS_REVISION
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  acknowledgedAt   DateTime?
+  acknowledgedById String?   @db.Uuid
+
+  bilanz         Bilanz?         @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
+  guv            GuV?            @relation(fields: [guvId], references: [id], onDelete: Cascade)
+  bilanzPosition BilanzPosition? @relation(fields: [bilanzPositionId], references: [id], onDelete: Cascade)
+  guvPosition    GuVPosition?    @relation(fields: [guvPositionId], references: [id], onDelete: Cascade)
+  wpUser         User            @relation("WPNotizErstellt", fields: [wpUserId], references: [id])
+  acknowledgedBy User?           @relation("WPNotizAcknowledged", fields: [acknowledgedById], references: [id])
+
+  @@index([bilanzId])
+  @@index([guvId])
+  @@index([wpUserId])
+  @@index([status])
+  @@map("wp_notiz")
+}
+
+/// Konfiguration einer Prüfungs-Regel (z.B. IDW-Standardregeln).
+/// `konfiguration` enthält schwellwert-/operator-/einheit-Metadaten.
+model PruefungsRegel {
+  id            String  @id @default(uuid()) @db.Uuid
+  code          String  @unique // z.B. "IDW_EK_QUOTE"
+  name          String // "Eigenkapitalquote ≥ 0"
+  beschreibung  String  @db.Text
+  schweregrad   String  @default("WARNUNG") // INFO | WARNUNG | KRITISCH
+  istAktiv      Boolean @default(true)
+  konfiguration Json // Regel-Parameter (Schwellwerte etc.)
+  reihenfolge   Int     @default(0)
+
+  @@map("pruefungs_regel")
+}
+
+/// Ergebnis einer Regel-Ausführung gegen eine Bilanz (optional GuV).
+/// Pro (bilanzId, regelCode) genau ein Eintrag — wird bei Re-Run ersetzt.
+model BilanzPruefungsResult {
+  id              String   @id @default(uuid()) @db.Uuid
+  bilanzId        String   @db.Uuid
+  guvId           String?  @db.Uuid
+  regelCode       String
+  status          String // PASSED | WARNUNG | KRITISCH
+  berechneterWert Decimal? @db.Decimal(18, 4)
+  schwellwert     Decimal? @db.Decimal(18, 4)
+  meldung         String
+  geprueftAm      DateTime @default(now())
+
+  bilanz Bilanz @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
+  guv    GuV?   @relation(fields: [guvId], references: [id])
+
+  @@unique([bilanzId, regelCode])
+  @@index([bilanzId])
+  @@index([status])
+  @@map("bilanz_pruefungs_result")
+}
+
+/// WP-Prüfungs-Vorgang (Lebenszyklus: IN_PROGRESS → APPROVED | REJECTED).
+/// Beim Finalize (APPROVED) wird Bilanz.status auf APPROVED gesetzt.
+model WPPruefungsAbschluss {
+  id                 String    @id @default(uuid()) @db.Uuid
+  bilanzId           String    @db.Uuid
+  guvId              String?   @db.Uuid
+  wpUserId           String    @db.Uuid
+  status             String    @default("IN_PROGRESS") // IN_PROGRESS | APPROVED | REJECTED
+  zusammenfassung    String?   @db.Text
+  startedAt          DateTime  @default(now())
+  completedAt        DateTime?
+  finalisierungAm    DateTime?
+  finalisierungVonId String?   @db.Uuid
+
+  bilanz Bilanz @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
+  guv    GuV?   @relation(fields: [guvId], references: [id])
+  wpUser User   @relation("WPPruefungErstellt", fields: [wpUserId], references: [id])
+
+  @@index([bilanzId])
+  @@index([status])
+  @@map("wp_pruefungs_abschluss")
 }

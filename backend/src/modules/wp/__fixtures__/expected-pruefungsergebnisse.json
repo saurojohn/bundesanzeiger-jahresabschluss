@@ -1,0 +1,60 @@
+{
+  "$schema": "Pruefungsergebnisse-Mock für IDW-Standardregeln (Demo GmbH Seed-Bilanz)",
+  "demoBilanz": {
+    "aktivaSumme": 150000.00,
+    "passivaSumme": 150000.00,
+    "eigenkapital": 140000.00,
+    "fluessigeMittel": 150000.00,
+    "verbindlichkeiten": 10000.00,
+    "rueckstellungen": 0.00,
+    "langfristigeRueckstellungen": 0.00,
+    "anlagevermoegen": 0.00
+  },
+  "regeln": [
+    {
+      "code": "IDW_EK_QUOTE",
+      "name": "Eigenkapitalquote ≥ 0 (keine Überschuldung)",
+      "konfiguration": { "schwellwert": 0, "vergleichsOperator": ">=", "einheit": "PROZENT" },
+      "schweregrad": "KRITISCH",
+      "berechneterWert": 93.3333,
+      "erwarteterStatus": "PASSED",
+      "meldungBeispiel": "Eigenkapitalquote 93.33% (EK=140000.00 EUR, Bilanzsumme=150000.00 EUR)."
+    },
+    {
+      "code": "IDW_LIQUIDITAET_1",
+      "name": "Liquidität 1. Grades ≥ 0",
+      "konfiguration": { "schwellwert": 0, "vergleichsOperator": ">=", "einheit": "EURO" },
+      "schweregrad": "KRITISCH",
+      "berechneterWert": 150000.00,
+      "erwarteterStatus": "PASSED",
+      "meldungBeispiel": "Flüssige Mittel (B.IV.) = 150000.00 EUR."
+    },
+    {
+      "code": "IDW_VERSCHULDUNGSGRAD",
+      "name": "Verschuldungsgrad ≤ 1000%",
+      "konfiguration": { "schwellwert": 1000, "vergleichsOperator": "<=", "einheit": "PROZENT" },
+      "schweregrad": "WARNUNG",
+      "berechneterWert": 7.1429,
+      "erwarteterStatus": "PASSED",
+      "meldungBeispiel": "Verschuldungsgrad 7.14% ((Verbindlichkeiten 10000.00 EUR + Rückstellungen 0.00 EUR) / EK 140000.00 EUR × 100)."
+    },
+    {
+      "code": "IDW_ANLAGEVERMOEGEN_BIS_AKTIVA",
+      "name": "Anlagevermögen ≤ Aktiva-Summe",
+      "konfiguration": { "schwellwert": 0, "vergleichsOperator": ">=", "einheit": "EURO" },
+      "schweregrad": "KRITISCH",
+      "berechneterWert": 150000.00,
+      "erwarteterStatus": "PASSED",
+      "meldungBeispiel": "Aktiva-Summe 150000.00 EUR – Anlagevermögen 0.00 EUR = 150000.00 EUR (muss ≥ 0 sein)."
+    },
+    {
+      "code": "IDW_GOING_CONCERN",
+      "name": "Going Concern: EK + langfristige Rückstellungen ≥ 50% Aktiva",
+      "konfiguration": { "schwellwert": 50, "vergleichsOperator": ">=", "einheit": "PROZENT" },
+      "schweregrad": "WARNUNG",
+      "berechneterWert": 93.3333,
+      "erwarteterStatus": "PASSED",
+      "meldungBeispiel": "Going-Concern-Quote 93.33% ((EK 140000.00 EUR + langfr. Rückstellungen 0.00 EUR) / Aktiva 150000.00 EUR × 100)."
+    }
+  ]
+}

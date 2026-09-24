@@ -36,6 +36,10 @@ async function main(): Promise<void> {
   await prisma.guV.deleteMany();
   await prisma.bilanzPosition.deleteMany();
   await prisma.bilanz.deleteMany();
+  await prisma.wPNotiz.deleteMany();
+  await prisma.bilanzPruefungsResult.deleteMany();
+  await prisma.wPPruefungsAbschluss.deleteMany();
+  await prisma.pruefungsRegel.deleteMany();
   await prisma.userSession.deleteMany();
   await prisma.userMandantRole.deleteMany();
   await prisma.user.deleteMany();
@@ -401,6 +405,86 @@ async function main(): Promise<void> {
     },
   });
   console.log(`[seed] Anhang angelegt für ${MANDANT_DEMO} GJ 2025 (${anhang.id})`);
+
+  // ----------------------------------------------------------------------------
+  // 5 IDW-Standard-Prüfungsregeln (IDW PS 880) — seed
+  // ----------------------------------------------------------------------------
+  const idwRegeln: Prisma.PruefungsRegelCreateInput[] = [
+    {
+      code: 'IDW_EK_QUOTE',
+      name: 'Eigenkapitalquote ≥ 0 (keine Überschuldung)',
+      beschreibung:
+        'Die Eigenkapitalquote muss ≥ 0 sein, sonst liegt eine bilanzielle Überschuldung gemäß § 19 InsO vor.',
+      schweregrad: 'KRITISCH',
+      istAktiv: true,
+      konfiguration: {
+        schwellwert: 0,
+        vergleichsOperator: '>=',
+        einheit: 'PROZENT',
+      },
+      reihenfolge: 1,
+    },
+    {
+      code: 'IDW_LIQUIDITAET_1',
+      name: 'Liquidität 1. Grades ≥ 0',
+      beschreibung:
+        'Die flüssigen Mittel (Kassenbestand + Bankguthaben, HGB-Position B.IV.) müssen ≥ 0 sein.',
+      schweregrad: 'KRITISCH',
+      istAktiv: true,
+      konfiguration: {
+        schwellwert: 0,
+        vergleichsOperator: '>=',
+        einheit: 'EURO',
+      },
+      reihenfolge: 2,
+    },
+    {
+      code: 'IDW_VERSCHULDUNGSGRAD',
+      name: 'Verschuldungsgrad ≤ 1000%',
+      beschreibung:
+        'Verbindlichkeiten + Rückstellungen / Eigenkapital × 100 ≤ 1000%. Branchenabhängig — Industrieunternehmen typisch ≤ 500%.',
+      schweregrad: 'WARNUNG',
+      istAktiv: true,
+      konfiguration: {
+        schwellwert: 1000,
+        vergleichsOperator: '<=',
+        einheit: 'PROZENT',
+      },
+      reihenfolge: 3,
+    },
+    {
+      code: 'IDW_ANLAGEVERMOEGEN_BIS_AKTIVA',
+      name: 'Anlagevermögen ≤ Aktiva-Summe',
+      beschreibung:
+        'Das Anlagevermögen (HGB-Position A.) darf die Bilanzsumme nicht überschreiten.',
+      schweregrad: 'KRITISCH',
+      istAktiv: true,
+      konfiguration: {
+        schwellwert: 0,
+        vergleichsOperator: '>=',
+        einheit: 'EURO',
+      },
+      reihenfolge: 4,
+    },
+    {
+      code: 'IDW_GOING_CONCERN',
+      name: 'Going Concern: EK + langfristige Rückstellungen ≥ 50% Aktiva',
+      beschreibung:
+        'Wenn Eigenkapital + langfristige Rückstellungen < 50% der Bilanzsumme, besteht ein Going-Concern-Risiko (§ 252 HGB).',
+      schweregrad: 'WARNUNG',
+      istAktiv: true,
+      konfiguration: {
+        schwellwert: 50,
+        vergleichsOperator: '>=',
+        einheit: 'PROZENT',
+      },
+      reihenfolge: 5,
+    },
+  ];
+  for (const r of idwRegeln) {
+    await prisma.pruefungsRegel.create({ data: r });
+  }
+  console.log(`[seed] IDW-Standardregeln angelegt: ${idwRegeln.length} Regeln`);
 
   // ----------------------------------------------------------------------------
   // PDF-Generation (M1)

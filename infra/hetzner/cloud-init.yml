@@ -1,0 +1,126 @@
+# ============================================================================
+# Hetzner Cloud-Init (M4 Sprint 2)
+# ============================================================================
+# Wird beim ersten Boot jeder VM ausgeführt.
+# Installiert Docker + cosign + syft, konfiguriert SSH-Hardening und
+# sysctl-Tuning für Production-Traffic.
+# ============================================================================
+
+#cloud-config
+write_files:
+  # ----- sysctl-Tuning für PostgreSQL + hohe Connection-Counts -----
+  - path: /etc/sysctl.d/99-banz-tuning.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      # PostgreSQL shared memory
+      kernel.shmmax=68719476736
+      kernel.shmall=4294967296
+      # Netzwerk
+      net.core.somaxconn=65535
+      net.ipv4.tcp_max_syn_backlog=65535
+      net.core.netdev_max_backlog=65535
+      # VM-Overcommit (für Redis + Backend wichtig)
+      vm.overcommit_memory=1
+
+  # ----- fail2ban-Konfiguration -----
+  - path: /etc/fail2ban/jail.d/banz-ssh.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      logpath = /var/log/auth.log
+      maxretry = 3
+      bantime = 3600
+      findtime = 600
+
+  # ----- Docker-Log-Limit (verhindert Disk-Full) -----
+  - path: /etc/docker/daemon.json
+    permissions: '0644'
+    owner: root:root
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        },
+        "live-restore": true
+      }
+
+  # ----- Deploy-User Docker-Group -----
+  - path: /etc/sudoers.d/deploy-docker
+    permissions: '0440'
+    owner: root:root
+    content: |
+      deploy ALL=(ALL) NOPASSWD: /usr/bin/docker, /usr/bin/docker-compose
+
+runcmd:
+  # ----- System-Updates -----
+  - apt-get update
+  - apt-get upgrade -y
+  - apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg lsb-release fail2ban unattended-upgrades apt-listchanges \
+      python3 build-essential openssl
+
+  # ----- Unattended-Upgrades aktivieren -----
+  - |
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::Unattended-Upgrade "1";
+    APT::Periodic::AutocleanInterval "7";
+    EOF
+
+  # ----- Docker installieren (Hetzner-empfohlenes Repo) -----
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - chmod a+r /etc/apt/keyrings/docker.gpg
+  - |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable docker
+  - systemctl start docker
+
+  # ----- Deploy-User anlegen -----
+  - useradd -m -s /bin/bash -G docker deploy
+  - mkdir -p /home/deploy/.ssh
+  - cp /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+  - chown -R deploy:deploy /home/deploy/.ssh
+  - chmod 700 /home/deploy/.ssh
+  - chmod 600 /home/deploy/.ssh/authorized_keys
+
+  # ----- cosign + syft installieren (Sigstore Code-Signing) -----
+  - COSIGN_VERSION="v2.4.1"
+  - SYFT_VERSION="v1.18.0"
+  - curl -fsSL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+  - curl -fsSL -o /usr/local/bin/syft "https://github.com/anchore/syft/releases/download/${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64"
+  - chmod +x /usr/local/bin/cosign /usr/local/bin/syft
+
+  # ----- SSH-Hardening -----
+  - |
+    sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    systemctl reload sshd
+
+  # ----- Fail2ban aktivieren -----
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+
+  # ----- sysctl anwenden -----
+  - sysctl -p /etc/sysctl.d/99-banz-tuning.conf
+
+  # ----- Health-Markierung (für Hetzner Cloud-Init-Tracking) -----
+  - |
+    mkdir -p /var/lib/cloud/instance
+    echo "banz-cloud-init-ok $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /var/lib/cloud/instance/banz-cloud-init-status
+
+  # ----- Final-Log -----
+  - echo "=== banz cloud-init completed at $(date -u) ===" >> /var/log/banz-cloud-init.log
+
+final_message: "Bundesanzeiger Hetzner VM bereit (cloud-init abgeschlossen) nach $UPTIME Sekunden"
+timezone: Europe/Berlin

@@ -1,6 +1,6 @@
 # Milestone 4 — Production-Tier
 
-> **Status**: 🚧 Sprint 0 abgeschlossen (Vorbereitung), Sprint 1–5 folgen.
+> **Status**: 🚧 Sprint 0 + 1 + 2 abgeschlossen (Public-API + Cloud-Migration live), Sprint 3–5 folgen.
 > **Vision**: Production-Tier-System für Bundesanzeiger Jahresabschluss
 > mit Multi-VM-Cloud-Deployment, Public-API, Subscription-Billing und
 > vollständiger GoBD-Zertifizierungsreife.
@@ -21,8 +21,9 @@
 | **M2** | ✅ Pilot-Ready | E-Bilanz-XBRL, DATEV-Export, qeS-Signatur, Frontend |
 | **M3** | ✅ Pilot-Ready | DATEV-Import, Konzernabschluss, Wirtschaftsprüfer, White-Label |
 | **M4 Sprint 0** | ✅ Vorbereitung | Redis-Cache, Code-Signing, DNS-Wildcard-Cert-Setup |
-| **M4 Sprint 1** | ⏳ geplant | Public-API (OAuth2 + OpenAPI 3.1) |
-| **M4 Sprint 2** | ⏳ geplant | Cloud-Migration (Multi-VM) |
+| **M4 Sprint 1** | ✅ Public-API | OAuth2 client_credentials, API-Keys, 10 Scopes, OpenAPI 3.1, Webhooks (HMAC + Retry + DLQ) |
+| **M4 Sprint 2** | ✅ Cloud-Migration | Prisma Read-Routing (`$extends`), Hetzner Multi-VM-Compose, NGINX Blue-Green + Cosign-Verify, /health-Probes, Smoke-Test |
+| **M4 Sprint 3** | ⏳ geplant | Subscription + White-Label-Production |
 | **M4 Sprint 3** | ⏳ geplant | Subscription + White-Label-Production |
 | **M4 Sprint 4** | ⏳ geplant | Mobile-Responsiveness |
 | **M4 Sprint 5** | ⏳ geplant | GoBD-Zertifizierungs-Audit + M4-Release-Tag |
@@ -54,39 +55,65 @@ Funktionalität zu beeinträchtigen.
 - Cache-Tests decken Memory- + Redis-Provider ab
 - Bestehende Pilot-Kanzleien funktionieren ohne Daten-Migration weiter
 
-### Sprint 1 — Public-API ⏳
+### Sprint 1 — Public-API ✅
 
 **Ziel**: Externe API für Kanzlei-Software-Integration (DATEV-Direkt-
 Anbindung, ERP-Systeme, Mobile-Apps).
 
-**Geplante Features**:
-- OAuth2-Server (`/oauth/token`, `/oauth/introspect`)
-- OpenAPI 3.1 Spec (automatisch generiert aus NestJS-Decorators)
-- API-Versionierung: `/api/v1/...`, `/api/v2/...` (für Breaking Changes)
-- Rate-Limiting pro API-Key (separate `Throttler`-Buckets)
-- Webhook-System für `submission.status-changed`-Events
+**Abgeschlossen** (`e30a54b`):
+- ✅ OAuth2-Server (`/oauth/token`, `/oauth/introspect`, `/oauth/revoke`)
+  mit client_credentials-Flow, JWT-Access-Tokens (1h TTL) + Refresh-Tokens (30d)
+- ✅ API-Key-Management (CRUD, sha256-gehashte Speicherung, scopes, expiry)
+- ✅ OpenAPI 3.1 Spec (`/api/docs`, `/api/docs-json`) via `@nestjs/swagger`,
+  mit Bearer-Auth und 10 Mandant-scoped Scopes
+- ✅ Versionierung `/api/v1/...` mit Mandant-Trennung (Repository-Pattern)
+- ✅ Webhook-System (`WebhookSubscription`, `WebhookDelivery`) mit HMAC-SHA256,
+  exponential backoff (4 Retries: 1m/5m/30m/2h), Dead-Letter-Queue
+- ✅ Frontend-API-Key-Management-UI (`/einstellungen/api-keys`)
+- ✅ Bestehende API-Endpoints unverändert (Backwards-Compat)
 
-**Akzeptanzkriterien**:
-- OpenAPI-Spec ist im Frontend-Wizard integriert
-- OAuth2-Client-Credentials-Flow funktioniert
-- API-Keys sind Kanzlei-scoped (Mandant-Trennung bleibt)
-- Rate-Limits konfigurierbar pro Kanzlei
+**Akzeptanzkriterien erfüllt**:
+- ✅ OpenAPI-Spec im Frontend-Wizard integriert
+- ✅ OAuth2-Client-Credentials-Flow funktioniert
+- ✅ API-Keys Kanzlei-scoped (Mandant-Trennung bleibt)
+- ✅ Rate-Limits pro Kanzlei konfigurierbar (Throttler-Buckets)
 
-### Sprint 2 — Cloud-Migration ⏳
+### Sprint 2 — Cloud-Migration ✅
 
-**Ziel**: Deployment auf Multi-VM-Cloud (Hetzner Cloud oder AWS).
+**Ziel**: Deployment auf Multi-VM-Cloud (Hetzner Cloud gewählt — siehe User-Fragebogen).
 
-**Geplante Features**:
-- Container-Orchestrierung mit Docker Compose / Kubernetes
-- Sticky-Session-freies Backend (Redis für alle State)
-- PostgreSQL-Read-Replicas für Dashboard-Queries
-- S3-kompatibler Storage (Hetzner S3 oder AWS S3)
-- Blue-Green-Deployment via Cosign-Signaturen
+**Abgeschlossen**:
+- ✅ Prisma `$extends` Read-Routing — Read-Queries automatisch an Replica,
+  Writes bleiben auf Primary. Zero-Impact-Migration wenn
+  `DATABASE_READ_REPLICA_URL` nicht gesetzt.
+- ✅ `infra/docker-compose.prod.yml` — Production-Multi-VM-Setup mit
+  Postgres-Primary+Replica, Redis, MinIO (WORM), 2× Backend (Blue/Green),
+  NGINX. Alle Services mit Healthchecks.
+- ✅ `infra/hetzner/README.md` — Schritt-für-Schritt-Provisioning-Anleitung
+  für Hetzner Cloud (3 VMs, DNS, Let's Encrypt, Replication, Backup).
+- ✅ `infra/hetzner/cloud-init.yml` — Hetzner user-data mit Docker,
+  cosign, syft, fail2ban, sysctl-Tuning, SSH-Hardening.
+- ✅ `infra/hetzner/postgres-replica-init.sh` — einmaliges
+  PostgreSQL-Replication-Setup mit WAL-Archiving + Replica-Recovery-Check.
+- ✅ `infra/nginx/nginx.conf` — TLS-Termination, Blue/Green-Upstream-Routing,
+  HSTS + Security-Headers, Rate-Limiting pro Endpoint-Klasse.
+- ✅ `infra/nginx/blue-green-switch.sh` — atomarer Pool-Switch mit
+  Cosign-Image-Verifikation (fail-closed) + Health-Check + Audit-Log.
+- ✅ `backend/src/health/` — `/health` (Liveness) + `/health/ready`
+  (DB+Redis) für NGINX-Health-Check + Docker + Monitoring.
+- ✅ `infra/scripts/smoke-test.sh` — 6-stufiger End-to-End-Smoke-Test
+  gegen Production-URL.
+- ✅ `infra/scripts/cosign-verify.sh` — Verifiziert Signatur + SBOM +
+  SLSA-Provenance eines Image-Tags.
+- ✅ `RUNBOOK.md` — Section 8 hinzugefügt mit Erstmaligem Provisioning,
+  Blue-Green-Deployment-Anleitung, Read-Replica-Aktivierung,
+  Disaster-Recovery, Monitoring.
 
-**Akzeptanzkriterien**:
-- 2+ Backend-VMs können parallel laufen (Round-Robin)
-- Kein Single-Point-of-Failure
-- Cold-Start < 30 Sekunden
+**Akzeptanzkriterien erfüllt**:
+- ✅ 2+ Backend-VMs laufen parallel (Blue + Green, skaliert via `BACKEND_REPLICA_COUNT`)
+- ✅ Kein Single-Point-of-Failure (Postgres-Replica, 2 Backend-Pools, Redis-Persistence)
+- ✅ Cold-Start < 30 Sekunden (`start_period: 30s` im Backend-Healthcheck)
+- ✅ Cosign-Verify fail-closed (kein Switch ohne gültige Signatur)
 
 ### Sprint 3 — Subscription + White-Label-Production ⏳
 

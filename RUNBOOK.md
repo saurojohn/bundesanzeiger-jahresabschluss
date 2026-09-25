@@ -205,8 +205,11 @@ npx prisma migrate deploy
 ### 6.1 Health-Endpoints
 
 ```bash
-# Backend Health
-curl http://localhost:3000/api/health
+# Backend Liveness
+curl http://localhost:3000/health
+
+# Backend Readiness (DB+Redis erreichbar?)
+curl http://localhost:3000/health/ready
 
 # Postgres Health
 docker compose -f infra/docker-compose.yml exec postgres pg_isready -U banz
@@ -307,6 +310,112 @@ SIGN_P12_PWD=...
 
 ---
 
-**Letzte Aktualisierung**: 2026-09-23
+**Letzte Aktualisierung**: 2026-09-25 (M4 Sprint 2 hinzugefügt)
 **Reviewer**: DevOps + Pilot-Kanzlei
-**Nächste Review**: Nach M1-Pilot-Abschluss (geplant Woche 15)
+**Nächste Review**: Nach M4-Pilot-Abschluss (geplant Sprint 5)
+
+---
+
+## 8. M4 Sprint 2 — Hetzner Multi-VM Production-Deployment
+
+> Production-Setup auf Hetzner Cloud mit 2 App-VMs (Blue/Green) + DB-VM
+> (Postgres Primary+Replica, Redis, MinIO). NGINX als Reverse-Proxy mit
+> atomarem Blue-Green-Switch nach Cosign-Signatur-Verifikation.
+
+### 8.1 Erstmaliges Provisioning
+
+Siehe vollständige Schritt-für-Schritt-Anleitung in
+[`infra/hetzner/README.md`](infra/hetzner/README.md).
+
+Kurzfassung:
+
+```bash
+# 1. Hetzner Cloud Console: Projekt + SSH-Key + 3 VMs erstellen
+# 2. Cloud-init läuft automatisch (Docker + cosign + SSH-Hardening)
+# 3. Auf banz-db: PostgreSQL-Replication initialisieren
+ssh root@<db-ip>
+cd /opt/bundesanzeiger-jahresabschluss
+bash infra/hetzner/postgres-replica-init.sh
+
+# 4. Auf beiden App-VMs: Production-Stack starten
+ssh root@<app-1-ip>
+cd /opt/bundesanzeiger-jahresabschluss
+docker compose -f infra/docker-compose.prod.yml --env-file .env.prod up -d
+
+# 5. Smoke-Test
+bash infra/scripts/smoke-test.sh https://banz.example.com
+```
+
+### 8.2 Blue-Green-Deployment (Zero-Downtime)
+
+```bash
+# Auf einem der App-Hosts (oder Deploy-Jump-Host)
+ssh deploy@<app-1-ip>
+
+# 1. Neues Image pullen + Green-Pool updaten
+docker compose -f infra/docker-compose.prod.yml pull backend-green
+docker compose -f infra/docker-compose.prod.yml up -d backend-green
+
+# 2. Auf Green umschalten (mit Cosign-Verifikation + Health-Check)
+sudo bash infra/nginx/blue-green-switch.sh green v1.2.0
+# → Verifiziert cosign signatur → prüft /health/ready → NGINX-Reload
+
+# 3. Bei Problemen: Rollback zu Blue
+sudo bash infra/nginx/blue-green-switch.sh blue
+```
+
+### 8.3 Read-Replica aktivieren
+
+Zero-Impact: `.env.prod` ergänzen, Service neu starten.
+
+```bash
+# .env.prod editieren:
+DATABASE_READ_REPLICA_URL=postgresql://banz:...@postgres-replica:5432/banz_jahresabschluss?schema=public
+DATABASE_POOL_MAX_REPLICA=30
+
+# Backend neu starten
+docker compose -f infra/docker-compose.prod.yml restart backend-blue backend-green
+
+# Verifizieren: Replica-Status sichtbar in /health/ready
+curl https://banz.example.com/health/ready | jq '.checks'
+# → { "primary": "up", "replica": "up" }
+```
+
+Wenn `DATABASE_READ_REPLICA_URL` LEER ist, verhält sich der Service
+exakt wie vor Sprint 2 — alle Queries gehen auf Primary.
+
+### 8.4 Disaster Recovery
+
+| Szenario | Wiederherstellung | RTO |
+|---|---|---|
+| App-VM ausgefallen | Hetzner: neue VM aus Snapshot | 10 Min |
+| DB-VM Primary ausgefallen | Replica promoten (`pg_promote()`), `.env.prod` updaten | 30 Min |
+| Komplett-Verlust | Hetzner Snapshot einspielen + Cloud-init neu | 2h |
+| Versehentlicher Code-Deploy | `blue-green-switch.sh blue` (Rollback) | 1 Min |
+
+### 8.5 Monitoring & Alerts
+
+Externe Uptime-Monitoring-Tools (UptimeRobot, Betterstack, etc.) sollten
+folgende Endpoints prüfen:
+
+- `https://green.example.com/health` — alle 30s
+- `https://green.example.com/health/ready` — alle 60s
+- `https://green.example.com/api/docs` — alle 5 Min
+
+Alerts bei:
+- HTTP 5xx > 0 in 5 Min
+- /health/ready status != "ok"
+- Cert-Ablauf < 14 Tage (UptimeRobot prüft automatisch)
+
+### 8.6 Bekannte Limitierungen
+
+- **Single-Region** (nbg1): kein geo-redundantes Setup
+- **Manuelle Replica-Promotion**: Phase 3+ plant `repmgr`/`Patroni` für Auto-Failover
+- **Keine CDN-Integration**: Phase 4+ plant Cloudflare vor NGINX
+- **Cosign-Verifikation per Key** (statt Keyless/OIDC): Phase 3+ plant OIDC-Signing mit GitHub-Actions
+
+### 8.7 Kosten-Übersicht
+
+~€36/Monat (siehe `infra/hetzner/README.md` § Kosten-Übersicht).
+Skaliert horizontal mit `BACKEND_REPLICA_COUNT` ohne zusätzliche Kosten
+für die App-VMs selbst (nur Docker-Ressourcen).

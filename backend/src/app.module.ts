@@ -23,6 +23,7 @@ import { BrandingModule } from './modules/branding/branding.module';
 import { ApiModule } from './modules/api/api.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { HealthModule } from './health/health.module';
 
 /**
  * Root-App-Module.
@@ -50,6 +51,7 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - BrandingModule     (White-Label: Logo, Farben, Custom-Domain)
  *   - ApiModule          (Public-API: OAuth2 + API-Keys + v1-Endpoints)
  *   - WebhookModule      (Webhook-Subscriptions + Outgoing-Delivery)
+ *   - HealthModule       (/health + /health/ready für NGINX + Monitoring)
  */
 @Module({
   imports: [
@@ -83,6 +85,7 @@ import { PrismaModule } from './prisma/prisma.module';
     BrandingModule,
     ApiModule,
     WebhookModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

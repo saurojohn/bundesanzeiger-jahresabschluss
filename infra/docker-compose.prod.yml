@@ -1,0 +1,226 @@
+# ============================================================================
+# Bundesanzeiger Jahresabschluss — Production Multi-VM Compose (M4 Sprint 2)
+# ============================================================================
+# Ziel: Production-Deployment auf Hetzner Cloud (2× App-VM + 1× DB-VM).
+# Start: docker compose -f infra/docker-compose.prod.yml --env-file .env.prod up -d
+# Stop:  docker compose -f infra/docker-compose.prod.yml down
+# Reset: docker compose -f infra/docker-compose.prod.yml down -v
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Service-Skalierung via Umgebungsvariable:
+#   BACKEND_REPLICA_COUNT=2  → 2 Backend-Instanzen (Blue + Green)
+#   ACTIVE_POOL=blue|green   → welcher Pool aktiv Traffic bekommt
+# ----------------------------------------------------------------------------
+
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL Primary (interne Docker-Network-DNS)
+  # --------------------------------------------------------------------------
+  postgres-primary:
+    image: postgres:16-alpine
+    container_name: banz-postgres-primary
+    restart: unless-stopped
+    networks:
+      - internal
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-banz_jahresabschluss}
+      POSTGRES_USER: ${POSTGRES_USER:-banz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD ist erforderlich}
+      POSTGRES_REPLICATION_MODE: master
+      POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:?POSTGRES_REPLICATION_PASSWORD ist erforderlich}
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-banz} -d ${POSTGRES_DB:-banz_jahresabschluss}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL Read-Replica (für M4 Sprint 2 Read-Routing)
+  # --------------------------------------------------------------------------
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: banz-postgres-replica
+    restart: unless-stopped
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - internal
+    environment:
+      POSTGRES_REPLICATION_MODE: slave
+      POSTGRES_MASTER_SERVICE: postgres-primary:5432
+      POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:?POSTGRES_REPLICATION_PASSWORD ist erforderlich}
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-banz} -d ${POSTGRES_DB:-banz_jahresabschluss}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # Redis (Session-State + Cache für Multi-VM)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: banz-redis
+    restart: unless-stopped
+    networks:
+      - internal
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # MinIO (S3-kompatibler Object-Storage mit WORM-Object-Lock)
+  # --------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: banz-minio
+    restart: unless-stopped
+    networks:
+      - internal
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY ist erforderlich}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY ist erforderlich}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # Backend Blue (aktiver Pool standardmäßig)
+  # --------------------------------------------------------------------------
+  backend-blue:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-banz-jahresabschluss-backend}:${IMAGE_TAG:-latest}
+    container_name: banz-backend-blue
+    restart: unless-stopped
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      postgres-replica:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - internal
+      - dmz
+    env_file:
+      - ../.env.prod
+    environment:
+      ACTIVE_POOL: blue
+      DATABASE_URL: postgresql://${POSTGRES_USER:-banz}:${POSTGRES_PASSWORD:?}@postgres-primary:5432/${POSTGRES_DB:-banz_jahresabschluss}?schema=public
+      DATABASE_READ_REPLICA_URL: postgresql://${POSTGRES_USER:-banz}:${POSTGRES_PASSWORD:?}@postgres-replica:5432/${POSTGRES_DB:-banz_jahresabschluss}?schema=public
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Backend Green (Standby-Pool für Blue-Green-Deployment)
+  # --------------------------------------------------------------------------
+  backend-green:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-banz-jahresabschluss-backend}:${IMAGE_TAG:-latest}
+    container_name: banz-backend-green
+    restart: unless-stopped
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      postgres-replica:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - internal
+      - dmz
+    env_file:
+      - ../.env.prod
+    environment:
+      ACTIVE_POOL: green
+      DATABASE_URL: postgresql://${POSTGRES_USER:-banz}:${POSTGRES_PASSWORD:?}@postgres-primary:5432/${POSTGRES_DB:-banz_jahresabschluss}?schema=public
+      DATABASE_READ_REPLICA_URL: postgresql://${POSTGRES_USER:-banz}:${POSTGRES_PASSWORD:?}@postgres-replica:5432/${POSTGRES_DB:-banz_jahresabschluss}?schema=public
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # NGINX Reverse-Proxy mit Blue-Green-Upstream
+  # --------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: banz-nginx
+    restart: unless-stopped
+    depends_on:
+      backend-blue:
+        condition: service_healthy
+      backend-green:
+        condition: service_healthy
+    networks:
+      - dmz
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot-certs:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# ============================================================================
+# Netze
+# ============================================================================
+#  - internal: nur intern erreichbar (postgres, redis, minio, backend)
+#  - dmz:      extern erreichbar (nginx, backend)
+# ============================================================================
+networks:
+  internal:
+    driver: bridge
+  dmz:
+    driver: bridge
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres-primary-data:
+  postgres-replica-data:
+  redis-data:
+  minio-data:
+  certbot-certs:

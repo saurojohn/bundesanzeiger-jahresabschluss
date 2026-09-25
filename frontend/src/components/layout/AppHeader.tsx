@@ -39,6 +39,11 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = [
     key: 'branding',
     visibleFor: ['KANZLEI_ADMIN'],
   },
+  {
+    href: '/api-keys',
+    key: 'apiKeys',
+    visibleFor: ['KANZLEI_ADMIN'],
+  },
 ] as const;
 
 /**

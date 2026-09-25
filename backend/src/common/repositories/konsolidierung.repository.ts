@@ -227,4 +227,77 @@ export class KonsolidierungRepository {
     if (value === '') return null;
     return new Prisma.Decimal(value);
   }
+
+  // ---------------------------------------------------------------------------
+  // Public-API Read-Pfade (M4 Sprint 1)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Liefert alle Jahresabschlüsse eines Mandanten (für Public-API-Read).
+   */
+  async findJahresabschluesseByMandant(
+    mandantId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      mandantId: string;
+      geschaeftsjahr: number;
+      status: string;
+      finalisiertAm: Date | null;
+      signiertAm: Date | null;
+      eingereichtAm: Date | null;
+    }>
+  > {
+    const ja = await this.prismaService.jahresabschluss.findMany({
+      where: { mandantId },
+      orderBy: { geschaeftsjahr: 'desc' },
+    });
+    return ja.map((j) => ({
+      id: j.id,
+      mandantId: j.mandantId,
+      geschaeftsjahr: j.geschaeftsjahr,
+      status: j.status,
+      finalisiertAm: j.finalisiertAm,
+      signiertAm: j.signiertAm,
+      eingereichtAm: j.eingereichtAm,
+    }));
+  }
+
+  /**
+   * Liefert alle BAnz-Submissions eines Mandanten (für Public-API-Read).
+   */
+  async findBanzSubmissionsByMandant(
+    mandantId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      jahresabschlussId: string;
+      mandantId: string;
+      channel: string;
+      status: string;
+      banzVorgangsnummer: string | null;
+      submittedAt: Date | null;
+      jahresabschluss?: { geschaeftsjahr: number };
+    }>
+  > {
+    const subs = await this.prismaService.banzSubmission.findMany({
+      where: { mandantId },
+      orderBy: { preparedAt: 'desc' },
+      include: {
+        jahresabschluss: { select: { geschaeftsjahr: true } },
+      },
+    });
+    return subs.map((s) => ({
+      id: s.id,
+      jahresabschlussId: s.jahresabschlussId,
+      mandantId: s.mandantId,
+      channel: s.channel,
+      status: s.status,
+      banzVorgangsnummer: s.banzVorgangsnummer,
+      submittedAt: s.submittedAt,
+      jahresabschluss: s.jahresabschluss
+        ? { geschaeftsjahr: s.jahresabschluss.geschaeftsjahr }
+        : undefined,
+    }));
+  }
 }

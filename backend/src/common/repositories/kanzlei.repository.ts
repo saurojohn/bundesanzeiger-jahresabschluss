@@ -64,6 +64,18 @@ export class KanzleiRepository {
   }
 
   /**
+   * Liefert die erste Kanzlei (Pilot-Mode: Single-Tenant-Annahme).
+   *
+   * Nur für SYSTEM_ADMIN-Pfade sinnvoll — gibt eine Default-Kanzlei
+   * zurück, wenn der User keine expliziten Mandanten hat.
+   */
+  async findFirstKanzlei(): Promise<Kanzlei | null> {
+    return this.prismaService.kanzlei.findFirst({
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
    * Aktualisiert die Branding-Felder (Farben + Custom-Domain).
    *
    * Audit-konform: Es werden NICHT logoUrl/logoWormKey überschrieben —

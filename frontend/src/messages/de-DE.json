@@ -78,7 +78,8 @@
     "kanzlei": "Kanzlei",
     "settings": "Einstellungen",
     "help": "Hilfe",
-    "branding": "Branding"
+    "branding": "Branding",
+    "apiKeys": "API-Schlüssel"
   },
   "dashboard": {
     "title": "Übersicht",
@@ -724,6 +725,152 @@
       "invalidLogoType": "Nur PNG, JPEG oder SVG sind erlaubt.",
       "logoTooLarge": "Das Logo ist zu groß (max. 5 MB).",
       "noLogoSelected": "Bitte wählen Sie eine Logo-Datei aus."
+    }
+  },
+  "apiKeys": {
+    "title": "API-Schlüssel",
+    "subtitle": "Verwalten Sie API-Schlüssel für externe Integrationen (DATEV, Addison, ERP-Systeme). Erstellen Sie OAuth2-konforme Schlüssel mit fein-granularen Scopes.",
+    "actions": {
+      "create": "+ Neuen API-Schlüssel",
+      "revoke": "Widerrufen",
+      "test": "Test-Webhook",
+      "copyToken": "Token kopieren"
+    },
+    "table": {
+      "name": "Name",
+      "keyId": "Key-ID",
+      "scopes": "Scopes",
+      "status": "Status",
+      "createdAt": "Erstellt",
+      "expiresAt": "Gültig bis",
+      "lastUsedAt": "Letzte Nutzung",
+      "actions": "Aktionen"
+    },
+    "status": {
+      "active": "Aktiv",
+      "inactive": "Inaktiv",
+      "revoked": "Widerrufen"
+    },
+    "empty": "Noch keine API-Schlüssel angelegt. Klicken Sie auf + Neuen API-Schlüssel, um zu starten.",
+    "modal": {
+      "createTitle": "Neuen API-Schlüssel erstellen",
+      "submit": "Schlüssel erstellen",
+      "secretTitle": "API-Schlüssel wurde erstellt",
+      "secretWarning": "⚠️ Der geheime Schlüssel wird nur EINMAL angezeigt. Bitte kopieren Sie ihn jetzt und speichern Sie ihn an einem sicheren Ort.",
+      "keyId": "Key-ID (öffentlich)",
+      "secret": "Geheimer Schlüssel",
+      "copy": "Kopieren",
+      "copied": "✓ Kopiert",
+      "tokenFormat": "Token-Format: {format}",
+      "gotIt": "Verstanden"
+    },
+    "fields": {
+      "name": "Name",
+      "scopes": "Scopes (Berechtigungen)",
+      "rateLimit": "Rate-Limit (pro Stunde)",
+      "expiresAt": "Gültig bis (optional)"
+    },
+    "placeholders": {
+      "name": "z.B. DATEV-Integration-Production"
+    },
+    "scopes": {
+      "mandant:read": "Mandanten lesen",
+      "bilanz:read": "Bilanzen lesen",
+      "bilanz:write": "Bilanzen schreiben",
+      "guv:read": "GuV lesen",
+      "guv:write": "GuV schreiben",
+      "anhang:read": "Anhang lesen",
+      "jahresabschluss:read": "Jahresabschlüsse lesen",
+      "jahresabschluss:write": "Jahresabschlüsse schreiben",
+      "banz-submission:write": "BAnz-Submissions erstellen",
+      "webhook:manage": "Webhooks verwalten"
+    },
+    "errors": {
+      "missingFields": "Bitte füllen Sie Name und mindestens 1 Scope aus.",
+      "loadFailed": "API-Schlüssel konnten nicht geladen werden."
+    },
+    "confirm": {
+      "revoke": "Möchten Sie den API-Schlüssel \"{name}\" wirklich widerrufen? Diese Aktion kann nicht rückgängig gemacht werden."
+    },
+    "usage": {
+      "title": "Nutzungsstatistik (letzte 30 Tage)",
+      "total": "Gesamtaufrufe",
+      "topEndpoints": "Top-Endpoints"
+    },
+    "help": {
+      "title": "Wie verwende ich API-Schlüssel?",
+      "token": "Senden Sie das Token im Authorization-Header:",
+      "example": "Beispiel-Aufruf:",
+      "oauth": "OAuth2 (empfohlen): Über POST /oauth/token erhalten Sie ein JWT-Access-Token."
+    }
+  },
+  "webhooks": {
+    "title": "Webhooks",
+    "subtitle": "Konfigurieren Sie HTTP-Webhooks für automatische Status-Benachrichtigungen (z.B. nach BAnz-Submission). Empfänger-Server werden per HMAC-SHA256 signiert.",
+    "actions": {
+      "create": "+ Neuen Webhook",
+      "test": "Test-Webhook senden",
+      "delete": "Löschen"
+    },
+    "table": {
+      "url": "URL",
+      "events": "Events",
+      "status": "Status",
+      "createdAt": "Erstellt",
+      "lastDelivery": "Letzte Zustellung",
+      "actions": "Aktionen"
+    },
+    "status": {
+      "active": "Aktiv",
+      "inactive": "Inaktiv"
+    },
+    "empty": "Noch keine Webhooks konfiguriert. Klicken Sie auf + Neuen Webhook, um zu starten.",
+    "modal": {
+      "createTitle": "Neuen Webhook erstellen",
+      "submit": "Webhook erstellen",
+      "secretTitle": "Webhook wurde erstellt",
+      "secretWarning": "⚠️ Das HMAC-Secret wird nur EINMAL angezeigt. Speichern Sie es sicher — Ihr Empfänger-Server benötigt es zur Signatur-Verifikation.",
+      "url": "Empfänger-URL",
+      "events": "Abonnierte Events",
+      "secret": "HMAC-Secret",
+      "gotIt": "Verstanden"
+    },
+    "events": {
+      "banz.submission.prepared": "BAnz-Submission vorbereitet",
+      "banz.submission.submitted": "BAnz-Submission eingereicht",
+      "banz.submission.published": "BAnz-Submission veröffentlicht",
+      "banz.submission.failed": "BAnz-Submission fehlgeschlagen",
+      "bilanz.updated": "Bilanz aktualisiert",
+      "guv.updated": "GuV aktualisiert",
+      "anhang.updated": "Anhang aktualisiert",
+      "jahresabschluss.finalized": "Jahresabschluss finalisiert"
+    },
+    "deliveries": {
+      "title": "Delivery-Historie",
+      "status": {
+        "PENDING": "Ausstehend",
+        "SUCCESS": "Erfolgreich",
+        "FAILED": "Fehlgeschlagen",
+        "DEAD_LETTER": "Dead-Letter"
+      },
+      "attempt": "Versuch {count}/{max}",
+      "responseCode": "HTTP {code}",
+      "scheduledAt": "Geplant",
+      "completedAt": "Abgeschlossen",
+      "nextRetryAt": "Nächster Retry"
+    },
+    "errors": {
+      "invalidUrl": "Bitte geben Sie eine gültige HTTP/HTTPS-URL ein."
+    },
+    "confirm": {
+      "delete": "Möchten Sie den Webhook \"{url}\" wirklich löschen?"
+    },
+    "help": {
+      "title": "Webhook-Format",
+      "signature": "Der Body wird per HMAC-SHA256 signiert. Header:",
+      "signatureHeader": "X-Webhook-Signature: sha256=<hex>",
+      "payload": "Payload-Beispiel:",
+      "retry": "Im Fehlerfall wird der Webhook automatisch 3x wiederholt (1s, 5s, 30s Backoff)."
     }
   }
 }

@@ -56,6 +56,8 @@ model Kanzlei {
   user                     User[]
   auditLogs                AuditLog[]
   konsolidierungsEinheiten KonsolidierungsEinheit[]
+  apiKeys                  APIKey[]
+  webhookSubscriptions     WebhookSubscription[]
 
   @@index([customDomain])
   @@map("kanzlei")
@@ -129,6 +131,9 @@ model User {
   wpNotizenErstellt     WPNotiz[]              @relation("WPNotizErstellt")
   wpNotizenAcknowledged WPNotiz[]              @relation("WPNotizAcknowledged")
   wpPruefungenErstellt  WPPruefungsAbschluss[] @relation("WPPruefungErstellt")
+  apiKeysCreated        APIKey[]               @relation("APIKeyErstellt")
+  apiKeysRevoked        APIKey[]               @relation("APIKeyRevoked")
+  webhookSubscriptionsCreated WebhookSubscription[] @relation("WebhookErstellt")
 
   @@map("user")
 }
@@ -672,4 +677,108 @@ model WPPruefungsAbschluss {
   @@index([status])
   @@index([bilanzId, status])
   @@map("wp_pruefungs_abschluss")
+}
+
+// ============================================================================
+// Public API (M4 Sprint 1) — API-Keys + Webhooks
+// ============================================================================
+
+/// Ein API-Key für externe Integrationen (DATEV, Addison, ERP-Systeme).
+/// Bound an genau eine Kanzlei (mandant-trennend). Secret wird nur als
+/// SHA-256-Hash persistiert; ein einmaliger Plaintext wird bei Create
+/// zurückgegeben und muss vom User kopiert werden.
+///
+/// Scopes: Array aus "bilanz:read", "guv:write", "banz:write", etc.
+model APIKey {
+  id          String   @id @default(uuid()) @db.Uuid
+  kanzleiId   String   @db.Uuid
+  name        String   // z.B. "DATEV-Integration-Production"
+  keyId       String   @unique // Public-Key-Id (z.B. "ak_abc123def456")
+  keyHash     String   // SHA-256-Hash des Secret-Keys (NIE Plain!)
+  scopes      String[] // ["bilanz:read", "guv:read", "banz:write", ...]
+  rateLimit   Int      @default(1000) // pro Stunde
+  expiresAt   DateTime? // null = unlimited
+  isActive    Boolean  @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  createdById String?  @db.Uuid
+  revokedAt   DateTime?
+  revokedById String?  @db.Uuid
+
+  kanzlei   Kanzlei       @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
+  createdBy User?         @relation("APIKeyErstellt", fields: [createdById], references: [id])
+  revokedBy User?         @relation("APIKeyRevoked", fields: [revokedById], references: [id])
+  usage     APIKeyUsage[]
+
+  @@index([kanzleiId])
+  @@index([keyId])
+  @@index([isActive, expiresAt])
+  @@map("api_key")
+}
+
+/// Einzelne API-Key-Nutzung (für Usage-Analytics + Rate-Limiting-Audit).
+/// Append-only; wird durch einen Cron-Job nach >90 Tagen archiviert.
+model APIKeyUsage {
+  id             String   @id @default(uuid()) @db.Uuid
+  apiKeyId       String   @db.Uuid
+  endpoint       String   // z.B. "GET /api/v1/mandanten"
+  statusCode     Int
+  timestamp      DateTime @default(now())
+  ipAddress      String?
+  responseTimeMs Int?
+
+  apiKey APIKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([apiKeyId, timestamp(sort: Desc)])
+  @@map("api_key_usage")
+}
+
+/// Eine Webhook-Subscription für ausgehende Event-Benachrichtigungen
+/// (z.B. an DATEV-Server bei "banz.submission.published"). Secret wird
+/// bei Erstellung einmalig zurückgegeben; HMAC-SHA256 über Payload.
+///
+/// Mandant-Trennung: jede Subscription bound an genau 1 Kanzlei.
+model WebhookSubscription {
+  id                 String    @id @default(uuid()) @db.Uuid
+  kanzleiId          String    @db.Uuid
+  url                String // z.B. "https://datev.example.com/webhooks/banz"
+  events             String[] // ["banz.submission.created", "bilanz.updated", ...]
+  secret             String // HMAC-Secret für Webhook-Signature
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  createdById        String?   @db.Uuid
+  lastDeliveryAt     DateTime?
+  lastDeliveryStatus Int? // 200, 500, etc.
+
+  kanzlei    Kanzlei           @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
+  createdBy  User?             @relation("WebhookErstellt", fields: [createdById], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@index([kanzleiId])
+  @@index([isActive])
+  @@map("webhook_subscription")
+}
+
+/// Eine einzelne Webhook-Delivery (mit Retry-Logik).
+/// status: PENDING → SUCCESS | FAILED → DEAD_LETTER (nach 3 Versuchen).
+model WebhookDelivery {
+  id             String    @id @default(uuid()) @db.Uuid
+  subscriptionId String    @db.Uuid
+  event          String // "banz.submission.created"
+  payload        Json // Vollständige Event-Daten
+  attemptCount   Int       @default(0)
+  maxAttempts    Int       @default(3)
+  status         String    @default("PENDING") // PENDING | SUCCESS | FAILED | DEAD_LETTER
+  responseCode   Int?
+  responseBody   String? // Erste 500 Zeichen der Server-Response
+  errorMessage   String?
+  scheduledAt    DateTime  @default(now())
+  completedAt    DateTime?
+  nextRetryAt    DateTime? // Falls FAILED mit < maxAttempts
+
+  subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, status, scheduledAt])
+  @@index([status, nextRetryAt])
+  @@map("webhook_delivery")
 }

@@ -20,6 +20,8 @@ import { SignaturModule } from './modules/signatur/signatur.module';
 import { KonsolidierungModule } from './modules/konsolidierung/konsolidierung.module';
 import { WPModule } from './modules/wp/wp.module';
 import { BrandingModule } from './modules/branding/branding.module';
+import { ApiModule } from './modules/api/api.module';
+import { WebhookModule } from './modules/webhook/webhook.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -46,6 +48,8 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - SignaturModule     (qeS-Signatur)
  *   - KonsolidierungModule (Konzernabschluss nach PublG §11)
  *   - BrandingModule     (White-Label: Logo, Farben, Custom-Domain)
+ *   - ApiModule          (Public-API: OAuth2 + API-Keys + v1-Endpoints)
+ *   - WebhookModule      (Webhook-Subscriptions + Outgoing-Delivery)
  */
 @Module({
   imports: [
@@ -77,6 +81,8 @@ import { PrismaModule } from './prisma/prisma.module';
     KonsolidierungModule,
     WPModule,
     BrandingModule,
+    ApiModule,
+    WebhookModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

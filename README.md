@@ -90,23 +90,28 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Pilot-Phase-2: 3 Kanzleien + 15 Mandanten
 - **Status**: ✅ Backend + Frontend fertig (Tag `m2-pilot-ready`)
 
-### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss ⏳
-- DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping, reverse direction)
-- E-Bilanz / TAXONOMIE für § 11 PublG (Konzern)
-- Konzernabschluss-Modul (Konsolidierung Mutter-Tochter)
-- Wirtschaftsprüfer-Prüfungsmodul mit Plausibilitätsregeln
-- Pilot: 2 Kanzleien + 1 Konzern
+### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss ✅
+- DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping, reverse direction) ✅
+- E-Bilanz / TAXONOMIE für § 11 PublG (Konzern) ✅
+- Konzernabschluss-Modul (Konsolidierung Mutter-Tochter) ✅
+- Wirtschaftsprüfer-Prüfungsmodul mit Plausibilitätsregeln ✅
+- Performance-Skalierung (15 → 50 Mandanten, Cursor-Pagination, 16+ Composite-Indices) ✅
+- White-Label-Branding (Logo + Brand-Color + Custom-Domain-Field) ✅
+- Pilot: 3 Kanzleien + 15 Mandanten ✅
+- **Status**: ✅ Kanzlei-Tier Ready (Git-Tag `m3-kanzlei-ready`)
 
-### M4 (Monate 10-12) — White-Label & Cloud-Migration ⏳
-- White-Label (Kanzlei-Branding, eigene Domain)
+### M4 (Monate 10-12) — White-Label-Production & Cloud-Migration ⏳
+- White-Label-Production (Custom-Domain, Logo-Resize/Cropping)
 - Cloud-Migration (Hetzner S3 → S3-Cloud, Multi-VM, K8s optional)
-- Public-API für DATEV-/Add-on-Integrationen
-- GoBD-Zertifizierungs-Vorbereitung (IDW PS 880)
-- GA: Kanzleien-Subscription (3 Tarife)
+- Public-API (OAuth2 + OpenAPI 3.1 + Webhook-System)
+- Subscription-Modell (Starter/Pro/Enterprise via Stripe)
+- Mobile-Responsiveness (Tablet-Layout + PWA-Modus)
+- GoBD-Zertifizierung (IDW PS 880 Vorbereitung)
+- GA: 200+ Mandanten, 99.95% Uptime
 
 ## Erfolgsmetriken (Go-Live-Kriterien)
 
-| Metrik | M1 ✅ | M2 ✅ | M3 | M4 (GA) |
+| Metrik | M1 ✅ | M2 ✅ | M3 ✅ | M4 (GA) |
 |---|---|---|---|---|
 | Aktive Mandanten | 3 (Demo) | 15 (Pilot) | 50 | 200 |
 | Erfolgreiche BAnz-Einreichungen | 3 (intern) | 15 (Pilot) | 50 | 200 |

@@ -22,6 +22,8 @@ import { WPModule } from './modules/wp/wp.module';
 import { BrandingModule } from './modules/branding/branding.module';
 import { ApiModule } from './modules/api/api.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
+import { SubscriptionModule } from './modules/subscription/subscription.module';
+import { DnsModule } from './modules/dns/dns.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthModule } from './health/health.module';
 
@@ -51,6 +53,7 @@ import { HealthModule } from './health/health.module';
  *   - BrandingModule     (White-Label: Logo, Farben, Custom-Domain)
  *   - ApiModule          (Public-API: OAuth2 + API-Keys + v1-Endpoints)
  *   - WebhookModule      (Webhook-Subscriptions + Outgoing-Delivery)
+ *   - SubscriptionModule (Stripe-Subscription + Billing-Webhook + Feature-Flags)
  *   - HealthModule       (/health + /health/ready für NGINX + Monitoring)
  */
 @Module({
@@ -85,6 +88,8 @@ import { HealthModule } from './health/health.module';
     BrandingModule,
     ApiModule,
     WebhookModule,
+    SubscriptionModule,
+    DnsModule,
     HealthModule,
   ],
   providers: [

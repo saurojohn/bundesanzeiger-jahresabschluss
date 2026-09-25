@@ -35,6 +35,11 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = [
   { href: '/wp', key: 'wp' },
   { href: '/audit', key: 'audit' },
   {
+    href: '/einstellungen/subscription',
+    key: 'subscription',
+    visibleFor: ['KANZLEI_ADMIN', 'SYSTEM_ADMIN'],
+  },
+  {
     href: '/branding',
     key: 'branding',
     visibleFor: ['KANZLEI_ADMIN'],

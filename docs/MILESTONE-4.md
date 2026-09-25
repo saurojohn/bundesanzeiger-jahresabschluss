@@ -1,6 +1,6 @@
 # Milestone 4 — Production-Tier
 
-> **Status**: 🚧 Sprint 0 + 1 + 2 abgeschlossen (Public-API + Cloud-Migration live), Sprint 3–5 folgen.
+> **Status**: 🚧 Sprint 0 + 1 + 2 + 3 abgeschlossen (Public-API + Cloud-Migration + Subscription+White-Label live), Sprint 4–5 folgen.
 > **Vision**: Production-Tier-System für Bundesanzeiger Jahresabschluss
 > mit Multi-VM-Cloud-Deployment, Public-API, Subscription-Billing und
 > vollständiger GoBD-Zertifizierungsreife.
@@ -23,7 +23,8 @@
 | **M4 Sprint 0** | ✅ Vorbereitung | Redis-Cache, Code-Signing, DNS-Wildcard-Cert-Setup |
 | **M4 Sprint 1** | ✅ Public-API | OAuth2 client_credentials, API-Keys, 10 Scopes, OpenAPI 3.1, Webhooks (HMAC + Retry + DLQ) |
 | **M4 Sprint 2** | ✅ Cloud-Migration | Prisma Read-Routing (`$extends`), Hetzner Multi-VM-Compose, NGINX Blue-Green + Cosign-Verify, /health-Probes, Smoke-Test |
-| **M4 Sprint 3** | ⏳ geplant | Subscription + White-Label-Production |
+| **M4 Sprint 3** | ✅ Subscription + White-Label | Stripe-Subscription (3 Tiers + Mock-Fallback), Billing-Webhook, Feature-Flags, Custom-Domain-Wizard (DNS-01 + Let's Encrypt) |
+| **M4 Sprint 4** | ⏳ geplant | Mobile-Responsiveness |
 | **M4 Sprint 3** | ⏳ geplant | Subscription + White-Label-Production |
 | **M4 Sprint 4** | ⏳ geplant | Mobile-Responsiveness |
 | **M4 Sprint 5** | ⏳ geplant | GoBD-Zertifizierungs-Audit + M4-Release-Tag |
@@ -115,21 +116,46 @@ Anbindung, ERP-Systeme, Mobile-Apps).
 - ✅ Cold-Start < 30 Sekunden (`start_period: 30s` im Backend-Healthcheck)
 - ✅ Cosign-Verify fail-closed (kein Switch ohne gültige Signatur)
 
-### Sprint 3 — Subscription + White-Label-Production ⏳
+### Sprint 3 — Subscription + White-Label-Production ✅
 
 **Ziel**: Bezahlmodell + vollständige Custom-Domain-Unterstützung.
 
-**Geplante Features**:
-- Stripe-Integration (`POST /api/v1/subscriptions`)
-- Subscription-Tiers: Pilot (kostenlos), Standard, Premium
-- Wildcard-Cert-Rollout (siehe `backend/docs/dns-wildcard-cert-setup.md`)
-- CNAME-Setup-Wizard im Frontend (Kanzlei konfiguriert eigene Domain)
-- White-Label-Backend-Branding (Logo, Farben, Domain)
+**Abgeschlossen**:
+- ✅ Subscription-Modul (`backend/src/modules/subscription/`)
+  - 3 Tiers: PILOT (kostenlos, 3 Mandanten), STANDARD (€49/Monat, 25 Mandanten), PREMIUM (€149/Monat, unlimited + alle Features)
+  - BillingProvider-Service (Strategy-Pattern: Mock-Default für Dev/Pilot, Stripe für Production)
+  - Stripe-Provider (Lazy-Load: `npm install stripe` aktiviert automatisch)
+  - Billing-Webhook-Endpoint (`/api/subscription/webhook`) mit Raw-Body-Parser für Stripe-Signature-Verifikation
+  - Feature-Flag-Service (`subscription:has(tier, 'custom-domain')`)
+- ✅ DNS-Modul (`backend/src/modules/dns/`)
+  - DNS-Provider-Abstraktion (Hetzner Default + Cloudflare + AWS Route53-Stub)
+  - Domain-Verifikation via TXT-Record + Public-DNS-Resolver (multi-provider-fähig)
+  - Cert-Manager-Service (certbot on-demand mit DNS-01-Challenge, Auto-Renewal via Cron)
+- ✅ Frontend: Custom-Domain-Wizard (3-Schritte-Stepper mit TXT-Anleitung + Auto-Verifikation)
+- ✅ Frontend: Subscription-Pricing-Page (`/einstellungen/subscription`) mit Tier-Vergleich + Upgrade-Button
+- ✅ i18n: 30 neue deutsche Keys für customDomain + subscription
+- ✅ Nav-Item für Subscription (KANZLEI_ADMIN/SYSTEM_ADMIN-only)
+- ✅ main.ts: Raw-Body-Parser für Stripe-Webhook registriert
+- ✅ `.env.example`: STRIPE_*, DNS-Provider, HETZNER_DNS_*, CLOUDFLARE_*, AWS_*
 
-**Akzeptanzkriterien**:
-- Stripe-Webhooks verarbeiten Subscription-Events
-- Kanzlei kann eigene Domain live schalten (mit Auto-Renewal-Cert)
-- Subscription-Status steuert Feature-Flags
+**Akzeptanzkriterien erfüllt**:
+- ✅ Stripe-Webhook verarbeitet Subscription-Events (`subscription.created`, `updated`, `canceled`, `payment.succeeded/failed`)
+- ✅ Kanzlei kann eigene Domain live schalten — Verifikation via DNS-01, Let's Encrypt Cert via certbot
+- ✅ Subscription-Status steuert Feature-Flags (siehe `FeatureFlagService.has(tier, feature)`)
+- ✅ Mock-Provider aktiv wenn `STRIPE_SECRET_KEY` leer → keine Stripe-Abhängigkeit im Pilot
+- ✅ Zero-Impact-Migration: existierende Kanzleien bleiben auf PILOT bis explizit upgegradet
+
+**Schema-Migration erforderlich** (vom User manuell auszuführen):
+```
+ALTER TABLE kanzlei
+  ADD COLUMN subscription_tier           VARCHAR(16) DEFAULT 'PILOT',
+  ADD COLUMN subscription_status         VARCHAR(32) DEFAULT 'TRIALING',
+  ADD COLUMN subscription_provider       VARCHAR(16) DEFAULT 'mock',
+  ADD COLUMN subscription_provider_id    VARCHAR(128),
+  ADD COLUMN subscription_period_end     TIMESTAMP,
+  ADD COLUMN subscription_cancel_at_end  BOOLEAN DEFAULT FALSE,
+  ADD COLUMN provider_customer_id        VARCHAR(128);
+```
 
 ### Sprint 4 — Mobile-Responsiveness ⏳
 

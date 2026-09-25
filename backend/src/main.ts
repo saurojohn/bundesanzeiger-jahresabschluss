@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json, raw } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
@@ -53,6 +54,31 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix('api', {
     exclude: ['health'],
   });
+
+  // =========================================================================
+  // Raw-Body für Stripe-Webhook (M4 Sprint 3)
+  // =========================================================================
+  // Stripe-Webhook-Signatur-Verifikation benötigt den exakten Original-Body.
+  // Wir registrieren einen raw-Parser VOR dem JSON-Parser, der nur für die
+  // Subscription-Webhook-Route aktiv ist.
+  app.use(
+    '/api/subscription/webhook',
+    raw({ type: '*/*', limit: '1mb' }),
+    (req: unknown, _res: unknown, next: unknown) => {
+      // Express raw-parser liefert Buffer in req.body — wir speichern ihn
+      // in req.rawBody für den Controller.
+      const r = req as { body?: unknown; rawBody?: Buffer };
+      if (Buffer.isBuffer(r.body)) {
+        r.rawBody = r.body;
+        // req.body darf nicht doppelt geparst werden → als leeres Objekt
+        // weiterreichen, damit Validation-Pipe nicht scheitert.
+        r.body = {};
+      }
+      (next as () => void)();
+    },
+  );
+  // Alle anderen Routes: JSON-Parser (Standard)
+  app.use(json({ limit: '10mb' }));
 
   // Globale ValidationPipe (class-validator + class-transformer)
   app.useGlobalPipes(

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, Mandant } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { InMemoryCacheService } from '../../../common/cache/in-memory-cache.service';
+import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 import { PaginationService } from '../../../common/services/pagination.service';
 import { CursorCodec, type PaginatedResult } from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
@@ -33,7 +33,7 @@ export class MandantService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
-    private readonly cache: InMemoryCacheService,
+    private readonly cache: CacheManagerService,
   ) {}
 
   /**
@@ -84,7 +84,7 @@ export class MandantService {
     });
 
     // Cache invalidieren: neue Mandant-Config → alle Cache-Keys pro Mandant entfernen.
-    this.cache.invalidate(`mandant:${mandant.id}`);
+    void this.cache.invalidate(`mandant:${mandant.id}`);
 
     return mandant;
   }
@@ -213,7 +213,7 @@ export class MandantService {
     });
 
     // Cache invalidieren: Mandant-Config hat sich geändert.
-    this.cache.invalidate(`mandant:${updated.id}`);
+    void this.cache.invalidate(`mandant:${updated.id}`);
 
     return updated;
   }
@@ -247,7 +247,7 @@ export class MandantService {
     });
 
     // Cache invalidieren.
-    this.cache.invalidate(`mandant:${before.id}`);
+    void this.cache.invalidate(`mandant:${before.id}`);
   }
 
   /**

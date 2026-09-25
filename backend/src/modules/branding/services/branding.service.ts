@@ -8,7 +8,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import type { Kanzlei } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { InMemoryCacheService } from '../../../common/cache/in-memory-cache.service';
+import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 import { KanzleiRepository } from '../../../common/repositories/kanzlei.repository';
 import { AuditService } from '../../audit/services/audit.service';
 import { StorageService } from '../../storage/services/storage.service';
@@ -82,7 +82,7 @@ export class BrandingService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly cache: InMemoryCacheService,
+    private readonly cache: CacheManagerService,
     private readonly kanzleiRepository: KanzleiRepository,
     private readonly auditService: AuditService,
     private readonly storageService: StorageService,
@@ -166,8 +166,8 @@ export class BrandingService {
       brandingUpdatedById: user.id,
     });
 
-    // Cache invalidieren
-    this.cache.invalidate(`branding:${kanzleiId}`);
+    // Cache invalidieren (async via CacheManager)
+    await this.cache.invalidate(`branding:${kanzleiId}`);
 
     // Audit-Trail
     void this.auditService.record({
@@ -256,8 +256,8 @@ export class BrandingService {
       brandingUpdatedById: user.id,
     });
 
-    // Cache invalidieren
-    this.cache.invalidate(`branding:${kanzleiId}`);
+    // Cache invalidieren (async via CacheManager)
+    await this.cache.invalidate(`branding:${kanzleiId}`);
 
     // Audit
     void this.auditService.record({
@@ -302,7 +302,8 @@ export class BrandingService {
       brandingUpdatedById: user.id,
     });
 
-    this.cache.invalidate(`branding:${kanzleiId}`);
+    // Cache invalidieren (async via CacheManager)
+    await this.cache.invalidate(`branding:${kanzleiId}`);
 
     void this.auditService.record({
       userId: user.id,

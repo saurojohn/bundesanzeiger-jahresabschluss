@@ -6,7 +6,7 @@ import {
   type PaginatedResult,
 } from '../../../common/dto/pagination.dto';
 import { PaginationService } from '../../../common/services/pagination.service';
-import { InMemoryCacheService } from '../../../common/cache/in-memory-cache.service';
+import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 import type { AuditActionLiteral } from '../constants/audit-actions';
 
 export interface RecordAuditParams {
@@ -62,7 +62,7 @@ export class AuditService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly cache: InMemoryCacheService,
+    private readonly cache: CacheManagerService,
   ) {}
 
   /**
@@ -89,12 +89,15 @@ export class AuditService {
           userAgent: params.userAgent ?? null,
         },
       });
-      // Cache invalidieren: neue Audit-Einträge → alte Counts veraltet
+      // Cache invalidieren: neue Audit-Einträge → alte Counts veraltet.
+      // Fire-and-forget: der CacheManager catcht eigene Fehler intern;
+      // wir wollen den AuditWrite-Pfad nicht durch Cache-Latenz
+      // verlangsamen.
       if (params.kanzleiId) {
-        this.cache.invalidate(`audit-count:kanzlei:${params.kanzleiId}`);
+        void this.cache.invalidate(`audit-count:kanzlei:${params.kanzleiId}`);
       }
       if (params.mandantId) {
-        this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
+        void this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
       }
     } catch (err) {
       // Audit darf nie eine Hauptoperation crashen — loggen, aber werfen.

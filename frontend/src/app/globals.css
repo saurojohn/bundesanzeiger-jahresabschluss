@@ -1,7 +1,3 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 :root {
   --background: #ffffff;
   --foreground: #0f172a;
@@ -21,4 +17,63 @@ body {
 /* German number/currency formatting */
 .num-de {
   font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+ * M4 Sprint 4 — Mobile Touch-Optimierung
+ * ============================================================================
+ * Ziele:
+ *   - Tap-Targets mind. 44×44 px (WCAG 2.5.5, Apple HIG, Material Design)
+ *   - Inputs/Textareas mind. 16px Schrift (verhindert iOS-Auto-Zoom)
+ *   - Buttons/Inputs auf Mobile größer als auf Desktop
+ * ============================================================================ */
+
+/* Inputs und Buttons: größere Mindesthöhe auf Mobile */
+@media (max-width: 767px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="number"],
+  input[type="password"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="date"],
+  input[type="datetime-local"],
+  textarea,
+  select {
+    min-height: 2.75rem; /* 44px — Apple HIG Minimum */
+    font-size: 1rem; /* 16px — verhindert iOS-Zoom */
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  button {
+    min-height: 2.75rem; /* 44px */
+  }
+
+  /* Radio- und Checkbox-Labels größerer Tap-Bereich */
+  label:has(input[type="radio"]),
+  label:has(input[type="checkbox"]) {
+    min-height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}
+
+/* Tablet + Desktop: normale Größen */
+@media (min-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 0.875rem; /* text-sm Default */
+  }
+}
+
+/* Safe-Area für iPhone-Notch / Android-Edge */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
 }

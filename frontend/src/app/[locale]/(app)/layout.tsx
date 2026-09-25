@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { ServiceWorkerRegistrar } from '@/components/system/ServiceWorkerRegistrar';
 
 export default function AppLayout({
   children,
@@ -10,6 +11,7 @@ export default function AppLayout({
   // Aktuell Client-Side check (siehe AuthGuard). Hier vorerst keine Redirect.
   return (
     <div className="min-h-screen bg-slate-50">
+      <ServiceWorkerRegistrar />
       <AppHeader />
       <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
     </div>

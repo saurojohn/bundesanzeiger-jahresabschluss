@@ -1,0 +1,53 @@
+{
+  "name": "Bundesanzeiger Jahresabschluss",
+  "short_name": "BAnz-JA",
+  "description": "GoBD-konforme Pflichtveröffentlichung von Jahresabschlüssen im Bundesanzeiger (§§ 325-326 HGB).",
+  "start_url": "/de-DE/dashboard",
+  "scope": "/de-DE/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "lang": "de",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Mandanten",
+      "short_name": "Mandanten",
+      "url": "/de-DE/mandant",
+      "description": "Mandanten-Übersicht öffnen"
+    },
+    {
+      "name": "Bilanzen",
+      "short_name": "Bilanzen",
+      "url": "/de-DE/bilanz",
+      "description": "Bilanz-Erfassung"
+    },
+    {
+      "name": "GuV",
+      "short_name": "GuV",
+      "url": "/de-DE/guv",
+      "description": "GuV-Erfassung"
+    }
+  ]
+}

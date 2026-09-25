@@ -166,42 +166,92 @@ export function GuvListView() {
           {t('guv.noGuv')}
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-slate-700">
-                  {t('guv.geschaeftsjahr')}
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-slate-700">
-                  {t('guv.verfahren')}
-                </th>
-                <th className="px-4 py-3 text-right font-medium text-slate-700 num-de">
-                  {t('guv.validation.jahresueberschuss')}
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-slate-700">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-center font-medium text-slate-700">
-                  PDF
-                </th>
-                <th className="px-4 py-3 text-right font-medium text-slate-700">
-                  {t('common.actions')}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {guvs.map((g) => (
-                <tr key={g.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 num-de">{g.geschaeftsjahr}</td>
-                  <td className="px-4 py-3">{t(`guv.${g.verfahren}`)}</td>
-                  <td className="px-4 py-3 text-right num-de">
+        <div className="space-y-3 md:hidden">
+          {/* Mobile: Card-Layout */}
+          {guvs.map((g) => (
+            <div
+              key={g.id}
+              className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-base font-semibold text-slate-900 num-de">
+                    {g.geschaeftsjahr}
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {t(`guv.${g.verfahren}`)}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-base font-semibold text-slate-900 num-de">
                     {g.ergebnis.toLocaleString('de-DE', {
                       style: 'currency',
                       currency: 'EUR',
                     })}
-                  </td>
-                  <td className="px-4 py-3">
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">{g.status}</div>
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => onEdit(g)}
+                  className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                >
+                  {t('common.edit')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(g)}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {t('common.delete')}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Desktop: Table-Layout ab md */}
+      {!loading && guvs.length > 0 && (
+        <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium text-slate-700">
+                    {t('guv.geschaeftsjahr')}
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-700">
+                    {t('guv.verfahren')}
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-700 num-de">
+                    {t('guv.validation.jahresueberschuss')}
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-700">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-center font-medium text-slate-700">
+                    PDF
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-700">
+                    {t('common.actions')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {guvs.map((g) => (
+                  <tr key={g.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 num-de">{g.geschaeftsjahr}</td>
+                    <td className="px-4 py-3">{t(`guv.${g.verfahren}`)}</td>
+                    <td className="px-4 py-3 text-right num-de">
+                      {g.ergebnis.toLocaleString('de-DE', {
+                        style: 'currency',
+                        currency: 'EUR',
+                      })}
+                    </td>
+                    <td className="px-4 py-3">
                     <span
                       className={
                         'inline-flex px-2 py-0.5 rounded text-xs font-medium ' +

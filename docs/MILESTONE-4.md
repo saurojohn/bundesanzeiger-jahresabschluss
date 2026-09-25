@@ -1,6 +1,6 @@
 # Milestone 4 — Production-Tier
 
-> **Status**: 🚧 Sprint 0 + 1 + 2 + 3 abgeschlossen (Public-API + Cloud-Migration + Subscription+White-Label live), Sprint 4–5 folgen.
+> **Status**: 🚧 Sprint 0 + 1 + 2 + 3 + 4 abgeschlossen (Public-API + Cloud-Migration + Subscription+White-Label + Mobile-Responsiveness), Sprint 5 (GoBD-Audit) folgt.
 > **Vision**: Production-Tier-System für Bundesanzeiger Jahresabschluss
 > mit Multi-VM-Cloud-Deployment, Public-API, Subscription-Billing und
 > vollständiger GoBD-Zertifizierungsreife.
@@ -24,7 +24,8 @@
 | **M4 Sprint 1** | ✅ Public-API | OAuth2 client_credentials, API-Keys, 10 Scopes, OpenAPI 3.1, Webhooks (HMAC + Retry + DLQ) |
 | **M4 Sprint 2** | ✅ Cloud-Migration | Prisma Read-Routing (`$extends`), Hetzner Multi-VM-Compose, NGINX Blue-Green + Cosign-Verify, /health-Probes, Smoke-Test |
 | **M4 Sprint 3** | ✅ Subscription + White-Label | Stripe-Subscription (3 Tiers + Mock-Fallback), Billing-Webhook, Feature-Flags, Custom-Domain-Wizard (DNS-01 + Let's Encrypt) |
-| **M4 Sprint 4** | ⏳ geplant | Mobile-Responsiveness |
+| **M4 Sprint 4** | ✅ Mobile-Responsiveness | Hamburger-Menu, Card-Layout für Listen auf Mobile, Tap-Target ≥44px, PWA (manifest + Service-Worker) |
+| **M4 Sprint 5** | ⏳ geplant | GoBD-Zertifizierungs-Audit + M4-Release-Tag |
 | **M4 Sprint 3** | ⏳ geplant | Subscription + White-Label-Production |
 | **M4 Sprint 4** | ⏳ geplant | Mobile-Responsiveness |
 | **M4 Sprint 5** | ⏳ geplant | GoBD-Zertifizierungs-Audit + M4-Release-Tag |

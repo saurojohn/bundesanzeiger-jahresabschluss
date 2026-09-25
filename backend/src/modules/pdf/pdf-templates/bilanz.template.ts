@@ -37,6 +37,23 @@ export const PDF_LAYOUT = {
 } as const;
 
 /**
+ * Branding-Snapshot, den das PDF-Template nutzt.
+ *
+ * Backwards-Compat: Alle Felder außer `logoBuffer` haben Defaults
+ * (primaryColor/accentColor fallen auf das Layout-Default zurück).
+ */
+export interface PdfBrandingSnapshot {
+  /** Hex-Color der Brand-Primärfarbe. Default = Layout-Accent (#003366). */
+  primaryColor?: string;
+  /** Hex-Color der Brand-Sekundärfarbe. Default = Layout-Primary (#1a1a1a). */
+  accentColor?: string;
+  /** Logo-Buffer (PNG/JPEG/SVG). Optional — wenn nicht gesetzt, kein Logo. */
+  logoBuffer?: Buffer | null;
+  /** Content-Type des Logos. */
+  logoContentType?: string;
+}
+
+/**
  * Render-Helper für Header + Footer einer Seite.
  *
  * Wird in jedem Template am Ende der `pipe()` registriert.
@@ -52,8 +69,18 @@ export function drawHeaderFooter(
     sha256Hash: string;
     erstelltAm: Date;
     erstelltVonEmail: string;
+    /**
+     * Optionaler Branding-Snapshot (M3 Sprint 4+5). Wenn gesetzt, wird
+     * das Logo + die Brand-Color im Header verwendet.
+     */
+    branding?: PdfBrandingSnapshot | null;
   },
 ): void {
+  // Effektive Brand-Color (Default = Layout-Accent)
+  const brandColor = options.branding?.primaryColor ?? PDF_LAYOUT.colors.accent;
+  const brandAccent = options.branding?.accentColor ?? PDF_LAYOUT.colors.primary;
+  const logoBuffer = options.branding?.logoBuffer;
+
   // Hilfsfunktion für Footer (unten auf jeder Seite).
   const drawFooter = (): void => {
     const y = doc.page.height - PDF_LAYOUT.margins.bottom + 20;
@@ -112,36 +139,56 @@ export function drawHeaderFooter(
 
   function drawHeader(): void {
     const y = 30;
+    let xCursor = PDF_LAYOUT.margins.left;
+    let titleLeftOffset = PDF_LAYOUT.margins.left;
+
+    // Logo (links oben) — wenn vorhanden, 100×40 px, ab y=20.
+    if (logoBuffer && logoBuffer.length > 0) {
+      try {
+        doc.image(logoBuffer, PDF_LAYOUT.margins.left, 20, {
+          width: 100,
+          height: 40,
+        });
+        xCursor = PDF_LAYOUT.margins.left + 110;
+        titleLeftOffset = PDF_LAYOUT.margins.left + 110;
+      } catch {
+        // Wenn das Logo nicht ladbar ist (z.B. corrupt), brechen wir
+        // den Header sauber ab — kein Crash.
+      }
+    }
+
     doc
       .fontSize(14)
-      .fillColor(PDF_LAYOUT.colors.accent)
-      .text('Bundesanzeiger Jahresabschluss', PDF_LAYOUT.margins.left, y, {
-        width: doc.page.width - PDF_LAYOUT.margins.left - PDF_LAYOUT.margins.right,
+      .fillColor(brandColor)
+      .text('Bundesanzeiger Jahresabschluss', titleLeftOffset, y, {
+        width: doc.page.width - titleLeftOffset - PDF_LAYOUT.margins.right,
         align: 'left',
       });
     doc
       .fontSize(9)
-      .fillColor(PDF_LAYOUT.colors.primary)
+      .fillColor(brandAccent)
       .text(
         `${options.firmenname} · ${options.rechtsform} · Geschäftsjahr ${options.geschaeftsjahr}`,
-        PDF_LAYOUT.margins.left,
+        titleLeftOffset,
         y + 18,
-        { width: doc.page.width - PDF_LAYOUT.margins.left - PDF_LAYOUT.margins.right, align: 'left' },
+        { width: doc.page.width - titleLeftOffset - PDF_LAYOUT.margins.right, align: 'left' },
       );
     doc
       .fontSize(11)
-      .fillColor(PDF_LAYOUT.colors.primary)
-      .text(options.seiteTitel, PDF_LAYOUT.margins.left, y + 34, {
-        width: doc.page.width - PDF_LAYOUT.margins.left - PDF_LAYOUT.margins.right,
+      .fillColor(brandAccent)
+      .text(options.seiteTitel, titleLeftOffset, y + 34, {
+        width: doc.page.width - titleLeftOffset - PDF_LAYOUT.margins.right,
         align: 'right',
       });
-    // Trennlinie unter Header
+    // Trennlinie unter Header (in Brand-Color)
     doc
       .moveTo(PDF_LAYOUT.margins.left, y + 52)
       .lineTo(doc.page.width - PDF_LAYOUT.margins.right, y + 52)
-      .strokeColor(PDF_LAYOUT.colors.rule)
+      .strokeColor(brandColor)
+      .lineWidth(1.5)
       .stroke();
     doc.y = y + 64; // Cursor unter Header
+    void xCursor;
   }
 }
 
@@ -164,6 +211,7 @@ export async function renderBilanzPdf(
     erstelltVonEmail: string;
     wormObjectKey: string;
     sha256Hash: string;
+    branding?: PdfBrandingSnapshot | null;
   },
 ): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
@@ -194,6 +242,7 @@ export async function renderBilanzPdf(
       sha256Hash: options.sha256Hash,
       erstelltAm: options.erstelltAm,
       erstelltVonEmail: options.erstelltVonEmail,
+      branding: options.branding ?? null,
     });
 
     // Bilanz-Titel

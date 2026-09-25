@@ -77,7 +77,8 @@
     "users": "Benutzer",
     "kanzlei": "Kanzlei",
     "settings": "Einstellungen",
-    "help": "Hilfe"
+    "help": "Hilfe",
+    "branding": "Branding"
   },
   "dashboard": {
     "title": "Übersicht",
@@ -671,5 +672,58 @@
     },
     "bilanzStatusAPPROVED": "Bilanz nach WP-Freigabe auf APPROVED gesetzt",
     "noMandant": "Bitte einen Mandanten auswählen."
+  },
+  "branding": {
+    "title": "Branding",
+    "subtitle": "Konfigurieren Sie das White-Label-Branding Ihrer Kanzlei (Logo, Farben, eigene Domain).",
+    "logo": {
+      "title": "Kanzlei-Logo",
+      "subtitle": "Laden Sie Ihr Kanzlei-Logo hoch. Es erscheint im Header und auf allen PDF-Dokumenten.",
+      "noLogo": "Kein Logo",
+      "previewAlt": "Logo-Vorschau",
+      "allowedTypes": "PNG, JPEG oder SVG",
+      "maxSize": "max. {mb} MB",
+      "upload": "Logo hochladen",
+      "delete": "Logo entfernen"
+    },
+    "colors": {
+      "title": "Marken-Farben",
+      "subtitle": "Wählen Sie die Primär- und Sekundärfarbe Ihrer Kanzlei.",
+      "primary": "Primärfarbe",
+      "accent": "Sekundärfarbe",
+      "save": "Farben speichern"
+    },
+    "domain": {
+      "title": "Eigene Domain",
+      "subtitle": "Verwenden Sie eine eigene Subdomain für den Auftritt Ihrer Kanzlei (z.B. rechnungen.kanzlei.de).",
+      "inputLabel": "Domain (FQDN)",
+      "placeholder": "rechnungen.kanzlei.de",
+      "verified": "✓ Domain verifiziert",
+      "notVerifiedM3": "Hinweis: Die DNS-Verifikation wird in M4 automatisiert. Aktuell nur Speicherung.",
+      "save": "Domain speichern"
+    },
+    "preview": {
+      "title": "Vorschau",
+      "subtitle": "So wird das Branding in der Anwendung angezeigt.",
+      "samplePrimary": "Primär-Button",
+      "sampleAccent": "Akzent-Button"
+    },
+    "feedback": {
+      "colorsSaved": "Farben gespeichert.",
+      "domainSaved": "Domain gespeichert.",
+      "logoUploaded": "Logo hochgeladen.",
+      "logoDeleted": "Logo entfernt."
+    },
+    "confirm": {
+      "deleteLogo": "Möchten Sie das Logo wirklich entfernen?"
+    },
+    "errors": {
+      "noMandant": "Sie haben keinen Mandanten — Branding kann nicht konfiguriert werden.",
+      "invalidHexColor": "Ungültiger Hex-Farbwert. Erwartetes Format: #rrggbb",
+      "invalidDomain": "Ungültiger Domain-Format. Beispiel: rechnungen.kanzlei.de",
+      "invalidLogoType": "Nur PNG, JPEG oder SVG sind erlaubt.",
+      "logoTooLarge": "Das Logo ist zu groß (max. 5 MB).",
+      "noLogoSelected": "Bitte wählen Sie eine Logo-Datei aus."
+    }
   }
 }

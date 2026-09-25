@@ -15,7 +15,11 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { StorageService } from '../../storage/services/storage.service';
 import { WormObjectRepository } from '../../storage/repositories/worm-object.repository';
 import type { AuthUser } from '../../auth/types/auth-user.types';
-import { renderBilanzPdf } from '../pdf-templates/bilanz.template';
+import { BrandingService } from '../../branding/services/branding.service';
+import {
+  renderBilanzPdf,
+  type PdfBrandingSnapshot,
+} from '../pdf-templates/bilanz.template';
 import { renderGuVPdf } from '../pdf-templates/guv.template';
 import { renderAnhangPdf } from '../pdf-templates/anhang.template';
 import { renderAbschlussPdf } from '../pdf-templates/abschluss.template';
@@ -54,6 +58,7 @@ export class PdfService {
     private readonly storageService: StorageService,
     private readonly wormObjectRepository: WormObjectRepository,
     private readonly auditService: AuditService,
+    private readonly brandingService: BrandingService,
   ) {}
 
   // ===========================================================================
@@ -74,6 +79,7 @@ export class PdfService {
     const bilanz = await this.bilanzRepository.findWithPositionen(bilanzId, mandantId);
     if (!bilanz) throw new NotFoundException('Bilanz nicht gefunden');
     const mandant = await this.loadMandant(mandantId);
+    const branding = await this.loadBrandingSnapshot(mandantId, user);
 
     return this.renderAndPersist(
       {
@@ -95,6 +101,7 @@ export class PdfService {
           erstelltVonEmail: user.email,
           wormObjectKey,
           sha256Hash,
+          branding,
         }),
     );
   }
@@ -112,6 +119,7 @@ export class PdfService {
     const guv = await this.guvRepository.findWithPositionen(guvId, mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
     const mandant = await this.loadMandant(mandantId);
+    const branding = await this.loadBrandingSnapshot(mandantId, user);
 
     return this.renderAndPersist(
       {
@@ -133,6 +141,7 @@ export class PdfService {
           erstelltVonEmail: user.email,
           wormObjectKey,
           sha256Hash,
+          branding,
         }),
     );
   }
@@ -150,6 +159,7 @@ export class PdfService {
     const anhang = await this.anhangRepository.findWithAbschnitte(anhangId, mandantId);
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
     const mandant = await this.loadMandant(mandantId);
+    const branding = await this.loadBrandingSnapshot(mandantId, user);
 
     return this.renderAndPersist(
       {
@@ -171,6 +181,7 @@ export class PdfService {
           erstelltVonEmail: user.email,
           wormObjectKey,
           sha256Hash,
+          branding,
         }),
     );
   }
@@ -226,6 +237,7 @@ export class PdfService {
       );
     }
     const mandant = await this.loadMandant(mandantId);
+    const branding = await this.loadBrandingSnapshot(mandantId, user);
 
     return this.renderAndPersist(
       {
@@ -250,6 +262,7 @@ export class PdfService {
             erstelltVonEmail: user.email,
             wormObjectKey,
             sha256Hash,
+            branding,
           },
         ),
       abschluss,
@@ -490,6 +503,52 @@ export class PdfService {
       throw new NotFoundException('Mandant nicht gefunden');
     }
     return mandant;
+  }
+
+  /**
+   * Lädt den Branding-Snapshot für die PDF-Generierung.
+   *
+   * Branding wird 1h gecached (im BrandingService). Wenn kein Logo
+   * vorhanden ist oder der WORM-Download fehlschlägt, fällt das PDF
+   * auf das Standard-Branding zurück (kein Crash).
+   */
+  private async loadBrandingSnapshot(
+    mandantId: string,
+    user: AuthUser,
+  ): Promise<PdfBrandingSnapshot | null> {
+    try {
+      const branding = await this.brandingService.getBrandingByMandantId(mandantId);
+      const snapshot: PdfBrandingSnapshot = {
+        primaryColor: branding.primaryColor,
+        accentColor: branding.accentColor,
+      };
+      // Logo nur laden, wenn eines hinterlegt ist.
+      if (branding.kanzleiId) {
+        try {
+          const logo = await this.brandingService.getLogoBuffer(
+            branding.kanzleiId,
+            user,
+          );
+          if (logo) {
+            snapshot.logoBuffer = logo.buffer;
+            snapshot.logoContentType = logo.contentType;
+          }
+        } catch (err) {
+          // Wenn der Logo-Download fehlschlägt, loggen wir nur — das
+          // PDF wird ohne Logo gerendert (kein Crash).
+          this.logger.warn(
+            `Logo-Download fehlgeschlagen für kanzlei ${branding.kanzleiId}: ${(err as Error).message}`,
+          );
+        }
+      }
+      return snapshot;
+    } catch (err) {
+      // Branding-Service-Fehler: PDF ohne Branding rendern (Fallback).
+      this.logger.warn(
+        `Branding-Lookup fehlgeschlagen für mandant ${mandantId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   /**

@@ -29,7 +29,26 @@ model Kanzlei {
   rechtsform String // "Steuerberatungsgesellschaft" | "Wirtschaftsprüfungsgesellschaft" | "Einzelkanzlei"
   adresse    Json // {strasse, plz, ort, land}
   ustId      String? // USt-IdNr.
-  logoUrl    String?
+
+  // === White-Label Branding (M3 Sprint 4+5) ===
+  /// S3/WORM-URL des Kanzlei-Logos (für Frontend-Header + PDF-Branding).
+  logoUrl                  String?
+  /// WORM-Object-Key des Logos (für GoBD-konforme Archivierung).
+  logoWormKey              String?
+  /// Primärfarbe (Hex #rrggbb) — Headlines, Buttons, Akzente.
+  primaryColor             String?  @default("#2563eb")
+  /// Sekundärfarbe (Hex #rrggbb) — Hover-States, sekundäre Buttons.
+  accentColor              String?  @default("#0ea5e9")
+  /// Custom-Domain (FQDN) — z.B. "rechnungen.musterkanzlei.de".
+  /// M4: DNS-Verifikation, M3: nur Speicherung + Anzeige.
+  customDomain             String?  @unique
+  /// true sobald DNS-TXT-Record verifiziert wurde (M4).
+  customDomainVerified     Boolean  @default(false)
+  /// Wann wurde das Branding zuletzt geändert (für Audit + Cache-Invalidation).
+  brandingUpdatedAt        DateTime?
+  /// Welcher User hat das Branding zuletzt geändert.
+  brandingUpdatedById      String?  @db.Uuid
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -38,6 +57,7 @@ model Kanzlei {
   auditLogs                AuditLog[]
   konsolidierungsEinheiten KonsolidierungsEinheit[]
 
+  @@index([customDomain])
   @@map("kanzlei")
 }
 

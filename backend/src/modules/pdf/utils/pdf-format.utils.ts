@@ -70,3 +70,39 @@ export function guvKategorieLabel(kategorie: string): string {
   };
   return labels[kategorie] ?? kategorie;
 }
+
+/**
+ * Konvertiert einen Hex-Color-String (#rrggbb oder #rgb) in ein
+ * PDFKit-RGB-Objekt {r, g, b}.
+ *
+ * Unterstützt:
+ *   - "#2563eb"  (6-stellig)
+ *   - "#25e"     (3-stellig, expandiert zu "#2255ee")
+ *
+ * Fällt bei ungültigem Input auf das Default-Blau (#2563eb) zurück.
+ */
+export function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const DEFAULT = { r: 37, g: 99, b: 235 }; // #2563eb
+  if (typeof hex !== 'string') return DEFAULT;
+
+  const trimmed = hex.trim();
+  // 3-stellige Kurzform: #rgb → #rrggbb
+  const shortMatch = /^#?([a-f\d])([a-f\d])([a-f\d])$/i.exec(trimmed);
+  if (shortMatch) {
+    return {
+      r: parseInt((shortMatch[1] ?? '0') + (shortMatch[1] ?? '0'), 16),
+      g: parseInt((shortMatch[2] ?? '0') + (shortMatch[2] ?? '0'), 16),
+      b: parseInt((shortMatch[3] ?? '0') + (shortMatch[3] ?? '0'), 16),
+    };
+  }
+  // 6-stellig: #rrggbb
+  const fullMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(trimmed);
+  if (fullMatch) {
+    return {
+      r: parseInt(fullMatch[1] ?? '00', 16),
+      g: parseInt(fullMatch[2] ?? '00', 16),
+      b: parseInt(fullMatch[3] ?? '00', 16),
+    };
+  }
+  return DEFAULT;
+}

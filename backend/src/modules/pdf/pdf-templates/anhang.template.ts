@@ -4,6 +4,7 @@ import type { AnhangEntity } from '../../../common/repositories/anhang.repositor
 import {
   drawHeaderFooter,
   PDF_LAYOUT,
+  type PdfBrandingSnapshot,
 } from './bilanz.template';
 
 /**
@@ -23,6 +24,7 @@ export async function renderAnhangPdf(
     erstelltVonEmail: string;
     wormObjectKey: string;
     sha256Hash: string;
+    branding?: PdfBrandingSnapshot | null;
   },
 ): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
@@ -53,6 +55,7 @@ export async function renderAnhangPdf(
       sha256Hash: options.sha256Hash,
       erstelltAm: options.erstelltAm,
       erstelltVonEmail: options.erstelltVonEmail,
+      branding: options.branding ?? null,
     });
 
     // Titel

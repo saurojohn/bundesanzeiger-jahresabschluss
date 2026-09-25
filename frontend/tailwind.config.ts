@@ -9,12 +9,16 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          900: '#1e3a8a',
+          // White-Label-fähig: die Brand-Color wird per CSS-Custom-
+          // Properties zur Laufzeit überschrieben (siehe AppLayout).
+          // Fallback-Werte entsprechen dem bisherigen Default.
+          50: 'var(--brand-primary-50, #eff6ff)',
+          100: 'var(--brand-primary-100, #dbeafe)',
+          500: 'var(--brand-primary-500, #3b82f6)',
+          600: 'var(--brand-primary, #2563eb)',
+          700: 'var(--brand-primary-hover, #1d4ed8)',
+          900: 'var(--brand-primary-900, #1e3a8a)',
+          accent: 'var(--brand-accent, #0ea5e9)',
         },
       },
       fontFamily: {

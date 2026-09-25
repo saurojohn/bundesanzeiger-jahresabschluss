@@ -18,7 +18,14 @@ type SessionUser = {
   }>;
 };
 
-const NAV_ITEMS = [
+type NavItem = {
+  href: string;
+  key: string;
+  /** Wenn gesetzt, wird das Item nur für diese Rollen angezeigt. */
+  visibleFor?: ReadonlyArray<'GF' | 'STEUERBERATER' | 'WIRTSCHAFTSPRUEFER' | 'KANZLEI_ADMIN' | 'SYSTEM_ADMIN'>;
+};
+
+const NAV_ITEMS: ReadonlyArray<NavItem> = [
   { href: '/dashboard', key: 'dashboard' },
   { href: '/bilanz', key: 'bilanz' },
   { href: '/guv', key: 'guv' },
@@ -27,7 +34,26 @@ const NAV_ITEMS = [
   { href: '/konsolidierung', key: 'konsolidierung' },
   { href: '/wp', key: 'wp' },
   { href: '/audit', key: 'audit' },
+  {
+    href: '/branding',
+    key: 'branding',
+    visibleFor: ['KANZLEI_ADMIN'],
+  },
 ] as const;
+
+/**
+ * Prüft, ob ein Nav-Item für den aktuellen User sichtbar ist.
+ *
+ * SYSTEM_ADMIN sieht alle Items (auch ohne visibleFor).
+ * Andere Rollen sehen Items nur, wenn ihre Rollen in visibleFor enthalten sind.
+ */
+function isItemVisible(item: NavItem, user: SessionUser | null): boolean {
+  if (!item.visibleFor) return true;
+  if (!user) return false;
+  if (user.globalRole === 'SYSTEM_ADMIN') return true;
+  const userRoles = user.mandanten.map((m) => m.rolle);
+  return userRoles.some((r) => item.visibleFor?.includes(r));
+}
 
 export function AppHeader() {
   const t = useTranslations();
@@ -107,7 +133,7 @@ export function AppHeader() {
         </div>
 
         <nav className="flex items-center gap-1">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => isItemVisible(item, user)).map((item) => {
             const href = `/de-DE${item.href}`;
             const active = pathname?.endsWith(item.href) ?? false;
             return (

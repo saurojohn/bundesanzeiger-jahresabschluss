@@ -19,6 +19,7 @@ import { StorageModule } from './modules/storage/storage.module';
 import { SignaturModule } from './modules/signatur/signatur.module';
 import { KonsolidierungModule } from './modules/konsolidierung/konsolidierung.module';
 import { WPModule } from './modules/wp/wp.module';
+import { BrandingModule } from './modules/branding/branding.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /**
@@ -44,6 +45,7 @@ import { PrismaModule } from './prisma/prisma.module';
  *   - PdfModule          (PDF-Generierung + WORM-Upload + Download)
  *   - SignaturModule     (qeS-Signatur)
  *   - KonsolidierungModule (Konzernabschluss nach PublG §11)
+ *   - BrandingModule     (White-Label: Logo, Farben, Custom-Domain)
  */
 @Module({
   imports: [
@@ -74,6 +76,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SignaturModule,
     KonsolidierungModule,
     WPModule,
+    BrandingModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

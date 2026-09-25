@@ -4,6 +4,7 @@ import type { GuVEntity } from '../../../common/repositories/guv.repository';
 import {
   drawHeaderFooter,
   PDF_LAYOUT,
+  type PdfBrandingSnapshot,
 } from './bilanz.template';
 import { formatBetrag, guvKategorieLabel } from '../utils/pdf-format.utils';
 
@@ -24,6 +25,7 @@ export async function renderGuVPdf(
     erstelltVonEmail: string;
     wormObjectKey: string;
     sha256Hash: string;
+    branding?: PdfBrandingSnapshot | null;
   },
 ): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
@@ -54,6 +56,7 @@ export async function renderGuVPdf(
       sha256Hash: options.sha256Hash,
       erstelltAm: options.erstelltAm,
       erstelltVonEmail: options.erstelltVonEmail,
+      branding: options.branding ?? null,
     });
 
     // Titel

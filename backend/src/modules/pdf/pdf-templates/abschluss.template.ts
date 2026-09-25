@@ -6,6 +6,7 @@ import type { AnhangEntity } from '../../../common/repositories/anhang.repositor
 import {
   PDF_LAYOUT,
   type PdfKitDoc,
+  type PdfBrandingSnapshot,
 } from './bilanz.template';
 import { formatBetrag } from '../utils/pdf-format.utils';
 
@@ -32,6 +33,7 @@ export interface AbschlussRenderOptions {
   erstelltVonEmail: string;
   wormObjectKey: string;
   sha256Hash: string;
+  branding?: PdfBrandingSnapshot | null;
 }
 
 /**
@@ -56,19 +58,36 @@ export function createAbschlussPdfDoc(
     },
   });
 
+  // Brand-Color für die interne Verwendung (Titelseite).
+  const brandColor = options.branding?.primaryColor ?? PDF_LAYOUT.colors.accent;
+  const brandAccent =
+    options.branding?.accentColor ?? PDF_LAYOUT.colors.primary;
+  const logoBuffer = options.branding?.logoBuffer;
+
   // Header + Footer (für jede Seite).
   doc.on('pageAdded', () => drawHeaderFooter(doc, options, mandant));
   // Erste Seite
   drawHeaderFooter(doc, options, mandant);
 
   // ============== Titelseite ==============
-  doc.fontSize(20).fillColor(PDF_LAYOUT.colors.accent).text('Jahresabschluss', {
+  // Logo zentriert oben, falls vorhanden.
+  if (logoBuffer && logoBuffer.length > 0) {
+    try {
+      const pageCenter = doc.page.width / 2;
+      doc.image(logoBuffer, pageCenter - 60, 40, { width: 120, height: 48 });
+      doc.y = 100;
+    } catch {
+      // Bei defektem Logo überspringen wir es sauber.
+    }
+  }
+
+  doc.fontSize(20).fillColor(brandColor).text('Jahresabschluss', {
     align: 'center',
   });
   doc.moveDown(0.5);
   doc
     .fontSize(16)
-    .fillColor(PDF_LAYOUT.colors.primary)
+    .fillColor(brandAccent)
     .text(`${mandant.firmenname}`, { align: 'center' });
   doc
     .fontSize(12)
@@ -79,11 +98,11 @@ export function createAbschlussPdfDoc(
   doc.moveDown(1);
   doc
     .fontSize(18)
-    .fillColor(PDF_LAYOUT.colors.accent)
+    .fillColor(brandColor)
     .text(`Geschäftsjahr ${parts.bilanz.geschaeftsjahr}`, { align: 'center' });
   doc.moveDown(2);
 
-  doc.fontSize(10).fillColor(PDF_LAYOUT.colors.primary);
+  doc.fontSize(10).fillColor(brandAccent);
   doc.text(
     `Dieser Jahresabschluss besteht aus den nach § 264 HGB erforderlichen Bestandteilen:`,
     { align: 'center' },
@@ -298,6 +317,12 @@ function drawHeaderFooter(
   options: AbschlussRenderOptions,
   mandant: Mandant,
 ): void {
+  // Brand-Color (M3 Sprint 4+5)
+  const brandColor = options.branding?.primaryColor ?? PDF_LAYOUT.colors.accent;
+  const brandAccent =
+    options.branding?.accentColor ?? PDF_LAYOUT.colors.primary;
+  const logoBuffer = options.branding?.logoBuffer;
+
   // Footer
   doc.on('pageAdded', () => drawFooter());
   drawFooter();
@@ -308,22 +333,37 @@ function drawHeaderFooter(
 
   function drawHeader(): void {
     const y = 30;
+    let titleLeftOffset = PDF_LAYOUT.margins.left;
+
+    // Logo (links oben), falls vorhanden
+    if (logoBuffer && logoBuffer.length > 0) {
+      try {
+        doc.image(logoBuffer, PDF_LAYOUT.margins.left, 20, {
+          width: 100,
+          height: 40,
+        });
+        titleLeftOffset = PDF_LAYOUT.margins.left + 110;
+      } catch {
+        // Logo-Fehler werden geschluckt (kein Crash).
+      }
+    }
+
     doc
       .fontSize(14)
-      .fillColor(PDF_LAYOUT.colors.accent)
-      .text('Bundesanzeiger Jahresabschluss', PDF_LAYOUT.margins.left, y, {
-        width: doc.page.width - PDF_LAYOUT.margins.left - PDF_LAYOUT.margins.right,
+      .fillColor(brandColor)
+      .text('Bundesanzeiger Jahresabschluss', titleLeftOffset, y, {
+        width: doc.page.width - titleLeftOffset - PDF_LAYOUT.margins.right,
         align: 'left',
       });
     doc
       .fontSize(9)
-      .fillColor(PDF_LAYOUT.colors.primary)
+      .fillColor(brandAccent)
       .text(
         `${mandant.firmenname} · ${mandant.rechtsform}`,
-        PDF_LAYOUT.margins.left,
+        titleLeftOffset,
         y + 18,
         {
-          width: doc.page.width - PDF_LAYOUT.margins.left - PDF_LAYOUT.margins.right,
+          width: doc.page.width - titleLeftOffset - PDF_LAYOUT.margins.right,
           align: 'left',
         },
       );

@@ -7,6 +7,7 @@ import {
 } from '../../../common/dto/pagination.dto';
 import { PaginationService } from '../../../common/services/pagination.service';
 import { CacheManagerService } from '../../../common/cache/cache-manager.service';
+import { AuditIntegrityService } from './audit-integrity.service';
 import type { AuditActionLiteral } from '../constants/audit-actions';
 
 export interface RecordAuditParams {
@@ -63,6 +64,7 @@ export class AuditService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheManagerService,
+    private readonly integrityService: AuditIntegrityService,
   ) {}
 
   /**
@@ -73,8 +75,9 @@ export class AuditService {
    * Übergabe sanitizen.
    */
   async record(params: RecordAuditParams): Promise<void> {
+    let createdAuditLogId: string | null = null;
     try {
-      await this.prisma.auditLog.create({
+      const created = await this.prisma.auditLog.create({
         data: {
           kanzleiId: params.kanzleiId ?? null,
           mandantId: params.mandantId ?? null,
@@ -88,24 +91,37 @@ export class AuditService {
           ipAddress: params.ipAddress ?? null,
           userAgent: params.userAgent ?? null,
         },
+        select: { id: true },
       });
-      // Cache invalidieren: neue Audit-Einträge → alte Counts veraltet.
-      // Fire-and-forget: der CacheManager catcht eigene Fehler intern;
-      // wir wollen den AuditWrite-Pfad nicht durch Cache-Latenz
-      // verlangsamen.
-      if (params.kanzleiId) {
-        void this.cache.invalidate(`audit-count:kanzlei:${params.kanzleiId}`);
-      }
-      if (params.mandantId) {
-        void this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
-      }
+      createdAuditLogId = created.id;
     } catch (err) {
-      // Audit darf nie eine Hauptoperation crashen — loggen, aber werfen.
       this.logger.error(
         `AuditLog write fehlgeschlagen (${String(params.action)}/${params.entityType}): ${
           (err as Error).message
         }`,
       );
+      return;
+    }
+
+    // Cache invalidieren: neue Audit-Einträge → alte Counts veraltet.
+    // Fire-and-forget: der CacheManager catcht eigene Fehler intern;
+    // wir wollen den AuditWrite-Pfad nicht durch Cache-Latenz
+    // verlangsamen.
+    if (params.kanzleiId) {
+      void this.cache.invalidate(`audit-count:kanzlei:${params.kanzleiId}`);
+    }
+    if (params.mandantId) {
+      void this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
+    }
+
+    // Hash-Chain (M4 Sprint 5) — fire-and-forget, Fehler werden intern
+    // geloggt. Audit-Write-Pfad bleibt schnell.
+    if (createdAuditLogId) {
+      void this.integrityService.computeHashForEntry(createdAuditLogId).catch((err) => {
+        this.logger.warn(
+          `Hash-Chain-Berechnung fehlgeschlagen: ${(err as Error).message}`,
+        );
+      });
     }
   }
 

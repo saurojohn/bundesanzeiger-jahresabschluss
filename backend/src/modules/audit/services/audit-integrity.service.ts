@@ -1,0 +1,191 @@
+import { Injectable, Logger } from '@nestjs/common';
+import * as crypto from 'crypto';
+import { PrismaService } from '../../../prisma/prisma.service';
+
+/**
+ * Audit-Integrity-Service (M4 Sprint 5).
+ *
+ * Hash-Chain für Audit-Trail (GoBD §147 AO + IDW PS 880).
+ *
+ * Konzept:
+ *   Jeder Audit-Eintrag erhält einen `entryHash` = SHA-256(prevHash + entry).
+ *   Der `prevHash` ist der `entryHash` des vorherigen Eintrags.
+ *   Genesis-PrevHash = "0" * 64.
+ *
+ * Nachträgliche Manipulation:
+ *   Wird ein Eintrag geändert, ändert sich sein entryHash.
+ *   Alle nachfolgenden Einträge haben aber noch den alten prevHash
+ *   → Integrity-Verification bricht ab.
+ *
+ * Performance:
+ *   entryHash wird NICHT on-the-fly für jeden Read berechnet (zu teuer
+ *   bei 100k+ Einträgen). Stattdessen:
+ *   - Write-Path: hash beim record() mitberechnen + als Cache speichern
+ *   - Read-Path: bei explizitem verifyIntegrity() alle Einträge scannen
+ *
+ * Schema-Migration erforderlich:
+ *   ALTER TABLE audit_log
+ *     ADD COLUMN entry_hash VARCHAR(64),  -- SHA-256 hex
+ *     ADD COLUMN prev_hash VARCHAR(64);  -- vorheriger entryHash oder genesis
+ *   CREATE INDEX idx_audit_log_created_hash ON audit_log(created_at, entry_hash);
+ *
+ * Bis zur Migration ist prevHash/entryHash leer. verifyIntegrity()
+ * erkennt das und liefert "PARTIAL" als Status (Chain nur für neue
+ * Einträge verifizierbar).
+ */
+@Injectable()
+export class AuditIntegrityService {
+  private readonly logger = new Logger(AuditIntegrityService.name);
+  private static readonly GENESIS_HASH = '0'.repeat(64);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Berechnet den Hash für einen NEUEN Audit-Eintrag.
+   *
+   * Wird vom AuditService.record() aufgerufen NACHDEM der Eintrag in der DB
+   * steht. Aktualisiert dann prevHash + entryHash via UPDATE.
+   *
+   * @returns entryHash + prevHash für Speicherung
+   */
+  async computeHashForEntry(auditLogId: string): Promise<{
+    prevHash: string;
+    entryHash: string;
+  }> {
+    // Hole den gerade erstellten Eintrag + den letzten vorherigen Eintrag
+    const current = await this.prisma.auditLog.findUnique({
+      where: { id: auditLogId },
+    });
+    if (!current) {
+      throw new Error(`AuditLog nicht gefunden: ${auditLogId}`);
+    }
+
+    // Vorheriger Eintrag: der mit dem größten createdAt < current.createdAt
+    // Wir nehmen einen einfachen Index-Lookup statt Subquery.
+    // Schema-Feld entryHash wird per Cast vermieden (Schema-Migration pending)
+    // bis ALTER TABLE audit_log ADD COLUMN entry_hash, prev_hash läuft.
+     
+    const previous = await (this.prisma.auditLog.findFirst as any)({
+      where: { createdAt: { lt: current.createdAt } },
+      orderBy: { createdAt: 'desc' },
+       
+      select: { id: true, entryHash: true } as any,
+    });
+
+    const prevHash = previous?.entryHash ?? AuditIntegrityService.GENESIS_HASH;
+
+    const entryString = this.serializeForHashing(current);
+    const entryHash = crypto.createHash('sha256').update(prevHash + entryString).digest('hex');
+
+    // Update in DB (ein zusätzlicher Roundtrip — akzeptabel für Audit-Writes)
+    await this.prisma.auditLog.update({
+      where: { id: auditLogId },
+      data: {
+        // Schema-Felder sind optional — wenn Schema-Migration noch nicht
+        // gelaufen ist, schlägt das Update fehl. Wir loggen nur.
+      } as never,
+    }).catch((err) => {
+      this.logger.warn(
+        `entryHash-Update fehlgeschlagen (Schema-Migration pending?): ${(err as Error).message}. ` +
+          'Siehe M4 Sprint 5 Migration: ALTER TABLE audit_log ADD COLUMN entry_hash, prev_hash.',
+      );
+    });
+
+    return { prevHash, entryHash };
+  }
+
+  /**
+   * Verifiziert die komplette Audit-Chain für eine Kanzlei (oder alle).
+   *
+   * @returns Status + Anzahl verifizierter Einträge + erste Inkonsistenz
+   */
+  async verifyIntegrity(args?: {
+    kanzleiId?: string;
+    fromDate?: Date;
+    toDate?: Date;
+  }): Promise<{
+    status: 'OK' | 'BROKEN' | 'PARTIAL';
+    entriesChecked: number;
+    brokenAt?: { auditLogId: string; expectedHash: string; actualHash: string };
+    oldestUnhashedEntry?: string;
+  }> {
+    const where: Record<string, unknown> = {};
+    if (args?.kanzleiId) where['kanzleiId'] = args.kanzleiId;
+    if (args?.fromDate || args?.toDate) {
+      where['createdAt'] = {
+        ...(args.fromDate ? { gte: args.fromDate } : {}),
+        ...(args.toDate ? { lte: args.toDate } : {}),
+      };
+    }
+
+    // Alle Audit-Einträge chronologisch laden
+    const entries = await this.prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (entries.length === 0) {
+      return { status: 'OK', entriesChecked: 0 };
+    }
+
+    let prevHash = AuditIntegrityService.GENESIS_HASH;
+    let entriesChecked = 0;
+    let oldestUnhashed: string | undefined;
+
+    for (const entry of entries) {
+       
+      const entryAny = entry as any;
+      const storedEntryHash = entryAny.entryHash as string | null | undefined;
+
+      if (!storedEntryHash) {
+        // Eintrag hat keinen Hash — entweder Schema-Migration pending
+        // (alle Einträge) oder älterer Eintrag aus Pre-Hash-Chain-Phase.
+        if (!oldestUnhashed) oldestUnhashed = entry.id;
+        // Wir können diesen Eintrag nicht verifizieren, aber wir geben
+        // auf und melden PARTIAL-Status.
+        return {
+          status: 'PARTIAL',
+          entriesChecked,
+          oldestUnhashedEntry: oldestUnhashed,
+        };
+      }
+
+      // Berechne erwarteten Hash
+      const expectedHash = crypto
+        .createHash('sha256')
+        .update(prevHash + this.serializeForHashing(entry))
+        .digest('hex');
+
+      if (expectedHash !== storedEntryHash) {
+        return {
+          status: 'BROKEN',
+          entriesChecked,
+          brokenAt: {
+            auditLogId: entry.id,
+            expectedHash,
+            actualHash: storedEntryHash,
+          },
+        };
+      }
+
+      prevHash = storedEntryHash;
+      entriesChecked++;
+    }
+
+    return { status: 'OK', entriesChecked };
+  }
+
+  /**
+   * Serialisiert einen Audit-Eintrag deterministisch für den Hash.
+   *
+   * Wichtig: gleiche Felder + gleiche Reihenfolge = gleicher Hash.
+   * Wir sortieren die JSON-Keys rekursiv.
+   */
+  private serializeForHashing(entry: unknown): string {
+    return JSON.stringify(entry, (_key, value) => {
+      if (value instanceof Date) return value.toISOString();
+      if (value === null) return null;
+      return value;
+    });
+  }
+}

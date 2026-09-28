@@ -419,3 +419,64 @@ Alerts bei:
 ~€36/Monat (siehe `infra/hetzner/README.md` § Kosten-Übersicht).
 Skaliert horizontal mit `BACKEND_REPLICA_COUNT` ohne zusätzliche Kosten
 für die App-VMs selbst (nur Docker-Ressourcen).
+
+### 8.8 Schema-Migration (M4 Production-Ready)
+
+Die Migration `2026_09_25_m4_production_schema` muss auf jeder Production-DB
+ausgeführt werden, damit Subscription-Felder + Audit-Hash-Chain aktiv sind:
+
+```bash
+# 1. Migration anwenden (idempotent, ALTER TABLE ADD COLUMN IF NOT EXISTS)
+cd /opt/bundesanzeiger-jahresabschluss/backend
+DATABASE_URL="$DATABASE_URL" npx prisma migrate deploy
+
+# 2. Audit-Hash-Chain für bestehende Einträge backfillen
+#    (nur wenn vor der Migration bereits Audit-Logs existieren)
+DATABASE_URL="$DATABASE_URL" npx ts-node scripts/backfill-audit-hash-chain.ts
+
+# 3. Verifizieren
+DATABASE_URL="$DATABASE_URL" psql -c "SELECT COUNT(*) FROM audit_log WHERE \"entryHash\" IS NULL"
+# → 0 erwartet (oder Anzahl der Einträge die nach Backfill noch fehlen)
+
+# 4. Health-Check der Hash-Chain (über Backend-API)
+curl -H "Authorization: Bearer $WP_TOKEN" \
+  https://banz.example.com/api/audit/integrity?kanzleiId=...
+# → { "status": "OK", "entriesChecked": N } erwartet
+```
+
+**Was die Migration tut**:
+- Fügt 7 Felder zur `kanzlei`-Tabelle hinzu (Subscription-Tier, Status,
+  Provider, Provider-ID, Period-End, Cancel-At-Period-End, Provider-Customer-ID)
+  mit Default-Werten (`PILOT` / `TRIALING` / `mock` / `false`).
+- Fügt 2 Felder zur `audit_log`-Tabelle hinzu (`entryHash`, `prevHash`)
+  beide nullable für Backwards-Compat.
+- Erstellt Index `idx_audit_log_created_hash` für schnelle verifyIntegrity().
+- Backfill-Update für existierende Kanzleien → Default-Werte.
+
+**Downtime**: 0 Sekunden — die Migration ist nicht-blockierend
+(`ALTER TABLE ADD COLUMN` mit Default in Postgres 11+ ist sofort online).
+
+**Rollback** (nur falls nötig):
+```bash
+# Schema-Rollback (Spalten droppen)
+psql -c "ALTER TABLE audit_log DROP COLUMN IF EXISTS \"entryHash\", DROP COLUMN IF EXISTS \"prevHash\";"
+psql -c "ALTER TABLE kanzlei DROP COLUMN IF EXISTS \"subscriptionTier\", ... ;"
+
+# Hash-Chain-Reset (optional, erzwingt Re-Backfill)
+psql -c "UPDATE audit_log SET \"entryHash\" = NULL, \"prevHash\" = NULL;"
+```
+
+### 8.9 Pilot-Phase-2 → Production
+
+Nach Hetzner-Provisioning + Schema-Migration:
+
+1. **DNS-Wildcard-Cert** via `certbot certonly --dns-hetzner ...`
+   (siehe `backend/docs/dns-wildcard-cert-setup.md`)
+2. **Stripe-Webhook** in Stripe-Dashboard konfigurieren:
+   `POST https://banz.example.com/api/subscription/webhook`
+   mit Events: `customer.subscription.{created,updated,deleted}`,
+   `invoice.payment_{succeeded,failed}`
+3. **Cosign-Signatur** für Production-Image-Release (siehe
+   `backend/scripts/release.sh`)
+4. **Smoke-Test** via `bash infra/scripts/smoke-test.sh https://banz.example.com`
+5. **Pilot-Kanzlei-Recruiting** (Phase 3 — separate Doku)

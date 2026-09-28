@@ -24,7 +24,7 @@ datasource db {
 /// Eine Kanzlei (Steuerberater-Praxis) als Top-Level-Tenant.
 /// 1 Kanzlei → n Mandanten (GmbHs / GmbH & Co. KGs).
 model Kanzlei {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String  @id @default(uuid()) @db.Uuid
   name       String
   rechtsform String // "Steuerberatungsgesellschaft" | "Wirtschaftsprüfungsgesellschaft" | "Einzelkanzlei"
   adresse    Json // {strasse, plz, ort, land}
@@ -32,25 +32,43 @@ model Kanzlei {
 
   // === White-Label Branding (M3 Sprint 4+5) ===
   /// S3/WORM-URL des Kanzlei-Logos (für Frontend-Header + PDF-Branding).
-  logoUrl                  String?
+  logoUrl              String?
   /// WORM-Object-Key des Logos (für GoBD-konforme Archivierung).
-  logoWormKey              String?
+  logoWormKey          String?
   /// Primärfarbe (Hex #rrggbb) — Headlines, Buttons, Akzente.
-  primaryColor             String?  @default("#2563eb")
+  primaryColor         String?   @default("#2563eb")
   /// Sekundärfarbe (Hex #rrggbb) — Hover-States, sekundäre Buttons.
-  accentColor              String?  @default("#0ea5e9")
+  accentColor          String?   @default("#0ea5e9")
   /// Custom-Domain (FQDN) — z.B. "rechnungen.musterkanzlei.de".
   /// M4: DNS-Verifikation, M3: nur Speicherung + Anzeige.
-  customDomain             String?  @unique
+  customDomain         String?   @unique
   /// true sobald DNS-TXT-Record verifiziert wurde (M4).
-  customDomainVerified     Boolean  @default(false)
+  customDomainVerified Boolean   @default(false)
   /// Wann wurde das Branding zuletzt geändert (für Audit + Cache-Invalidation).
-  brandingUpdatedAt        DateTime?
+  brandingUpdatedAt    DateTime?
   /// Welcher User hat das Branding zuletzt geändert.
-  brandingUpdatedById      String?  @db.Uuid
+  brandingUpdatedById  String?   @db.Uuid
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  // === Subscription (M4 Sprint 3) ===
+  /// Tier: 'PILOT' (kostenlos, 3 Mandanten) | 'STANDARD' (€49/Monat, 25) | 'PREMIUM' (€149/Monat, unlimited + Custom-Domain + Public-API).
+  /// Default: 'PILOT' (zero-impact-migration für Pilot-Kanzleien ohne Stripe-Setup).
+  subscriptionTier        String?   @default("PILOT")
+  /// Stripe-konforme Statuswerte: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'INCOMPLETE' | 'INCOMPLETE_EXPIRED' | 'UNPAID' | 'PAUSED'.
+  /// Default: 'TRIALING' → Feature-Flag-Service gewährt Trial-Zugang bis erste Stripe-Aktivierung.
+  subscriptionStatus      String?   @default("TRIALING")
+  /// Billing-Provider: 'stripe' (Production) | 'mock' (Dev/Pilot ohne Stripe-Key).
+  subscriptionProvider    String?   @default("mock")
+  /// Provider-interne Subscription-ID (z.B. Stripe `sub_xxx`). Nullable für Mock-Mode.
+  subscriptionProviderId  String?
+  /// Nächste Abrechnungsperiode-Ende (für Renewal-UI + Cancellation-Window).
+  subscriptionPeriodEnd   DateTime?
+  /// True wenn User bereits gekündigt hat — Zugriff läuft bis subscriptionPeriodEnd.
+  subscriptionCancelAtEnd Boolean   @default(false)
+  /// Stripe-Customer-ID (`cus_xxx`) — für Customer-Portal-Links.
+  providerCustomerId      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   mandanten                Mandant[]
   user                     User[]
@@ -124,16 +142,16 @@ model User {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  kanzlei               Kanzlei?               @relation(fields: [kanzleiId], references: [id])
-  mandantRoles          UserMandantRole[]
-  auditLogs             AuditLog[]
-  sessions              UserSession[]
-  wpNotizenErstellt     WPNotiz[]              @relation("WPNotizErstellt")
-  wpNotizenAcknowledged WPNotiz[]              @relation("WPNotizAcknowledged")
-  wpPruefungenErstellt  WPPruefungsAbschluss[] @relation("WPPruefungErstellt")
-  apiKeysCreated        APIKey[]               @relation("APIKeyErstellt")
-  apiKeysRevoked        APIKey[]               @relation("APIKeyRevoked")
-  webhookSubscriptionsCreated WebhookSubscription[] @relation("WebhookErstellt")
+  kanzlei                     Kanzlei?               @relation(fields: [kanzleiId], references: [id])
+  mandantRoles                UserMandantRole[]
+  auditLogs                   AuditLog[]
+  sessions                    UserSession[]
+  wpNotizenErstellt           WPNotiz[]              @relation("WPNotizErstellt")
+  wpNotizenAcknowledged       WPNotiz[]              @relation("WPNotizAcknowledged")
+  wpPruefungenErstellt        WPPruefungsAbschluss[] @relation("WPPruefungErstellt")
+  apiKeysCreated              APIKey[]               @relation("APIKeyErstellt")
+  apiKeysRevoked              APIKey[]               @relation("APIKeyRevoked")
+  webhookSubscriptionsCreated WebhookSubscription[]  @relation("WebhookErstellt")
 
   @@map("user")
 }
@@ -463,11 +481,11 @@ model WormObject {
 /// Append-only Audit-Log für alle Mutationen.
 /// Erfasst VORHER/NACHHER-Zustand jeder Änderung (für Revisionssicherheit).
 model AuditLog {
-  id                String   @id @default(uuid()) @db.Uuid
-  kanzleiId         String?  @db.Uuid // null für System-Aktionen
-  mandantId         String?  @db.Uuid // null für kanzlei-übergreifend
-  userId            String?  @db.Uuid
-  jahresabschlussId String?  @db.Uuid // Optional: Bezug zu Abschluss
+  id                String  @id @default(uuid()) @db.Uuid
+  kanzleiId         String? @db.Uuid // null für System-Aktionen
+  mandantId         String? @db.Uuid // null für kanzlei-übergreifend
+  userId            String? @db.Uuid
+  jahresabschlussId String? @db.Uuid // Optional: Bezug zu Abschluss
   action            String // "CREATE" | "READ" | "UPDATE" | "DELETE" | "SIGN" | "SUBMIT" | "LOGIN" | "LOGOUT" | "EXPORT"
   entityType        String // "Mandant" | "Bilanz" | "GuV" | "Anhang" | "Jahresabschluss" | "User" | ...
   entityId          String?
@@ -476,7 +494,18 @@ model AuditLog {
   ipAddress         String?
   userAgent         String?
   geoLocation       String? // Optional: ISO-Country-Code
-  createdAt         DateTime @default(now())
+
+  // === Hash-Chain (M4 Sprint 5) ===
+  /// SHA-256-Hash des Eintrags (hex, 64 Zeichen). Genesis-Hash = "0"*64.
+  /// Berechnet als SHA-256(prevHash + serialize(entry)) für Manipulations-Erkennung.
+  /// Nullable für Backwards-Compat: existierende Einträge vor Migration haben
+  /// keinen Hash (verifyIntegrity() liefert dann PARTIAL-Status).
+  entryHash String?
+  /// Hash des vorherigen AuditLog-Eintrags in chronologischer Reihenfolge.
+  /// Genesis-PrevHash = "0"*64 (für allerersten Eintrag).
+  prevHash  String?
+
+  createdAt DateTime @default(now())
 
   kanzlei         Kanzlei?         @relation(fields: [kanzleiId], references: [id])
   mandant         Mandant?         @relation(fields: [mandantId], references: [id])
@@ -491,6 +520,7 @@ model AuditLog {
   @@index([kanzleiId, action, createdAt(sort: Desc)])
   @@index([mandantId, action, createdAt(sort: Desc)])
   @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc), entryHash])
   @@map("audit_log")
 }
 
@@ -690,20 +720,20 @@ model WPPruefungsAbschluss {
 ///
 /// Scopes: Array aus "bilanz:read", "guv:write", "banz:write", etc.
 model APIKey {
-  id          String   @id @default(uuid()) @db.Uuid
-  kanzleiId   String   @db.Uuid
-  name        String   // z.B. "DATEV-Integration-Production"
-  keyId       String   @unique // Public-Key-Id (z.B. "ak_abc123def456")
-  keyHash     String   // SHA-256-Hash des Secret-Keys (NIE Plain!)
+  id          String    @id @default(uuid()) @db.Uuid
+  kanzleiId   String    @db.Uuid
+  name        String // z.B. "DATEV-Integration-Production"
+  keyId       String    @unique // Public-Key-Id (z.B. "ak_abc123def456")
+  keyHash     String // SHA-256-Hash des Secret-Keys (NIE Plain!)
   scopes      String[] // ["bilanz:read", "guv:read", "banz:write", ...]
-  rateLimit   Int      @default(1000) // pro Stunde
+  rateLimit   Int       @default(1000) // pro Stunde
   expiresAt   DateTime? // null = unlimited
-  isActive    Boolean  @default(true)
+  isActive    Boolean   @default(true)
   lastUsedAt  DateTime?
-  createdAt   DateTime @default(now())
-  createdById String?  @db.Uuid
+  createdAt   DateTime  @default(now())
+  createdById String?   @db.Uuid
   revokedAt   DateTime?
-  revokedById String?  @db.Uuid
+  revokedById String?   @db.Uuid
 
   kanzlei   Kanzlei       @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
   createdBy User?         @relation("APIKeyErstellt", fields: [createdById], references: [id])
@@ -721,7 +751,7 @@ model APIKey {
 model APIKeyUsage {
   id             String   @id @default(uuid()) @db.Uuid
   apiKeyId       String   @db.Uuid
-  endpoint       String   // z.B. "GET /api/v1/mandanten"
+  endpoint       String // z.B. "GET /api/v1/mandanten"
   statusCode     Int
   timestamp      DateTime @default(now())
   ipAddress      String?

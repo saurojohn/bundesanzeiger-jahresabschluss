@@ -62,14 +62,10 @@ export class AuditIntegrityService {
 
     // Vorheriger Eintrag: der mit dem größten createdAt < current.createdAt
     // Wir nehmen einen einfachen Index-Lookup statt Subquery.
-    // Schema-Feld entryHash wird per Cast vermieden (Schema-Migration pending)
-    // bis ALTER TABLE audit_log ADD COLUMN entry_hash, prev_hash läuft.
-     
-    const previous = await (this.prisma.auditLog.findFirst as any)({
+    const previous = await this.prisma.auditLog.findFirst({
       where: { createdAt: { lt: current.createdAt } },
       orderBy: { createdAt: 'desc' },
-       
-      select: { id: true, entryHash: true } as any,
+      select: { id: true, entryHash: true },
     });
 
     const prevHash = previous?.entryHash ?? AuditIntegrityService.GENESIS_HASH;

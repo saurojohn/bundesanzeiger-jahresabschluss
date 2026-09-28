@@ -197,36 +197,122 @@ export function BilanzListView() {
           {t('bilanz.noBilanz')}
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-slate-700">
-                  {t('bilanz.geschaeftsjahr')}
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-slate-700">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-right font-medium text-slate-700 num-de">
-                  Aktiva
-                </th>
-                <th className="px-4 py-3 text-right font-medium text-slate-700 num-de">
-                  Passiva
-                </th>
-                <th className="px-4 py-3 text-center font-medium text-slate-700">
-                  Saldo
-                </th>
-                <th className="px-4 py-3 text-center font-medium text-slate-700">
-                  PDF
-                </th>
-                <th className="px-4 py-3 text-right font-medium text-slate-700">
-                  {t('common.actions')}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {bilanzen.map((b) => {
-                const { aktivaSumme, passivaSumme, saldostimmt } = summarize(b);
+        <div className="space-y-3 md:hidden">
+          {/* Mobile: Card-Layout (M4 Sprint 4 Pattern) */}
+          {bilanzen.map((b) => {
+            const { aktivaSumme, passivaSumme, saldostimmt } = summarize(b);
+            return (
+              <div
+                key={b.id}
+                className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-base font-semibold text-slate-900 num-de">
+                      {b.geschaeftsjahr}
+                    </div>
+                    <div className="mt-1">
+                      <span
+                        className={
+                          'inline-flex px-2 py-0.5 rounded text-xs font-medium ' +
+                          (b.status === 'DRAFT'
+                            ? 'bg-amber-100 text-amber-800'
+                            : b.status === 'VALIDATED'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-slate-100 text-slate-700')
+                        }
+                      >
+                        {t(`bilanz.status.${b.status}`)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-base font-semibold text-slate-900 num-de">
+                      {aktivaSumme.toLocaleString('de-DE', {
+                        style: 'currency',
+                        currency: 'EUR',
+                      })}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Passiva:{' '}
+                      {passivaSumme.toLocaleString('de-DE', {
+                        style: 'currency',
+                        currency: 'EUR',
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                  <span
+                    className={
+                      'inline-flex items-center gap-1 text-xs font-medium ' +
+                      (saldostimmt ? 'text-green-700' : 'text-red-700')
+                    }
+                  >
+                    {saldostimmt ? '✓ Saldo' : '✗ Saldo'}
+                  </span>
+                  <div className="flex gap-2">
+                    <PdfActions
+                      entityType="bilanz"
+                      entityId={b.id}
+                      wormObjectKey={b.wormObjectKey}
+                      onGenerated={() => void loadList()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onEdit(b)}
+                      className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+                    >
+                      {t('common.edit')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(b)}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      {t('common.delete')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Desktop: Table-Layout ab md */}
+      {!loading && bilanzen.length > 0 && (
+        <div className="hidden md:block bg-white rounded-lg border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium text-slate-700">
+                    {t('bilanz.geschaeftsjahr')}
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-700">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-700 num-de">
+                    Aktiva
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-700 num-de">
+                    Passiva
+                  </th>
+                  <th className="px-4 py-3 text-center font-medium text-slate-700">
+                    Saldo
+                  </th>
+                  <th className="px-4 py-3 text-center font-medium text-slate-700">
+                    PDF
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-700">
+                    {t('common.actions')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {bilanzen.map((b) => {
+                  const { aktivaSumme, passivaSumme, saldostimmt } = summarize(b);
                 return (
                 <tr key={b.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 num-de">{b.geschaeftsjahr}</td>
@@ -285,6 +371,7 @@ export function BilanzListView() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

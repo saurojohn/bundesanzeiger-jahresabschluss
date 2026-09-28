@@ -100,14 +100,15 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Pilot: 3 Kanzleien + 15 Mandanten ✅
 - **Status**: ✅ Kanzlei-Tier Ready (Git-Tag `m3-kanzlei-ready`)
 
-### M4 (Monate 10-12) — White-Label-Production & Cloud-Migration ⏳
+### M4 (Monate 10-12) — White-Label-Production & Cloud-Migration ✅
 - White-Label-Production (Custom-Domain, Logo-Resize/Cropping)
 - Cloud-Migration (Hetzner S3 → S3-Cloud, Multi-VM, K8s optional)
 - Public-API (OAuth2 + OpenAPI 3.1 + Webhook-System)
-- Subscription-Modell (Starter/Pro/Enterprise via Stripe)
+- Subscription-Modell (Pilot/Standard/Premium via Stripe, Mock-Fallback)
 - Mobile-Responsiveness (Tablet-Layout + PWA-Modus)
-- GoBD-Zertifizierung (IDW PS 880 Vorbereitung)
-- GA: 200+ Mandanten, 99.95% Uptime
+- GoBD-Zertifizierung (IDW PS 880 Vorbereitung, Hash-Chain-Audit)
+- **Status**: ✅ Production-Ready (Git-Tag `m4-production-ready`)
+- Pilot-Phase-3 (Skalierung auf 5–8 Kanzleien): siehe [`docs/PILOT-PHASE-3-PLAN.md`](docs/PILOT-PHASE-3-PLAN.md)
 
 ## Erfolgsmetriken (Go-Live-Kriterien)
 

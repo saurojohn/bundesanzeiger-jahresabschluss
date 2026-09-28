@@ -197,6 +197,15 @@ ALTER TABLE kanzlei
 - ✅ GoBD-Audit-Report für externen Auditor vorbereitet
 - ⏳ Externer Auditor (TODO): Beauftragung Q4/2026, Verfahrensdoku + IKS-Doku fehlen noch
 
+**Post-M4 Aktivitäten**:
+- ✅ Prisma-Migration `2026_09_25_m4_production_schema` (siehe Commit `0be5a29`)
+  mit Subscription-Feldern + Audit-Hash-Chain-Feldern + Backfill-Script.
+  Idempotent, 0 Sekunden Downtime.
+- ✅ Pilot-Phase-3 Plan (`docs/PILOT-PHASE-3-PLAN.md`):
+  Skalierung 3 → 5–8 Kanzleien + 15 → 30–50 Mandanten bis Q1/2027.
+  3 Zielgruppen-Typen (DATEV / WP / White-Label), Akquise-Strategie,
+  Onboarding-Checkliste, Erfolgs-Metriken, Budget (~€23k/12 Monate).
+
 ---
 
 ## Architektur-Übersicht (M4)

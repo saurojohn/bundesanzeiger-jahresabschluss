@@ -15,6 +15,7 @@ import {
   assessCertificateTrust,
   verifyPdfSignature,
 } from '../utils/pdf-signature-verify';
+import { checkCertificateRevocation } from '../utils/crl-checker';
 import { AuditService } from '../../audit/services/audit.service';
 import { PdfService } from '../../pdf/services/pdf.service';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -107,6 +108,16 @@ export class SignaturService {
    * SIGNATURE_TRUSTED_ISSUERS eingetragen werden.
    */
   private readonly allowSelfSignedCertificates: boolean;
+
+  /**
+   * Sperrlistenpruefung (CRL) erzwingen.
+   *
+   * Standardmaessig **aus**: im Pilot laeuft der Signaturpfad mit einem
+   * selbstsignierten Testzertifikat ohne CRL-Endpoint. Wird die Pruefung
+   * erzwungen und die CRL ist nicht erreichbar, gilt der Sperrstatus als
+   * unbekannt und das Zertifikat als nicht vertrauenswuerdig (fail-closed).
+   */
+  private readonly requireRevocationCheck: boolean;
   private readonly tsaUrl: string | undefined;
   private readonly tsaUser: string | undefined;
   private readonly tsaPwd: string | undefined;
@@ -139,6 +150,9 @@ export class SignaturService {
         'SIGNATURE_ALLOW_SELF_SIGNED=true — selbstsignierte Zertifikate werden akzeptiert. Nur fuer Testumgebungen.',
       );
     }
+    this.requireRevocationCheck =
+      (configService.get<string>('SIGNATURE_REQUIRE_REVOCATION_CHECK') ?? 'false')
+        .toLowerCase() === 'true';
     if (this.trustedIssuers.length === 0) {
       this.logger.warn(
         'SIGNATURE_TRUSTED_ISSUERS ist leer — es wird kein Signaturzertifikat als vertrauenswürdig anerkannt (fail-closed).',
@@ -341,7 +355,30 @@ export class SignaturService {
     // mit dem Kommentar "M3 erweitert auf EU Trusted List", obwohl M3 als
     // abgeschlossen geführt wurde. Beides war eine ungeprüfte Behauptung.
     const verification = verifyPdfSignature(args.signedPdfBytes);
+
+    // Zertifikatssperrstatus (CRL). `assessCertificateTrust` ist synchron,
+    // der CRL-Abruf nicht — deshalb hier und als Ergebnis an die Bewertung
+    // uebergeben. Ohne erreichbare CRL gilt der Status als UNBEKANNT und
+    // damit (fail-closed) nicht als vertrauenswuerdig.
+    let revocation: Awaited<ReturnType<typeof checkCertificateRevocation>> | null = null;
+    if (verification.certificatePem && this.requireRevocationCheck) {
+      revocation = await checkCertificateRevocation(
+        verification.certificatePem,
+        verification.certificatePem, // selbstsigniert im Pilot: Issuer = Subject
+      );
+      if (revocation.revoked === true) {
+        errors.push('Signaturzertifikat ist gesperrt (CRL)');
+      } else if (!revocation.determined) {
+        warnings.push(
+          `Sperrstatus nicht feststellbar${revocation.reason ? `: ${revocation.reason}` : ''} — Zertifikat gilt nicht als vertrauenswürdig`,
+        );
+      }
+    }
+
     const trust = assessCertificateTrust(verification.certificate, {
+      revocationDetermined: revocation?.determined,
+      revocationChecked: revocation !== null,
+
       expectedSignerEmail: args.expectedSignerEmail,
       trustedIssuers: this.trustedIssuers,
       allowSelfSigned: this.allowSelfSignedCertificates,

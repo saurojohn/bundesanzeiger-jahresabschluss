@@ -79,3 +79,9 @@ raw-audit/
 
 # WORM storage (local fallback, dev only)
 worm-storage/
+# Testartefakte: enthaelt private Schluessel (ca.key, leaf.key) und CRLs.
+# Gehoeren NICHT ins Repository.
+tmp/
+**/tmp/
+*.crl
+*.csr

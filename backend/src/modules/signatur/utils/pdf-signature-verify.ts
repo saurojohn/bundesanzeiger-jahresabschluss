@@ -59,6 +59,8 @@ export interface SignatureVerification {
   notAfter?: string;
   /** Angaben zum mitgelieferten Zertifikat, falls vorhanden. */
   certificate?: CertificateInfo;
+  /** PEM des Zertifikats (fuer die Sperrlistenpruefung). */
+  certificatePem?: string;
   /** Deutsche Kurzbegründung bei verified === false. */
   reason?: string;
 }
@@ -294,7 +296,10 @@ export function verifyPdfSignature(pdf: Buffer): SignatureVerification {
   }
   const slot = Buffer.from(contents[1], 'hex');
   const parsed = parsePkcs7(slot);
-  const base = { certificate: parsed.certificateInfo };
+  const base = {
+    certificate: parsed.certificateInfo,
+    certificatePem: parsed.certificatePem ?? undefined,
+  };
 
   // Stufe 2 — Inhalt: messageDigest gegen SHA-256 der ByteRange-Bereiche
   if (!parsed.messageDigest) {
@@ -409,6 +414,12 @@ export interface TrustOptions {
   allowSelfSigned?: boolean;
   /** Referenzzeitpunkt (Default: jetzt). */
   now?: Date;
+  /** true = Sperrstatus wurde geprueft und ist belastbar ermittelt. */
+  revocationDetermined?: boolean;
+  /** true = eine Sperrlistenpruefung fand ueberhaupt statt. */
+  revocationChecked?: boolean;
+  /** Konkreter Sperrgrund (z. B. „gesperrt (CRL)"). */
+  reasonSuffix?: string;
 }
 
 /**
@@ -449,6 +460,23 @@ export function assessCertificateTrust(
 
   const keyUsageOk =
     certificate.keyUsageDigitalSignature || certificate.keyUsageNonRepudiation;
+
+  // Sperrstatus: nur wenn ausdruecklich geprueft und eindeutig ermittelt,
+  // gilt das Zertifikat als nicht gesperrt. Ohne Pruefung ist der Status
+  // UNBEKANNT — und unbekannt ist hier kein "gueltig".
+  if (options.revocationChecked === true && options.revocationDetermined !== true) {
+    return {
+      certificateExpired: false,
+      notYetValid: false,
+      keyUsageOk,
+      isCa: certificate.isCa,
+      selfSigned: certificate.selfSigned,
+      trusted: false,
+      reason:
+        options.reasonSuffix ??
+        'Sperrstatus nicht feststellbar — Zertifikat gilt nicht als vertrauenswürdig (fail-closed)',
+    };
+  }
 
   if (certificateExpired) {
     return {

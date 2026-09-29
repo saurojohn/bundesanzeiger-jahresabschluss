@@ -43,6 +43,17 @@ function main(): void {
     // subjectAltName mit E-Mail: Bei qualifizierten Zertifikaten steht die
     // Signierer-Identitaet dort, nicht im CN. Der Signaturpfad prueft
     // bevorzugt die SAN.
+    // CRL Distribution Point: damit die Sperrpruefung (crl-checker.ts) am
+    // Zertifikat ueberhaupt einen Endpunkt findet. Ohne diese Erweiterung ist
+    // der Sperrstatus "unbekannt" und die Pruefung fail-closed.
+    // forge registriert die Erweiterung als `cRLDistributionPoints` (grosse
+    // R/L) und erwartet `altNames` mit GeneralName-Typen.
+    {
+      name: 'cRLDistributionPoints',
+      altNames: [
+        { type: 6, value: 'http://127.0.0.1:9100/bundesanzeiger-test.crl' },
+      ],
+    },
     {
       name: 'subjectAltName',
       altNames: [

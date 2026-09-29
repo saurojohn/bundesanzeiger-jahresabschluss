@@ -11,6 +11,10 @@ import { plainAddPlaceholder } from '@signpdf/placeholder-plain';
 import signpdf from '@signpdf/signpdf';
 import { P12Signer } from '@signpdf/signer-p12';
 import { createHash } from 'node:crypto';
+import {
+  assessCertificateTrust,
+  verifyPdfSignature,
+} from '../utils/pdf-signature-verify';
 import { AuditService } from '../../audit/services/audit.service';
 import { PdfService } from '../../pdf/services/pdf.service';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -86,6 +90,23 @@ interface SignArgs {
 @Injectable()
 export class SignaturService {
   private readonly logger = new Logger(SignaturService.name);
+
+  /**
+   * Vom Betreiber hinterlegte, als vertrauenswürdig geltende Aussteller.
+   * Leer = fail-closed: es wird NICHTS als vertrauenswürdig anerkannt.
+   * (Früher galt jeder Issuer als vertrauenswürdig.)
+   */
+  private readonly trustedIssuers: readonly string[];
+
+  /**
+   * Selbstsignierte Zertifikate zulassen.
+   *
+   * Standardmäßig **false** — ein selbstsigniertes Zertifikat ist kein
+   * Nachweis der Urheberschaft. Nur für lokale Testumgebungen zu aktivieren
+   * (SIGNATURE_ALLOW_SELF_SIGNED=true); im Pilot muss der Aussteller über
+   * SIGNATURE_TRUSTED_ISSUERS eingetragen werden.
+   */
+  private readonly allowSelfSignedCertificates: boolean;
   private readonly tsaUrl: string | undefined;
   private readonly tsaUser: string | undefined;
   private readonly tsaPwd: string | undefined;
@@ -106,6 +127,24 @@ export class SignaturService {
   ) {
     // ConfigService wird nur einmal beim Start gelesen, nicht als
     // Field gespeichert (kein späterer Zugriff nötig).
+    this.trustedIssuers = (configService.get<string>('SIGNATURE_TRUSTED_ISSUERS') ?? '')
+      .split(',')
+      .map((i) => i.trim())
+      .filter((i) => i.length > 0);
+    this.allowSelfSignedCertificates =
+      (configService.get<string>('SIGNATURE_ALLOW_SELF_SIGNED') ?? 'false').toLowerCase() ===
+      'true';
+    if (this.allowSelfSignedCertificates) {
+      this.logger.warn(
+        'SIGNATURE_ALLOW_SELF_SIGNED=true — selbstsignierte Zertifikate werden akzeptiert. Nur fuer Testumgebungen.',
+      );
+    }
+    if (this.trustedIssuers.length === 0) {
+      this.logger.warn(
+        'SIGNATURE_TRUSTED_ISSUERS ist leer — es wird kein Signaturzertifikat als vertrauenswürdig anerkannt (fail-closed).',
+      );
+    }
+
     this.tsaUrl = configService.get<string>('TSA_URL') ?? undefined;
     this.tsaUser = configService.get<string>('TSA_USER') ?? undefined;
     this.tsaPwd = configService.get<string>('TSA_PWD') ?? undefined;
@@ -272,7 +311,9 @@ export class SignaturService {
     }
 
     // 2. Letztes AcroForm-Subject aus PDF-Dictionary extrahieren (heuristisch)
-    const signedBy = this.extractSignerNameFromPdf(args.signedPdfBytes);
+    // Startwert aus der PDF-Heuristik; wird weiter unten durch das echte
+    // Zertifikat-Subject ersetzt, sobald eines im PKCS#7 steckt.
+    let signedBy: string | null = this.extractSignerNameFromPdf(args.signedPdfBytes);
 
     // 3. Subject-Email vs. erwarteter Signierer
     let issuerTrusted = false;
@@ -287,17 +328,35 @@ export class SignaturService {
           `Signierer-Subject enthält nicht die erwartete Email (${args.expectedSignerEmail})`,
         );
       }
-    } else {
-      // Ohne expectedSignerEmail: wir vertrauen JEDEM bekannten Issuer
-      // der Pilot-Whitelist. M3 erweitert auf EU Trusted List.
-      issuerTrusted = true;
-      warnings.push(
-        'Issuer-Trust: nur Whitelist-Check aktiv, vollständige EU-TL-Validierung folgt in M3',
-      );
     }
+    // Ab hier entscheidet NICHT mehr dieser Block, sondern die echte
+    // Zertifikatsbewertung weiter unten (assessCertificateTrust). Früher stand
+    // hier „issuerTrusted = true" für JEDEN Issuer, sobald keine
+    // expectedSignerEmail mitgegeben wurde — das ist inzwischen ersetzt.
 
-    // 4. Cert-Gültigkeit — pragmatisch: Vertrauen auf @signpdf-Akzeptanz
-    const certificateExpired = false;
+    // 4. Zertifikat: jetzt tatsächlich aus dem PKCS#7 lesen und bewerten.
+    //
+    // Bis 2026-09-28 stand hier `const certificateExpired = false;` und
+    // `issuerTrusted` wurde ohne expectedSignerEmail ebenfalls true gesetzt —
+    // mit dem Kommentar "M3 erweitert auf EU Trusted List", obwohl M3 als
+    // abgeschlossen geführt wurde. Beides war eine ungeprüfte Behauptung.
+    const verification = verifyPdfSignature(args.signedPdfBytes);
+    const trust = assessCertificateTrust(verification.certificate, {
+      expectedSignerEmail: args.expectedSignerEmail,
+      trustedIssuers: this.trustedIssuers,
+      allowSelfSigned: this.allowSelfSignedCertificates,
+    });
+    const certificateExpired = trust.certificateExpired;
+    issuerTrusted = trust.trusted;
+    if (trust.reason) warnings.push(`Zertifikat: ${trust.reason}`);
+    if (verification.certificate?.isCa) {
+      errors.push('Signaturzertifikat ist als CA gekennzeichnet');
+    }
+    // Der Signierer kommt aus dem Zertifikat, nicht aus einer Heuristik über
+    // AcroForm-Felder des PDF.
+    if (verification.certificate) {
+      signedBy = verification.certificate.subject;
+    }
 
     // 5. Timestamp-Validation — Mock-Mode kann nicht validiert werden
     const timestampValid = false;
@@ -305,12 +364,18 @@ export class SignaturService {
       'TSA-Token-Validation in M2 nicht implementiert (Mock-Modus), folgt in M3',
     );
 
-    // 6. Document-Integrity: ByteRange-Vergleich
+    // 6. Document-Integrität: Struktur + messageDigest + Kryptografie
     const documentIntegrity = this.checkDocumentIntegrity(args.signedPdfBytes);
+    if (!documentIntegrity && verification.reason) {
+      warnings.push(`Integrität: ${verification.reason}`);
+    }
 
+    // Eine Signatur ohne vertrauenswürdigen Aussteller ist für eine
+    // Pflichtveröffentlichung keine gültige Signatur.
     const valid =
       signatureCount > 0 &&
       documentIntegrity &&
+      issuerTrusted &&
       !certificateExpired &&
       errors.length === 0;
 
@@ -681,20 +746,28 @@ export class SignaturService {
    * Signatur-Slot abdeckt (vereinfachte Integritäts-Heuristik).
    */
   private checkDocumentIntegrity(pdfBuffer: Buffer): boolean {
-    const text = pdfBuffer.toString('latin1');
-    const match = text.match(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/);
-    if (!match) return false;
-    const start = Number.parseInt(match[1] ?? '0', 10);
-    const len1 = Number.parseInt(match[2] ?? '0', 10);
-    const start2 = Number.parseInt(match[3] ?? '0', 10);
-    const len2 = Number.parseInt(match[4] ?? '0', 10);
-    if (start < 0 || len1 <= 0 || start2 <= 0 || len2 <= 0) return false;
-    // Erwartung: ByteRange [0 N1 N2 N3] deckt alles außer dem
-    // Signatur-Bytes-Bereich ab.
-    const total = pdfBuffer.length;
-    const covered = start + len1 + (total - (start2 + len2));
-    // Toleranz: alles unterhalb von `total + 8` ist OK (Footer-Längen)
-    return covered >= total - 16 && covered <= total + 16;
+    // Bugfix 2026-09-28 (zwei Runden):
+    //
+    // (1) Die urspruengliche Formel
+    //        covered = start + len1 + (total - (start2 + len2))
+    //     verglich die Laenge des ERSTEN signierten Abschnitts (~5 KB) mit der
+    //     Dateigroesse (~22 KB) und lieferte bei JEDER echten Signatur `false` —
+    //     jedes signierte PDF wurde als manipuliert abgewiesen.
+    //
+    // (2) Die danach eingesetzte reine ByteRange-Strukturpruefung erkannte
+    //     nur nachtraeglich angehaengte Bytes, NICHT aber eine Aenderung
+    //     INNERHALB des signierten Textes. Fuer GoBD ist genau das die
+    //     entscheidende Eigenschaft.
+    //
+    // Heute: Strukturpruefung als Vorfilter (schnell, frueher Fehler) und
+    // anschliessend die PKCS#7-Pruefung: der messageDigest aus dem SignerInfo
+    // ist der SHA-256 ueber die beiden ByteRange-Bereiche. Nur wenn beide
+    // uebereinstimmen, gilt der Inhalt als unveraendert.
+    const result = verifyPdfSignature(pdfBuffer);
+    if (!result.verified && result.reason) {
+      this.logger.warn(`PDF-Integritaet nicht bestaetigt: ${result.reason}`);
+    }
+    return result.verified;
   }
 
   /**

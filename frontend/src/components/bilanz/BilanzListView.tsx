@@ -79,6 +79,26 @@ export function BilanzListView() {
     }
   }
 
+  /**
+   * Loescht eine Bilanz (nur DRAFT erlaubt — der Backend-Endpoint prueft das)
+   * und laedt die Liste neu.
+   *
+   * Bugfix 2026-09-29: Der Button referenzierte `onDelete`, eine Funktion, die
+   * es in dieser Komponente nie gab — der Klick war ein TypeScript-Fehler und
+   * damit toter Code.
+   */
+  async function handleDelete(id: string): Promise<void> {
+    const token = getAccessToken();
+    if (!token) return;
+    if (!window.confirm(t('common.confirm'))) return;
+    try {
+      await apiFetch(`/bilanz/${id}`, { method: 'DELETE', accessToken: token });
+      await loadList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    }
+  }
+
   async function loadMore(cursor: string) {
     if (loadingMore) return;
     setLoadingMore(true);
@@ -260,14 +280,14 @@ export function BilanzListView() {
                     />
                     <button
                       type="button"
-                      onClick={() => onEdit(b)}
+                      onClick={() => setEditingId(b.id)}
                       className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
                     >
                       {t('common.edit')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => onDelete(b)}
+                      onClick={() => void handleDelete(b.id)}
                       className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                       {t('common.delete')}

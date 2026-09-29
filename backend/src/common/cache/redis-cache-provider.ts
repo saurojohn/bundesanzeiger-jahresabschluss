@@ -29,11 +29,27 @@ import type { CacheProvider } from './cache-provider.interface';
 @Injectable()
 export class RedisCacheProvider implements CacheProvider {
   private readonly logger = new Logger(RedisCacheProvider.name);
-  private readonly keyv: Keyv;
+  private keyv: Keyv | null = null;
   private readonly namespace = 'banz';
   private connected = false;
 
   constructor(configService: ConfigService) {
+    // Bugfix 2026-09-28: Verbindung wird NUR aufgebaut, wenn Redis wirklich
+    // als Cache-Provider konfiguriert ist. Vorher hat der Constructor
+    // unabhaengig von CACHE_PROVIDER immer `new KeyvRedis(redisUrl)` erzeugt.
+    // Da der Provider per `@Optional()` trotzdem im DI-Container stand, lief
+    // im Memory-Modus (CACHE_PROVIDER=memory, Single-VM) dauerhaft ein
+    // ioredis-Reconnect-Sturm gegen localhost:6379 — endend in
+    // "Reached the max retries per request limit" und, bei genug Anfragen,
+    // im Prozessabsturz. Der CacheManager waehlt seinen Primary ohnehin
+    // selbst ueber CACHE_PROVIDER + Health-Check.
+    if (configService.get<string>('CACHE_PROVIDER', 'memory') !== 'redis') {
+      this.logger.log(
+        'CACHE_PROVIDER !== "redis" — RedisCacheProvider bleibt inaktiv (kein Connect)',
+      );
+      return;
+    }
+
     const redisUrl = configService.get<string>('REDIS_URL');
     if (!redisUrl) {
       throw new InternalServerErrorException(
@@ -63,11 +79,13 @@ export class RedisCacheProvider implements CacheProvider {
   }
 
   async get<T>(key: string): Promise<T | null> {
+    if (!this.keyv) return null;
     const value = await this.keyv.get<T>(key);
     return value ?? null;
   }
 
   async set<T>(key: string, value: T, ttlMs: number): Promise<void> {
+    if (!this.keyv) return;
     await this.keyv.set(key, value, ttlMs);
   }
 
@@ -83,6 +101,7 @@ export class RedisCacheProvider implements CacheProvider {
    * Index-Set-Variante implementiert werden — out of scope hier.
    */
   async invalidate(prefix: string): Promise<void> {
+    if (!this.keyv) return;
     const iteratorFn = this.keyv.iterator;
     if (!iteratorFn) {
       // Adapter unterstützt keine Iteration — Invalidierung nicht möglich.
@@ -112,10 +131,12 @@ export class RedisCacheProvider implements CacheProvider {
   }
 
   async has(key: string): Promise<boolean> {
+    if (!this.keyv) return false;
     return this.keyv.has(key);
   }
 
   async isHealthy(): Promise<boolean> {
+    if (!this.keyv) return false;
     try {
       // PING-Equivalent: ein Mini-Get auf einen nicht-existenten Key
       // liefert `undefined`, aber triggert einen Redis-Roundtrip. Wenn
@@ -131,7 +152,7 @@ export class RedisCacheProvider implements CacheProvider {
   }
 
   getType(): 'memory' | 'redis' {
-    return 'redis';
+    return this.keyv ? 'redis' : 'memory';
   }
 
   /**

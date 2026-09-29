@@ -39,6 +39,7 @@ import type {
 import { IdwPruefungService } from '../services/idw-pruefung.service';
 import { WPNotizService } from '../services/wp-notiz.service';
 import { WPPruefungService } from '../services/wp-pruefung.service';
+import { pageSizePipe } from '../../../common/dto/pagination.dto';
 
 /**
  * Controller für Wirtschaftsprüfung (IDW PS 880).
@@ -104,13 +105,9 @@ export class WPController {
     @Query('guvId') guvId: string | undefined,
     @Query('status') status: string | undefined,
     @Query('cursor') cursor: string | undefined,
-    @Query('pageSize') pageSizeRaw: string | undefined,
+    @Query('pageSize', pageSizePipe) pageSize: number | undefined,
     @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
-    const pageSize =
-      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
-        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
-        : undefined;
     const result = await this.wpNotizService.listNotizen(
       {
         bilanzId,

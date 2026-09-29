@@ -70,30 +70,34 @@ export function SubscriptionView() {
   useEffect(() => {
     async function load() {
       try {
-        // Kanzlei-ID via /api/auth/me
-        const meRes = await apiFetch('/api/auth/me');
-        if (meRes.ok) {
-          const me = (await meRes.json()) as { mandanten: { kanzleiId: string }[] };
-          const firstKanzlei = me.mandanten[0]?.kanzleiId;
-          if (firstKanzlei) setKanzleiId(firstKanzlei);
-        }
+        // Kanzlei-ID via /auth/me
+        //
+        // Bugfix 2026-09-29: `apiFetch` gibt bereits den geparsten JSON-Body
+        // zurueck (siehe src/lib/api.ts), NICHT ein `Response`. Der bisherige
+        // Code behandelte das Ergebnis als Response (`res.ok`, `res.json()`):
+        // `ok` ist auf einem JSON-Objekt immer undefined, `json()` existiert
+        // nicht — der Pfad konnte also nie durchlaufen. Zusaetzlich war
+        // `firstKanzlei` per `const` INNERHALB des if-Blocks deklariert und
+        // weiter unten ausserhalb gelesen (ReferenceError). Fehlerhafte
+        // Aufrufe landeten ausserdem unter /api/api/... (doppeltes Praefix).
+        const me = await apiFetch<{ mandanten: { kanzleiId: string }[] }>('/auth/me');
+        const firstKanzlei = me.mandanten[0]?.kanzleiId;
+        if (firstKanzlei) setKanzleiId(firstKanzlei);
+
         // Tiers
-        const tiersRes = await apiFetch('/api/subscription/tiers');
-        if (tiersRes.ok) {
-          const data = (await tiersRes.json()) as TierListResponse;
-          // Backend liefert Sets als Plain-Objects → in echte Sets konvertieren
-          const normalized = data.tiers.map((t) => ({
-            ...t,
-            features: new Set(t.features as unknown as string[]),
-          }));
-          setTiers(normalized);
-        }
+        const data = await apiFetch<TierListResponse>('/subscription/tiers');
+        // Backend liefert Sets als Plain-Objects → in echte Sets konvertieren
+        const normalized = data.tiers.map((t) => ({
+          ...t,
+          features: new Set(t.features as unknown as string[]),
+        }));
+        setTiers(normalized);
+
         // Subscription (falls kanzleiId schon da)
         if (firstKanzlei) {
-          const subRes = await apiFetch(`/api/subscription/${firstKanzlei}`);
-          if (subRes.ok) {
-            setSubscription((await subRes.json()) as SubscriptionResponse);
-          }
+          setSubscription(
+            await apiFetch<SubscriptionResponse>(`/subscription/${firstKanzlei}`),
+          );
         }
       } catch (err) {
         setError((err as Error).message);
@@ -107,10 +111,9 @@ export function SubscriptionView() {
   // Reload subscription (nach Upgrade/Cancel)
   const reloadSubscription = useCallback(async () => {
     if (!kanzleiId) return;
-    const subRes = await apiFetch(`/api/subscription/${kanzleiId}`);
-    if (subRes.ok) {
-      setSubscription((await subRes.json()) as SubscriptionResponse);
-    }
+    setSubscription(
+      await apiFetch<SubscriptionResponse>(`/subscription/${kanzleiId}`),
+    );
   }, [kanzleiId]);
 
   // ===========================================================================
@@ -127,19 +130,19 @@ export function SubscriptionView() {
         const successUrl = `${window.location.origin}/einstellungen/subscription?upgrade=success`;
         const cancelUrl = `${window.location.origin}/einstellungen/subscription?upgrade=cancel`;
 
-        const res = await apiFetch(`/api/subscription/${kanzleiId}/checkout`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // `apiFetch` wirft bei != 2xx bereits (mit Server-Message) — ein
+        // manuelles `res.ok`/`res.json()`-Handling war doppelt und falsch.
+        const data = await apiFetch<{ url: string; providerName: 'stripe' | 'mock' }>(
+          `/subscription/${kanzleiId}/checkout`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ tier, successUrl, cancelUrl }),
           },
-          body: JSON.stringify({ tier, successUrl, cancelUrl }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.message ?? `Fehler ${res.status}`);
-        }
-        const data = (await res.json()) as { url: string; providerName: 'stripe' | 'mock' };
+        );
 
         if (data.providerName === 'mock') {
           // Mock-Mode: Direkt-Aktivierung statt Redirect
@@ -155,10 +158,6 @@ export function SubscriptionView() {
               body: JSON.stringify({ tier, mockSession }),
             },
           );
-          if (!activateRes.ok) {
-            const body = await activateRes.json().catch(() => ({}));
-            throw new Error(body.message ?? `Fehler ${activateRes.status}`);
-          }
           setInfo(t('subscription.mockActivated'));
           await reloadSubscription();
         } else {
@@ -181,16 +180,12 @@ export function SubscriptionView() {
     setActionLoading(true);
     try {
       const token = getAccessToken();
-      const res = await apiFetch(`/api/subscription/${kanzleiId}/cancel`, {
+      const res = await apiFetch(`/subscription/${kanzleiId}/cancel`, {
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? `Fehler ${res.status}`);
-      }
       setInfo(t('subscription.canceled'));
       await reloadSubscription();
     } catch (err) {

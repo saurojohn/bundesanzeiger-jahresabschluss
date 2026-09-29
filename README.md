@@ -6,6 +6,81 @@ Die digitale Plattform für mittelständische GmbHs, Steuerberater und Wirtschaf
 um den **Jahresabschluss (Bilanz + GuV + Anhang + Lagebericht)** gemäß **HGB / PublG** rechtssicher
 im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne DATEV-Briefing.
 
+## Verifikationsstand (Stand 2026-09-29)
+
+> **Vor der Reparatur war dieser Abschnitt nicht vorhanden.** Die vorherige Fassung
+> trug durchgehend grüne Häkchen (`✅ Production-Ready`, „Pilot-Ready", Git-Tags wie
+> `m1-pilot-ready`) und Commit-Messages wie „CI green" — **ohne dass es einen
+> ausführbaren Testlauf gab**. Die 13 e2e-Testdateien fielen sämtlich schon beim
+> Import um; es konnte 0 Test ausgeführt werden. Details: `REPARATUR-REPORT.md`.
+
+### Was tatsächlich belegt ist
+
+| Aussage | Belegt? | Nachweis |
+|---|---|---|
+| Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
+| Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
+| Backend-E2E-Suite | ✅ | **138 / 138 grün**, über zwei aufeinanderfolgende Läufe identisch (reproduzierbar) |
+| **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
+| **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
+| Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |
+| DATEV-Export (CSV) | ✅ | Formatkonformität + verlustfreier Round-Trip über den eigenen Import-Parser |
+| PDF-Erzeugung + WORM-Archiv | ✅ | PDF mit Text-Layer, SHA-256, Object-Lock mit 10-Jahres-Retention |
+| Reproduzierbare Testumgebung | ✅ | `./run-local.sh` (Postgres + S3-Mock + Backend, migriert + seedet) |
+
+### Was **nicht** belegt ist — bitte nicht als erledigt lesen
+
+| Punkt | Status |
+|---|---|
+| **Git-Tags** (`m1-pilot-ready`, `m2-…`, `m3-…`, `m4-production-ready`) | ❌ **existieren nicht** — das Verzeichnis ist kein Git-Repository |
+| **Frontend-E2E-Coverage** | 🟡 10 Smoke-Tests vorhanden, aber **keine** Abdeckung der Formularstrecken (Bilanz-/GuV-Erfassung, PDF-Download, Signatur). `AGENTS.md §6` fordert 90 % für M4. |
+| **`next@15.0.3`** | ⚠️ **bekannte Sicherheitslücke CVE-2025-66478** (npm warnt beim Installieren). Upgrade auf eine gepatchte 15.x erforderlich. |
+| **Dokumente*| ~~`docs/rollen-rbac.md`, `docs/gobd-architektur.md`, `docs/datenmodell.md`~~ | ✅ ergänzt (aus dem tatsächlichen Code abgeleitet) |
+| **`scripts/`** (seed-Skript, BAnz-Test-Fixtures) | ❌ fehlt, in dieser README referenziert |
+| **Signatur-Integrität** | ✅ dreistufig geprüft (Struktur + messageDigest + **Kryptografie**: `encryptedDigest` gegen den Zertifikatsschlüssel, `node:crypto`). 21/21 Manipulationsversuche erkannt, inkl. des Bypass-Versuchs „Inhalt ändern + Digest neu berechnen". Vertrauenswürdigkeit des Zertifikats ist damit **nicht** geprüft. |
+| **Signatur-Zertifikat** | ✅ Gültigkeitszeitraum, KeyUsage, CA-Status und Aussteller werden geprüft; `valid` verlangt einen vertrauenswürdigen Aussteller (fail-closed). `
+| **Zertifikatskette / EU Trusted List / CRL-OCSP** | ❌ nicht implementiert — geprüft wird nur eine Betreiber-Liste (`SIGNATURE_TRUSTED_ISSUERS`) |
+| **IDW-PS-880-Audit** | ❌ `SECURITY-AUDIT.md` nennt als Auditor „Mavis + User" — eine **Selbstprüfung ist kein Normnachweis** |
+| **Deployment** | ❌ nicht erfolgt (Hetzner-VPS-IP + SSH-Key fehlen weiterhin) |
+| **Produktions-Abhängigkeiten** | ❌ Stripe live, qeS-Zertifikate, BAnz-Portal-Zugang — alles ungetestet |
+| **Kontobezeichnungen SKR04** | ⚠️ projektintern, nicht gegen die offizielle DATEV-Liste abgeglichen |
+| **PDF-Tabellenausschrieb** | ⚠️ `bezeichnung` wird per `ellipsis` gekürzt („Selbst geschaffene…") — für die Pflichtveröffentlichung zu kurz |
+
+### CI
+
+`.github/workflows/ci.yml` (neu, 2026-09-29) fährt beide Stacks gegen eine echte
+Postgres-Instanz: Migration, Seed, Typprüfung über den **Gesamtbaum**, Lint, Build,
+e2e, danach Frontend-Typecheck, Build und Playwright.
+
+Die Pipeline war nicht nur geschrieben, sondern **lokal nachgestellt** worden — mit
+S3-Mock, frischem Postgres, ohne jede `.env`-Datei, ausschließlich über
+Umgebungsvariablen:
+
+```
+backend  : startet ✅   typecheck ✅  lint ✅  build ✅  vitest 138/138 ✅
+frontend : typecheck ✅  build ✅  Playwright 10/10 ✅
+```
+
+Bis dahin existierte **keine** CI-Konfiguration. Bei rund 40 behobenen Defekten war
+die häufigste Ursache „als fertig markiert, aber nie ausgeführt".
+
+### Reproduzieren
+
+```bash
+# Backend
+./run-local.sh                 # Postgres + S3-Mock + Backend, migriert + seedet
+cd backend && npx vitest run   # 138/138, beliebig oft wiederholbar
+
+# Frontend
+cd frontend
+npm install
+npm run build
+npx next start -p 3001 &        # Production-Build auf :3001
+npx playwright test             # 10/10 (Frontend muss laufen, Playwright startet es notfalls selbst)
+```
+
+---
+
 ## Zielgruppe
 
 - **Geschäftsführer (GF)** mittelständischer GmbHs (10-250 Mitarbeiter, Bilanzsumme € 6-50 Mio)
@@ -72,25 +147,25 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 
 ## Roadmap (4 Meilensteine × 3 Monate = 12 Monate)
 
-### M1 (Monate 1-3) — Fundament & Pilot-Mandant ✅
+### M1 (Monate 1-3) — Fundament & Pilot-Mandant 🟡
 - Multi-Mandanten-Datenmodell + RBAC (5 Rollen)
 - Bilanz + GuV Eingabeformulare (manuell, ohne DATEV)
 - PDF-Generierung (GoBD-konform) für Kleinstkapitalgesellschaften
 - Auth + Audit-Trail (vollständig, unveränderlich)
 - WORM-Storage (S3 Object Lock, 10 Jahre)
 - Pilot: 1 Steuerberater mit 3 Mandanten
-- **Status**: ✅ Pilot-Ready (Git-Tag `m1-pilot-ready`)
+- **Status**: 🟡 Code implementiert, e2e-abgedeckt (137/137). „Pilot-Ready“ im Sinne eines durchgeführten Piloten mit echten Kanzleien ist **nicht** belegt — siehe Verifikationsstand.
 
-### M2 (Monate 4-6) — BAnz-Submission-Pipeline ✅
+### M2 (Monate 4-6) — BAnz-Submission-Pipeline 🟡
 - **Marktanpassung (Sep 2026)**: BAnz-Verlag hat keine externe XML/XBRL-Submission-API mehr
 - E-Bilanz-XBRL-Generator (HGB-Kerntaxonomie v6 / 2025-04-01) für ERiC → Finanzamt (§ 5b EStG)
 - DATEV-Buchungsstapel-Export (EXTF v700+, SKR03/SKR04) für DATEV/Addison
 - Qualifizierte elektronische Signatur (qeS) via P12-Token + signpdf + TSA
 - Frontend-Integration: E-Bilanz/DATEV/Signatur-UI
 - Pilot-Phase-2: 3 Kanzleien + 15 Mandanten
-- **Status**: ✅ Backend + Frontend fertig (Tag `m2-pilot-ready`)
+- **Status**: 🟡 Backend e2e-abgedeckt; Frontend baut und hat 10 Smoke-E2E-Tests, aber keine Formular-Abdeckung.
 
-### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss ✅
+### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss 🟡
 - DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping, reverse direction) ✅
 - E-Bilanz / TAXONOMIE für § 11 PublG (Konzern) ✅
 - Konzernabschluss-Modul (Konsolidierung Mutter-Tochter) ✅
@@ -98,16 +173,16 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Performance-Skalierung (15 → 50 Mandanten, Cursor-Pagination, 16+ Composite-Indices) ✅
 - White-Label-Branding (Logo + Brand-Color + Custom-Domain-Field) ✅
 - Pilot: 3 Kanzleien + 15 Mandanten ✅
-- **Status**: ✅ Kanzlei-Tier Ready (Git-Tag `m3-kanzlei-ready`)
+- **Status**: 🟡 Code implementiert, e2e-abgedeckt. „Kanzlei-Tier Ready“ setzt einen durchgeführten Pilot mit echten Kanzleien voraus — **nicht** belegt.
 
-### M4 (Monate 10-12) — White-Label-Production & Cloud-Migration ✅
+### M4 (Monate 10-12) — White-Label-Production & Cloud-Migration 🔴
 - White-Label-Production (Custom-Domain, Logo-Resize/Cropping)
 - Cloud-Migration (Hetzner S3 → S3-Cloud, Multi-VM, K8s optional)
 - Public-API (OAuth2 + OpenAPI 3.1 + Webhook-System)
 - Subscription-Modell (Pilot/Standard/Premium via Stripe, Mock-Fallback)
 - Mobile-Responsiveness (Tablet-Layout + PWA-Modus)
 - GoBD-Zertifizierung (IDW PS 880 Vorbereitung, Hash-Chain-Audit)
-- **Status**: ✅ Production-Ready (Git-Tag `m4-production-ready`)
+- **Status**: 🔴 **Nicht production-ready.** Kein Deployment, keine Formular-E2E-Abdeckung, kein IDW-PS-880-Audit, Signaturprüfung teilweise offen, `next@15.0.3` mit bekannter CVE. Details im Verifikationsstand.
 - Pilot-Phase-3 (Skalierung auf 5–8 Kanzleien): siehe [`docs/PILOT-PHASE-3-PLAN.md`](docs/PILOT-PHASE-3-PLAN.md)
 
 ## Erfolgsmetriken (Go-Live-Kriterien)
@@ -187,4 +262,6 @@ damit ein gemeinsamer Mandanten-Login + Migrationen-Vergleich möglich bleibt.
 
 ---
 
-**Status**: M1 Sprint 0 in Arbeit · **Lizenz**: proprietär · **Sprache**: Deutsch (UI + PDF + Audit)
+**Status**: Backend e2e-grün (138/138), Frontend baut + 10/10 E2E, kein Deployment · **Lizenz**: proprietär · **Sprache**: Deutsch (UI + PDF + Audit)
+
+> Vor dem 2026-09-28 trug dieses README durchgehend grüne Häkchen und Git-Tags, für die es weder einen ausführbaren Testlauf noch ein Repository gab. Siehe [Verifikationsstand](#verifikationsstand-stand-2026-09-29) und [`REPARATUR-REPORT.md`](./REPARATUR-REPORT.md).

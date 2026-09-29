@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  HttpCode,
+  HttpStatus,
   Post,
   Req,
   UseGuards,
@@ -62,6 +64,10 @@ export class SignaturController {
    * Response: SignatureResultDto (signedPdfBase64 statt Buffer)
    */
   @Post('sign-bilanz')
+  // Signieren ist eine Umwandlung (PDF -> signiertes PDF), keine
+  // Ressourcen-Erstellung im API-Vertragssinn: 200 statt 201. Deckt sich
+  // mit den uebrigen POST-Operationen (validate, pdf/generate).
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER')
@@ -82,6 +88,10 @@ export class SignaturController {
    * POST /api/signatur/sign-guv
    */
   @Post('sign-guv')
+  // Signieren ist eine Umwandlung (PDF -> signiertes PDF), keine
+  // Ressourcen-Erstellung im API-Vertragssinn: 200 statt 201. Deckt sich
+  // mit den uebrigen POST-Operationen (validate, pdf/generate).
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER')
@@ -102,6 +112,10 @@ export class SignaturController {
    * POST /api/signatur/sign-anhang
    */
   @Post('sign-anhang')
+  // Signieren ist eine Umwandlung (PDF -> signiertes PDF), keine
+  // Ressourcen-Erstellung im API-Vertragssinn: 200 statt 201. Deckt sich
+  // mit den uebrigen POST-Operationen (validate, pdf/generate).
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER')
@@ -125,6 +139,10 @@ export class SignaturController {
    * Nur WIRTSCHAFTSPRUEFER (Endabnahme).
    */
   @Post('sign-abschluss')
+  // Signieren ist eine Umwandlung (PDF -> signiertes PDF), keine
+  // Ressourcen-Erstellung im API-Vertragssinn: 200 statt 201. Deckt sich
+  // mit den uebrigen POST-Operationen (validate, pdf/generate).
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('WIRTSCHAFTSPRUEFER')
@@ -152,6 +170,10 @@ export class SignaturController {
    * expectedSignerEmail? }. Response: ValidationResult.
    */
   @Post('validate')
+  // Validierung ist eine read-only Auswertung, keine Resource-Erstellung:
+  // Nest wuerde fuer @Post sonst 201 Created zurueckgeben. Der API-Vertrag
+  // (und die e2e-Specs) erwarten 200 OK.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   async validateSignature(
@@ -176,6 +198,10 @@ export class SignaturController {
    * genutzt, danach gc.
    */
   @Post('inspect-p12')
+  // Signieren ist eine Umwandlung (PDF -> signiertes PDF), keine
+  // Ressourcen-Erstellung im API-Vertragssinn: 200 statt 201. Deckt sich
+  // mit den uebrigen POST-Operationen (validate, pdf/generate).
+  @HttpCode(HttpStatus.OK)
   @Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER')
   async inspectP12(@Body() dto: InspectP12Dto): Promise<P12Metadata> {
     const p12Buffer = Buffer.from(dto.p12Base64, 'base64');

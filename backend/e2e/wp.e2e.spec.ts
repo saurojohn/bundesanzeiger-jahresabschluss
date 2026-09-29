@@ -62,6 +62,9 @@ interface WPPruefungDto {
   bilanzId: string;
   status: string;
   zusammenfassung: string | null;
+  /** `completedAt` stammt aus dem Abschluss-Datensatz (Prisma:
+   *  WPPruefungsAbschluss) und wird beim Finalize gesetzt. */
+  completedAt?: string | null;
   pruefungsResults: BilanzPruefungsResultDto[];
   notizen: WPNotizResponse[];
 }
@@ -132,7 +135,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
   });
 
   it('2. POST /api/wp/notizen ohne WIRTSCHAFTSPRUEFER-Rolle (GF) → 403', async () => {
-    const gf = await loginAs('gf-demo@demo-gmbh.de', 'demo1234');
+    const gf = await loginAs('gf-demo@demo-gmbh.de', 'Demo123!');
     const res = await authFetch(gf.accessToken, '/api/wp/notizen', {
       method: 'POST',
       body: JSON.stringify({
@@ -144,7 +147,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
   });
 
   it('3. POST /api/wp/notizen mit STEUERBERATER-Rolle → 403', async () => {
-    const sb = await loginAs('steuerberater@kanzlei.de', 'demo1234');
+    const sb = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const res = await authFetch(sb.accessToken, '/api/wp/notizen', {
       method: 'POST',
       body: JSON.stringify({
@@ -156,7 +159,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
   });
 
   it('4. POST /api/wp/notizen ohne bilanzId/guvId → 400', async () => {
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
     const res = await authFetch(wp.accessToken, '/api/wp/notizen', {
       method: 'POST',
       body: JSON.stringify({ notizText: 'Test-Notiz' }),
@@ -165,8 +168,8 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
   });
 
   it('5. POST /api/wp/notizen mit notizText > 500 Zeichen → 400', async () => {
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
-    const sb = await loginAs('steuerberater@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
+    const sb = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const bilanzRes = await authFetch(
       sb.accessToken,
       `/api/bilanz?mandantId=${sb.user.mandanten[0]?.id}`,
@@ -187,8 +190,8 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
   let wpBilanzId = '';
 
   it('6. POST /api/wp/notizen → 201 + Notiz', async () => {
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
-    const sb = await loginAs('steuerberater@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
+    const sb = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const bilanzRes = await authFetch(
       sb.accessToken,
       `/api/bilanz?mandantId=${sb.user.mandanten[0]?.id}`,
@@ -214,7 +217,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
 
   it('7. PATCH /api/wp/notizen/:id/status mit eigenem User → 403 (Self-Ack-Schutz)', async () => {
     expect(wpNotizId).toBeTruthy();
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
     const res = await authFetch(
       wp.accessToken,
       `/api/wp/notizen/${wpNotizId}/status`,
@@ -228,7 +231,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
 
   it('8. PATCH /api/wp/notizen/:id/status mit anderem User (KANZLEI_ADMIN) → 200 + APPROVED', async () => {
     expect(wpNotizId).toBeTruthy();
-    const admin = await loginAs('kanzlei-admin@kanzlei.de', 'demo1234');
+    const admin = await loginAs('kanzlei-admin@kanzlei.de', 'Demo123!');
     const res = await authFetch(
       admin.accessToken,
       `/api/wp/notizen/${wpNotizId}/status`,
@@ -246,7 +249,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
 
   it('9. POST /api/wp/pruefungen → 201 + pruefung', async () => {
     expect(wpBilanzId).toBeTruthy();
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
     const res = await authFetch(wp.accessToken, '/api/wp/pruefungen', {
       method: 'POST',
       body: JSON.stringify({
@@ -262,7 +265,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
 
   it('10. Plausi-Pruefung läuft automatisch → 5 BilanzPruefungsResult vorhanden', async () => {
     expect(pruefungId).toBeTruthy();
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
     const res = await authFetch(wp.accessToken, `/api/wp/pruefungen/${pruefungId}`);
     expect(res.status).toBe(200);
     const pruefung = (await res.json()) as WPPruefungDto;
@@ -279,7 +282,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
 
   it('11. POST /api/wp/pruefungen/:id/finalize mit APPROVED → 200 + Status-APPROVED', async () => {
     expect(pruefungId).toBeTruthy();
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
     const res = await authFetch(
       wp.accessToken,
       `/api/wp/pruefungen/${pruefungId}/finalize`,
@@ -299,7 +302,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
 
   it('12. GET /api/wp/pruefungen/:id/report → 200 + markdownReport', async () => {
     expect(pruefungId).toBeTruthy();
-    const wp = await loginAs('wp@kanzlei.de', 'demo1234');
+    const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
     const res = await authFetch(
       wp.accessToken,
       `/api/wp/pruefungen/${pruefungId}/report`,

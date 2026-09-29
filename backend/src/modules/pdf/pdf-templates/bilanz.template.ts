@@ -83,7 +83,18 @@ export function drawHeaderFooter(
 
   // Hilfsfunktion für Footer (unten auf jeder Seite).
   const drawFooter = (): void => {
-    const y = doc.page.height - PDF_LAYOUT.margins.bottom + 20;
+    // Bugfix 2026-09-28: Der Footer sass mit `+ 20` JENSEITS des
+    // beschreibbaren Bereichs (y = height - margins.bottom + 20 > height -
+    // margins.bottom). PDFKit reagierte darauf mit einem automatischen
+    // addPage() — das wiederum den 'pageAdded'-Listener ausloeste, der
+    // drawFooter() erneut aufrief. Ergebnis: endlose Seitenschleife bis
+    // "RangeError: Maximum call stack size exceeded"; es konnte kein
+    // einziges Bilanz-PDF erzeugt werden.
+    //
+    // Der Footer belegt 4 Zeilen à 12pt (y, y+12, y+24, y+36). 48pt
+    // Reserve halten, damit die letzte Zeile sicher innerhalb des
+    // Content-Bereichs bleibt und NIE eine neue Seite triggert.
+    const y = doc.page.height - PDF_LAYOUT.margins.bottom - 48;
     doc
       .fontSize(8)
       .fillColor(PDF_LAYOUT.colors.rule)
@@ -311,13 +322,13 @@ export async function renderBilanzPdf(
           `${akt.kontonummer}  ${akt.bezeichnung}`,
           startX,
           y,
-          { width: colWidthAktiva - 80, align: 'left', lineBreak: false },
+          { width: colWidthAktiva - 80, align: 'left', lineBreak: false, ellipsis: true, height: 11 },
         );
         doc.text(
           formatBetrag(betrag),
           startX + colWidthAktiva - 80,
           y,
-          { width: 80, align: 'right', lineBreak: false },
+          { width: 80, align: 'right', lineBreak: false, ellipsis: true, height: 11 },
         );
       }
       if (pas) {
@@ -327,13 +338,13 @@ export async function renderBilanzPdf(
           `${pas.kontonummer}  ${pas.bezeichnung}`,
           startX + colWidthAktiva + 20,
           y,
-          { width: colWidthPassiva - 80, align: 'left', lineBreak: false },
+          { width: colWidthPassiva - 80, align: 'left', lineBreak: false, ellipsis: true, height: 11 },
         );
         doc.text(
           formatBetrag(betrag),
           startX + colWidthAktiva + 20 + colWidthPassiva - 80,
           y,
-          { width: 80, align: 'right', lineBreak: false },
+          { width: 80, align: 'right', lineBreak: false, ellipsis: true, height: 11 },
         );
       }
       doc.y = y + 14;

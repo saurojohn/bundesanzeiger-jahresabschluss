@@ -29,5 +29,9 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "e2e", "test", "prisma/seed.ts"]
+  "exclude": ["node_modules", "dist", "e2e", "test", "prisma/seed.ts"],
+  "ts-node": {
+    "//": "files:true laedt ALLE Dateien aus tsconfig.include in das ts-node-Programm — auch .d.ts ohne Runtime-Output. Ohne das fehlt die Express-Request-Augmentation (src/modules/api/types/express.d.ts) zur Laufzeit, waehrend `tsc --noEmit` sie sieht. Symptom: Typecheck gruen, Server startet mit TS2339.",
+    "files": true
+  }
 }

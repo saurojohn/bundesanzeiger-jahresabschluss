@@ -27,6 +27,26 @@ import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
+// WICHTIG: bewusst der Deep-Import statt `pdf-parse`.
+// Die Package-`index.js` prueft `isDebugMode = !module.parent` und fuehrt dann
+// ihren Demo-Code aus (liest './test/data/05-versions-space.pdf'). Unter
+// Vitest ist `module.parent` leer, dadurch scheiterte die ganze Datei schon
+// beim Import mit ENOENT — unabhaengig von den eigentlichen Tests.
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+
+const BASE = 'http://localhost:3000';
+
+function authHeaders(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+}
+
+interface BilanzSummary {
+  id: string;
+  geschaeftsjahr: number;
+  status: string;
+  wormObjectKey: string | null;
+}
+
 
 // ---------------------------------------------------------------------------
 // S3-Mock: ersetzt den echten S3Client durch eine In-Memory-Implementierung.
@@ -34,92 +54,30 @@ import { AppModule } from '../src/app.module';
 // beim Start einen gemockten Client injiziert bekommt.
 // ---------------------------------------------------------------------------
 
-interface MockObject {
-  key: string;
-  body: Buffer;
-  contentType: string;
-  metadata: Record<string, string>;
-  objectLockMode?: string;
-  objectLockRetainUntilDate?: Date;
-  objectLockLegalHoldStatus?: string;
-}
+// Der frueher hier eingebaute In-Memory-Mock fuer @aws-sdk/client-s3 ist
+// entfernt: die Specs sprechen HTTP gegen den laufenden Server, nicht
+// gegen ein hier gebautes Nest-TestingModule. Das Mock-Objekt war daher
+// nie gefuellt — WORM-Pruefungen liefen ins Leere und waren gruen,
+// ohne dass ein Objekt abgelegt worden waere.
+//
+// Jetzt laeuft die Zustellung gegen den echten S3-Weg: den S3-Mock
+// aus run-local.sh (s3-mock/server.js) mit echter Object-Lock-
+// Semantik. Voraussetzung: ./run-local.sh laeuft.
 
-const inMemoryStore = new Map<string, MockObject>();
-
-vi.mock('@aws-sdk/client-s3', async () => {
-  const actual = await vi.importActual<typeof import('@aws-sdk/client-s3')>(
-    '@aws-sdk/client-s3',
-  );
-  class MockS3Client {
-    async send(command: unknown): Promise<unknown> {
-      const cmd = command as { constructor: { name: string }; input: Record<string, unknown> };
-      const ctorName = cmd.constructor.name;
-      const input = cmd.input as Record<string, unknown>;
-      const key = input['Key'] as string;
-      switch (ctorName) {
-        case 'PutObjectCommand': {
-          const body = input['Body'] as Buffer;
-          const meta = (input['Metadata'] as Record<string, string>) ?? {};
-          inMemoryStore.set(key, {
-            key,
-            body,
-            contentType: (input['ContentType'] as string) ?? 'application/octet-stream',
-            metadata: meta,
-            objectLockMode: input['ObjectLockMode'] as string | undefined,
-            objectLockRetainUntilDate: input['ObjectLockRetainUntilDate'] as Date | undefined,
-            objectLockLegalHoldStatus: input['ObjectLockLegalHoldStatus'] as string | undefined,
-          });
-          return {};
-        }
-        case 'GetObjectCommand': {
-          const obj = inMemoryStore.get(key);
-          if (!obj) {
-            const err = new Error('NoSuchKey') as Error & { name: string; $metadata: { httpStatusCode: number } };
-            err.name = 'NoSuchKey';
-            err.$metadata = { httpStatusCode: 404 };
-            throw err;
-          }
-          return { Body: obj.body };
-        }
-        case 'HeadObjectCommand': {
-          const obj = inMemoryStore.get(key);
-          if (!obj) {
-            const err = new Error('NotFound') as Error & { name: string; $metadata: { httpStatusCode: number } };
-            err.name = 'NotFound';
-            err.$metadata = { httpStatusCode: 404 };
-            throw err;
-          }
-          return {
-            Metadata: obj.metadata,
-            ContentLength: obj.body.length,
-            ObjectLockMode: obj.objectLockMode,
-            ObjectLockRetainUntilDate: obj.objectLockRetainUntilDate,
-            ObjectLockLegalHoldStatus: obj.objectLockLegalHoldStatus,
-          };
-        }
-        case 'DeleteObjectCommand': {
-          // Im Mock: erfolgreich (Test prüft nur, dass es geht).
-          inMemoryStore.delete(key);
-          return {};
-        }
-        default:
-          return {};
-      }
-    }
-  }
-  return {
-    ...actual,
-    S3Client: MockS3Client,
-  };
-});
-
-interface LoginResponse {
-  accessToken: string;
-  user: {
-    id: string;
-    email: string;
-    mandanten: Array<{ id: string; firmenname: string; rolle: string }>;
-  };
+/**
+ * PDF-Text-Layer wirklich extrahieren.
+ *
+ * `buffer.toString('latin1')` liest nur den ROHEN Datei-Byte-Stream. PDFKit
+ * komprimiert die Content-Streams (FlateDecode) — der Text steht also in
+ * komprimierten Chunks und ist per latin1-String-Suche nicht auffindbar.
+ * 'Bundesanzeiger Jahresabschluss' traf es nur, weil der Titel zusaetzlich in
+ * den PDF-Info-Metadaten (/Title) steht, die unkomprimiert sind.
+ *
+ * AGENTS.md §6 schreibt dafuer pdf-parse vor — genau das nutzen wir jetzt.
+ */
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  const parsed = await pdfParse(buffer);
+  return parsed.text;
 }
 
 interface PdfGenResponse {
@@ -131,7 +89,6 @@ interface PdfGenResponse {
   downloadUrl: string;
 }
 
-const BASE = 'http://localhost:3000';
 
 describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
   let app: INestApplication;
@@ -182,7 +139,6 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
 
   afterAll(async () => {
     await app.close();
-    inMemoryStore.clear();
   });
 
   async function login(email: string, password: string): Promise<LoginResponse> {
@@ -316,10 +272,12 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
     );
     expect(res.status).toBe(200);
     const buffer = Buffer.from(await res.arrayBuffer());
-    const text = buffer.toString('latin1');
-    // Im PDF-Stream ist der Text (komprimiert oder unkomprimiert) enthalten.
-    // Einfache Suche — funktioniert für unkomprimiertes PDFKit-Output.
-    expect(text).toContain('Bundesanzeiger');
+    const text = await extractPdfText(buffer);
+    // Voller Titel statt nur des Praefixes — der Textlayer wird jetzt per
+    // pdf-parse korrekt dekomprimiert, der Titel steht in Header UND Footer
+    // jeder Seite. Ein verkuerztes Praefix wuerde einen Layoutverlust
+    // (z.B. fehlender Footer) nicht mehr aufdecken.
+    expect(text).toContain('Bundesanzeiger Jahresabschluss');
   });
 
   // ===========================================================================
@@ -331,8 +289,7 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
       { headers: { authorization: `Bearer ${steuerberaterToken}` } },
     );
     const buffer = Buffer.from(await res.arrayBuffer());
-    const text = buffer.toString('latin1');
-    // PDFKit encoded Text teilweise — 'Demo' sollte sicher matchen.
+    const text = await extractPdfText(buffer);
     expect(text).toContain('Demo');
   });
 
@@ -345,7 +302,7 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
       { headers: { authorization: `Bearer ${steuerberaterToken}` } },
     );
     const buffer = Buffer.from(await res.arrayBuffer());
-    const text = buffer.toString('latin1');
+    const text = await extractPdfText(buffer);
     expect(text).toContain('2025');
   });
 
@@ -358,7 +315,7 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
       { headers: { authorization: `Bearer ${steuerberaterToken}` } },
     );
     const buffer = Buffer.from(await res.arrayBuffer());
-    const text = buffer.toString('latin1');
+    const text = await extractPdfText(buffer);
     expect(text).toContain('WORM');
   });
 
@@ -369,16 +326,27 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
     // WP hat nur Zugriff auf Demo GmbH + Beispiel GmbH, NICHT auf Test AG.
     // Wir versuchen, eine Bilanz von Test AG herunterzuladen, mit dem
     // Mandant-Guard aktiv.
-    const listTestAg = await fetchBilanzList(steuerberaterToken,
-      (await login('admin@kanzlei.de', 'Admin123!')).user.mandanten.find((m) => m.firmenname === 'Test AG')?.id ?? '',
-      2025,
-    );
-    // Wenn WP auf Test AG keinen Zugriff hat, sollte MandantGuard 403 werfen.
-    const testAgMandantId = (await login('admin@kanzlei.de', 'Admin123!')).user.mandanten.find((m) => m.firmenname === 'Test AG')?.id ?? '';
+    // Bugfix 2026-09-28: Vorher wurde die Bilanzliste ABGEFRAGT und ERST DANACH
+    // geprueft, ob die Mandant-Id ueberhaupt existiert. Bei leerer Id schlug der
+    // Request mit 403 fehl und liess den Test mit "Bilanz-Liste fehlgeschlagen"
+    // abbrechen, statt sauber zu pruefen, dass der Guard greift.
+    //
+    // Zudem stammt die Id aus dem Login von `admin@kanzlei.de` — dieser User hat
+    // im Seed nur EINEN Mandanten (Demo GmbH), 'Test AG' ist dort nicht enthalten,
+    // die Id war also immer leer. Der STEUERBERATER hat alle drei Mandanten.
+    const testAgMandantId =
+      (await login('steuerberater@kanzlei.de', 'Demo123!')).user.mandanten.find(
+        (m) => m.firmenname === 'Test AG',
+      )?.id ?? '';
     if (testAgMandantId.length === 0) {
-      // Kein Test AG → skip
+      // Test AG fuer diesen User nicht sichtbar → nichts zu pruefen
       return;
     }
+
+    // Liste mit einem User MIT Zugriff auf Test AG (sonst waere schon die
+    // Liste 403 und der eigentliche Download-Pfad ungeprueft).
+    const listTestAg = await fetchBilanzList(steuerberaterToken, testAgMandantId, 2025);
+    // Wenn WP auf Test AG keinen Zugriff hat, sollte MandantGuard 403 werfen.
     const bilanzIdTestAg = listTestAg[0]?.id;
     if (!bilanzIdTestAg) {
       // Kein Bilanz in Test AG → skip

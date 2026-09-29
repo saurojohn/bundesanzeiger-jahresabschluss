@@ -49,6 +49,10 @@ interface BilanzEntity {
   mandantId: string;
   geschaeftsjahr: number;
   status: string;
+  /** Feld `hinweise` existiert im Prisma-Modell Bilanz (siehe schema.prisma)
+   *  und wird von PATCH /api/bilanz/:id zurueckgegeben — es fehlte nur in
+   *  dieser Test-Schnittstelle. */
+  hinweise?: string | null;
   positionen: Array<{
     id: string;
     seite: 'AKTIVA' | 'PASSIVA';
@@ -185,7 +189,12 @@ describe('Bilanz E2E (Sprint 1.x)', () => {
       headers,
       body: JSON.stringify({
         mandantId: mandant.id,
-        geschaeftsjahr: 2024,
+        // Eigener Geschaeftsjahr, um mit guv.e2e/pdf.e2e nicht zu kollidieren:
+        // alle Specs teilen sich eine Datenbank (globalSetup setzt sie nur EINMAL
+        // pro Lauf zurueck), und der Unique-Constraint auf
+        // (mandantId, geschaeftsjahr) liess diesen Test je nach Dateireihenfolge
+        // mit "existiert bereits eine Bilanz fuer 2024" fehlschlagen.
+        geschaeftsjahr: 2031,
         positionen: [
           { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kassenbestand', betragAktuell: 100000, reihenfolge: 1 },
           { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Gezeichnetes Kapital', betragAktuell: 25000, reihenfolge: 1 },

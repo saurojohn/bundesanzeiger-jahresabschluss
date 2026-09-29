@@ -28,11 +28,11 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import { WebhookService } from '../services/webhook.service';
 import { KanzleiRepository } from '../../../common/repositories/kanzlei.repository';
 import {
-  CreateWebhookSubscriptionDto,
   CreateWebhookSubscriptionResponseDto,
   WebhookDeliveryDto,
   WebhookSubscriptionDto,
 } from '../dto/webhook-subscription.dto';
+import { CreateWebhookSubscriptionBodyDto } from '../dto/create-webhook-subscription-body.dto';
 
 /**
  * Admin-Controller für Webhook-Subscription-Management (JWT-authentifiziert).
@@ -67,7 +67,7 @@ export class WebhookController {
   })
   @Roles('KANZLEI_ADMIN')
   async create(
-    @Body() body: CreateWebhookSubscriptionDto & { kanzleiId: string },
+    @Body() body: CreateWebhookSubscriptionBodyDto,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<CreateWebhookSubscriptionResponseDto> {

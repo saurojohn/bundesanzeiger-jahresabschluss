@@ -26,22 +26,20 @@ export class DatevCsvWriter {
    */
   writeRow(fields: (string | number | null | undefined)[]): void {
     const escaped = fields.map((f) => {
-      if (f === null || f === undefined) return '';
+      if (f === null || f === undefined) return '""';
       const s = String(f);
-      // Quote, wenn Komma, Anführungszeichen, Newline, Tabs oder Semikolon.
-      // DATEV verwendet Semikolon als Trenner — daher MUSS dieses Zeichen
-      // ebenfalls zum Quoting führen.
-      if (
-        s.includes(',') ||
-        s.includes('"') ||
-        s.includes('\n') ||
-        s.includes('\r') ||
-        s.includes('\t') ||
-        s.includes(';')
-      ) {
-        return `"${s.replace(/"/g, '""')}"`;
-      }
-      return s;
+      // Bugfix 2026-09-28: Es wurde nur dann gequotet, wenn der Wert selbst
+      // ein Trenn-/Sonderzeichen enthielt. Damit lieferte der Export z.B.
+      //   Formatname;Version;Berater;Mandant
+      // statt der DATEV-EXTF-Schreibweise
+      //   "Formatname";"Version";"Berater";"Mandant"
+      // Zwei Konsequenzen: (1) die Exporte waren nicht konform — DATEV/
+      // Addison/lexware erwarten die Header-Spaltennamen in Anfuehrungszeichen;
+      // (2) der eigene Import-Parser (datev-import/utils/csv-parser.ts) liest
+      // die Datei zwar tolerant ein, aber der Round-Trip war inkonsistent.
+      // Jetzt wird JEDES Feld gequotet, wie es der DATEV-Datenformat-Standard
+      // vorsieht. Der Parser strippt die Quotes wieder sauber ab.
+      return `"${s.replace(/"/g, '""')}"`;
     });
     this.lines.push(escaped.join(';'));
   }

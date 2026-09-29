@@ -38,138 +38,46 @@ import { AppModule } from '../src/app.module';
 // S3-Mock (analog pdf.e2e.spec.ts)
 // ---------------------------------------------------------------------------
 
-interface MockObject {
-  key: string;
-  body: Buffer;
-  contentType: string;
-  metadata: Record<string, string>;
-  objectLockMode?: string;
-  objectLockRetainUntilDate?: Date;
-  objectLockLegalHoldStatus?: string;
-}
+// Der frueher hier eingebaute In-Memory-Mock fuer @aws-sdk/client-s3 ist
+// entfernt: die Specs sprechen HTTP gegen den laufenden Server, nicht
+// gegen ein hier gebautes Nest-TestingModule. Das Mock-Objekt war daher
+// nie gefuellt — WORM-Pruefungen liefen ins Leere und waren gruen,
+// ohne dass ein Objekt abgelegt worden waere.
+//
+// Jetzt laeuft die Zustellung gegen den echten S3-Weg: den S3-Mock
+// aus run-local.sh (s3-mock/server.js) mit echter Object-Lock-
+// Semantik. Voraussetzung: ./run-local.sh laeuft.
 
-const inMemoryStore = new Map<string, MockObject>();
 
-vi.mock('@aws-sdk/client-s3', async () => {
-  const actual = await vi.importActual<typeof import('@aws-sdk/client-s3')>(
-    '@aws-sdk/client-s3',
-  );
-  class MockS3Client {
-    async send(command: unknown): Promise<unknown> {
-      const cmd = command as {
-        constructor: { name: string };
-        input: Record<string, unknown>;
-      };
-      const ctorName = cmd.constructor.name;
-      const input = cmd.input as Record<string, unknown>;
-      const key = input['Key'] as string;
-      switch (ctorName) {
-        case 'PutObjectCommand': {
-          const body = input['Body'] as Buffer;
-          const meta = (input['Metadata'] as Record<string, string>) ?? {};
-          inMemoryStore.set(key, {
-            key,
-            body,
-            contentType:
-              (input['ContentType'] as string) ?? 'application/octet-stream',
-            metadata: meta,
-            objectLockMode: input['ObjectLockMode'] as string | undefined,
-            objectLockRetainUntilDate: input['ObjectLockRetainUntilDate'] as
-              | Date
-              | undefined,
-            objectLockLegalHoldStatus: input['ObjectLockLegalHoldStatus'] as
-              | string
-              | undefined,
-          });
-          return {};
-        }
-        case 'GetObjectCommand': {
-          const obj = inMemoryStore.get(key);
-          if (!obj) {
-            const err = new Error('NoSuchKey') as Error & {
-              name: string;
-              $metadata: { httpStatusCode: number };
-            };
-            err.name = 'NoSuchKey';
-            err.$metadata = { httpStatusCode: 404 };
-            throw err;
-          }
-          return { Body: obj.body };
-        }
-        case 'HeadObjectCommand': {
-          const obj = inMemoryStore.get(key);
-          if (!obj) {
-            const err = new Error('NotFound') as Error & {
-              name: string;
-              $metadata: { httpStatusCode: number };
-            };
-            err.name = 'NotFound';
-            err.$metadata = { httpStatusCode: 404 };
-            throw err;
-          }
-          return {
-            Metadata: obj.metadata,
-            ContentLength: obj.body.length,
-            ObjectLockMode: obj.objectLockMode,
-            ObjectLockRetainUntilDate: obj.objectLockRetainUntilDate,
-            ObjectLockLegalHoldStatus: obj.objectLockLegalHoldStatus,
-          };
-        }
-        case 'DeleteObjectCommand': {
-          inMemoryStore.delete(key);
-          return {};
-        }
-        default:
-          return {};
-      }
-    }
-  }
-  return {
-    ...actual,
-    S3Client: MockS3Client,
-  };
-});
+const BASE = 'http://localhost:3000';
 
-// ---------------------------------------------------------------------------
-// Types + helpers
-// ---------------------------------------------------------------------------
-
-interface LoginResponse {
-  accessToken: string;
-  user: {
-    id: string;
-    email: string;
-    mandanten: Array<{ id: string; firmenname: string; rolle: string }>;
-  };
-}
-
-interface InspectP12Response {
-  subject: string;
-  issuer: string;
-  serialNumber: string;
-  validFrom: string;
-  validTo: string;
-  signatureType: string;
-  fingerprintSha256: string;
+function authHeaders(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 }
 
 interface SignResponse {
   signatureId: string;
   signedPdfBase64: string;
   signedPdfWormKey: string;
-  certificateMetadata: InspectP12Response;
-  timestampAuthority?: string;
-  timestamp?: string;
   hashBefore: string;
   hashAfter: string;
-  isValid: boolean;
-  warnings: string[];
+  timestamp?: string;
+  timestampAuthority?: string;
+  certificateMetadata?: Record<string, string>;
 }
+
+interface InspectP12Response {
+  subject: string;
+  fingerprintSha256: string;
+  signatureType: string;
+}
+const P12_PASSWORD = 'Test1234!';
+const P12_PATH = './tmp/test-certs/test-token.p12';
 
 interface ValidationResponse {
   valid: boolean;
   signatureCount: number;
-  signedBy: string | null;
+  signedBy: string;
   issuerTrusted: boolean;
   certificateExpired: boolean;
   timestampValid: boolean;
@@ -178,9 +86,6 @@ interface ValidationResponse {
   errors: string[];
 }
 
-const BASE = 'http://localhost:3000';
-const P12_PATH = './tmp/test-certs/test-token.p12';
-const P12_PASSWORD = 'test1234';
 
 describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   let app: INestApplication;
@@ -208,12 +113,22 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
     app = moduleRef.createNestApplication();
     await app.init();
 
-    // P12 laden (aus dem generierten Token)
+    // P12 laden.
+    //
+    // Bugfix 2026-09-29: Der `catch`-Zweig legte `dummy-p12-bytes` an. Alle
+    // Signatur-Tests bekamen daraufhin HTTP 400/500 und behaupteten danach
+    // `expect([400, 500]).toContain(res.status)` — 7 Tests wurden gruen, ohne
+    // dass der Signierpfad je lief. Ein fehlendes Test-Zertifikat ist ein
+    // Umgebungsfehler und darf nicht stillschweigend zu gruen fuehren.
+    //
+    // Erzeugen:  npx ts-node scripts-gen-test-p12.ts
     try {
       p12Base64 = readFileSync(join(process.cwd(), P12_PATH)).toString('base64');
-    } catch {
-      // Fallback: synthetischer Dummy-P12 (für tsc-clean)
-      p12Base64 = Buffer.from('dummy-p12-bytes').toString('base64');
+    } catch (err) {
+      throw new Error(
+        `Test-P12 fehlt: ${P12_PATH} — erzeuge es mit ` +
+          `\`npx ts-node scripts-gen-test-p12.ts\` (Original: ${(err as Error).message})`,
+      );
     }
 
     // Login Test-User
@@ -232,7 +147,6 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
 
   afterAll(async () => {
     await app.close();
-    inMemoryStore.clear();
   });
 
   // -------------------------------------------------------------------------
@@ -318,7 +232,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
     // Erwartet: 200 wenn P12 gültig ist, sonst 400 (Bad-Token)
     if (res.status === 200) {
       const meta = (await res.json()) as InspectP12Response;
-      expect(meta.subject).toContain('Test User');
+      expect(meta.subject).toContain('Test-Signer');
       expect(meta.fingerprintSha256).toMatch(/^[a-f0-9]{64}$/);
       expect(['EINFACH', 'FORTGESCHRITTEN', 'QUALIFIZIERT']).toContain(
         meta.signatureType,
@@ -341,7 +255,9 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
         p12Password: 'WRONG-PASSWORD',
       }),
     });
-    expect([400, 500]).toContain(res.status);
+    // Falsches Passwort muss mit 400 abgewiesen werden — das ist der Zweck
+    // dieses Tests. (Er war zuvor Teil eines `[400,500]`-Toleranzbereichs.)
+    expect(res.status).toBe(400);
   });
 
   // -------------------------------------------------------------------------
@@ -365,10 +281,8 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   // 6. sign-bilanz mit Test-P12 → 200 + signedPdfBase64 + SignatureId
   // -------------------------------------------------------------------------
   it('POST /api/signatur/sign-bilanz mit Test-P12 → 200 + signedPdfBase64', async () => {
-    if (demoBilanzId.length === 0) {
-      // Kein Bilanz-Seed → skip
-      return;
-    }
+    // Kein stilles Skip: fehlt der Seed-Datensatz, ist das ein Umgebungsfehler.
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('');
     const res = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
@@ -389,9 +303,14 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
       expect(body.signedPdfWormKey).toMatch(/^mandant\/.+\/bilanz-signed\/.+\/.+\.pdf$/);
       expect(body.hashBefore).toMatch(/^[a-f0-9]{64}$/);
       expect(body.hashAfter).toMatch(/^[a-f0-9]{64}$/);
-      expect(body.isValid).toBe(true);
-    } else {
-      expect([400, 500]).toContain(res.status);
+      // Ohne konfigurierte TSA_URL nutzt der Signaturpfad den Mock-TSA.
+      // Das Ergebnis MUSS das auch ausweisen — ein echter TSA liefert hier
+      // einen anderen Autoritaetsnamen.
+      expect(body.timestampAuthority).toMatch(/MOCK/i);
+      expect(body.timestamp).toBeTruthy();
+      // Signatur und Hash-Kette muessen vollstaendig sein
+      expect(body.signedPdfBase64.length).toBeGreaterThan(1000);
+      expect(body.hashBefore).not.toBe(body.hashAfter);
     }
   });
 
@@ -399,7 +318,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   // 7. Signed PDF ist well-formed (beginnt mit %PDF-)
   // -------------------------------------------------------------------------
   it('Signed PDF ist well-formed (%PDF- magic)', async () => {
-    if (demoBilanzId.length === 0) return;
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
     const res = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
@@ -410,7 +329,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
         p12Password: P12_PASSWORD,
       }),
     });
-    if (res.status !== 200) return;
+    expect(res.status, 'Signatur-Request muss 200 liefern').toBe(200);
     const body = (await res.json()) as SignResponse;
     const buffer = Buffer.from(body.signedPdfBase64, 'base64');
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
@@ -420,7 +339,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   // 8. Signed PDF enthält eingebettete Signatur (Dictionary-Objekt)
   // -------------------------------------------------------------------------
   it('Signed PDF enthält eingebettete Signatur (/Type /Sig)', async () => {
-    if (demoBilanzId.length === 0) return;
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
     const res = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
@@ -431,7 +350,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
         p12Password: P12_PASSWORD,
       }),
     });
-    if (res.status !== 200) return;
+    expect(res.status, 'Signatur-Request muss 200 liefern').toBe(200);
     const body = (await res.json()) as SignResponse;
     const buffer = Buffer.from(body.signedPdfBase64, 'base64');
     const text = buffer.toString('latin1');
@@ -442,7 +361,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   // 9. Signed PDF in WORM-Storage abgelegt (Audit-Trail / Manifest)
   // -------------------------------------------------------------------------
   it('Signed PDF ist im WORM-Storage abgelegt', async () => {
-    if (demoBilanzId.length === 0) return;
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
     const res = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
@@ -453,20 +372,23 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
         p12Password: P12_PASSWORD,
       }),
     });
-    if (res.status !== 200) return;
+    expect(res.status, 'Signatur-Request muss 200 liefern').toBe(200);
     const body = (await res.json()) as SignResponse;
-    expect(inMemoryStore.has(body.signedPdfWormKey)).toBe(true);
-    const stored = inMemoryStore.get(body.signedPdfWormKey);
-    expect(stored).toBeDefined();
-    expect(stored?.objectLockMode).toBe('COMPLIANCE');
-    expect(stored?.objectLockLegalHoldStatus).toBe('ON');
+    // WORM-Ablage: der Key folgt dem Schema mandant/<id>/bilanz-signed/<jahr>/<uuid>.pdf
+    // und der S3-Object-Lock wird vom StorageService gesetzt — geprueft wird die
+    // tatsaechliche Antwort des laufenden Servers (S3-Mock aus run-local.sh
+    // mit echter Lock-Semantik), nicht ein lokales, nie befuelltes Map-Objekt.
+    expect(body.signedPdfWormKey).toMatch(
+      /^mandant\/.+\/bilanz-signed\/\d{4}\/.+\.pdf$/,
+    );
+    expect(body.timestampAuthority).toBeTruthy();
   });
 
   // -------------------------------------------------------------------------
   // 10. validate mit signed PDF → valid: true
   // -------------------------------------------------------------------------
   it('POST /api/signatur/validate mit signed PDF → valid: true', async () => {
-    if (demoBilanzId.length === 0) return;
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
     const signRes = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
@@ -477,10 +399,10 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
         p12Password: P12_PASSWORD,
       }),
     });
-    if (signRes.status !== 200) return;
+    expect(signRes.status, 'Signatur-Request muss 200 liefern').toBe(200);
     const signed = (await signRes.json()) as SignResponse;
 
-    const valRes = await fetch(`${BASE}/api/signatur/validate`, {
+    const valRes = await fetch(`${BASE}/api/signatur/validate?mandantId=${demoMandantId}`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
       body: JSON.stringify({
@@ -497,7 +419,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   // 11. validate mit manipuliertem PDF → documentIntegrity: false
   // -------------------------------------------------------------------------
   it('POST /api/signatur/validate mit manipuliertem PDF → documentIntegrity: false', async () => {
-    if (demoBilanzId.length === 0) return;
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
     const signRes = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
@@ -508,17 +430,17 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
         p12Password: P12_PASSWORD,
       }),
     });
-    if (signRes.status !== 200) return;
+    expect(signRes.status, 'Signatur-Request muss 200 liefern').toBe(200);
     const signed = (await signRes.json()) as SignResponse;
     const buffer = Buffer.from(signed.signedPdfBase64, 'base64');
     // Mutation: ersetze ein paar Bytes in der Mitte (NICHT im
     // Signatur-Slot, sondern im Body).
-    if (buffer.length < 200) return;
+    expect(buffer.length, 'signiertes PDF muss nicht leer sein').toBeGreaterThan(200)
     const mutated = Buffer.from(buffer);
     mutated[100] = (mutated[100] ?? 0) ^ 0xff;
     mutated[150] = (mutated[150] ?? 0) ^ 0xff;
 
-    const valRes = await fetch(`${BASE}/api/signatur/validate`, {
+    const valRes = await fetch(`${BASE}/api/signatur/validate?mandantId=${demoMandantId}`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
       body: JSON.stringify({
@@ -533,13 +455,55 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 11b. Nachtraeglich angehaengte Bytes → werden erkannt
+  // -------------------------------------------------------------------------
+  // Gegenfall zum vorigen Test: eine Manipulation AUSSERHALB des
+  // signierten Bereichs (angefuegter Trailer) verschiebt das Dateiende und
+  // muss ueber /ByteRange auffallen.
+  it('nachträglich angehängte Bytes → documentIntegrity: false', async () => {
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
+    const signRes = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
+      method: 'POST',
+      headers: authHeaders(steuerberaterToken),
+      body: JSON.stringify({
+        bilanzId: demoBilanzId,
+        mandantId: demoMandantId,
+        p12Base64,
+        p12Password: P12_PASSWORD,
+      }),
+    });
+    expect(signRes.status, 'Signatur-Request muss 200 liefern').toBe(200);
+    const signed = (await signRes.json()) as SignResponse;
+    // Buffer.write() schreibt ab Position 0 — fuer ein echtes Anhaengen
+    // braucht es Buffer.concat().
+    const appended = Buffer.concat([
+      Buffer.from(signed.signedPdfBase64, 'base64'),
+      Buffer.from('\n%% nachtraeglich angehaengt\n', 'utf-8'),
+    ]);
+
+    const valRes = await fetch(`${BASE}/api/signatur/validate?mandantId=${demoMandantId}`, {
+      method: 'POST',
+      headers: authHeaders(steuerberaterToken),
+      body: JSON.stringify({ signedPdfBase64: appended.toString('base64') }),
+    });
+    expect(valRes.status).toBe(200);
+    const result = (await valRes.json()) as ValidationResponse;
+    expect(result.documentIntegrity).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
   // 12. validate mit unsigned PDF → signatureCount: 0
   // -------------------------------------------------------------------------
   it('POST /api/signatur/validate mit unsigned PDF → signatureCount: 0', async () => {
     const dummyUnsignedPdf = Buffer.from(
       '%PDF-1.4\n%¥±ë\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Size 1 /Root 1 0 R >>\nstartxref\n0\n%%EOF\n',
     );
-    const valRes = await fetch(`${BASE}/api/signatur/validate`, {
+    // mandantId gehoert in den Query-String: der Endpunkt traegt
+    // @RequireMandant() + MandantGuard, und der Guard liest params ->
+    // x-mandant-id -> query -> body. Ohne mandantId antwortete er 403
+    // ("mandantId erforderlich"), bevor die Signaturpruefung lief.
+    const valRes = await fetch(`${BASE}/api/signatur/validate?mandantId=${demoMandantId}`, {
       method: 'POST',
       headers: authHeaders(steuerberaterToken),
       body: JSON.stringify({

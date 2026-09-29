@@ -24,6 +24,7 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import { AnhangService } from '../services/anhang.service';
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
+import { pageSizePipe } from '../../../common/dto/pagination.dto';
 
 /**
  * Controller für Anhang (§ 284-289 HGB).
@@ -56,17 +57,13 @@ export class AnhangController {
     @Query('mandantId') mandantId: string,
     @Query('geschaeftsjahr') geschaeftsjahr: string | undefined,
     @Query('cursor') cursor: string | undefined,
-    @Query('pageSize') pageSizeRaw: string | undefined,
+    @Query('pageSize', pageSizePipe) pageSize: number | undefined,
     @Query('page') pageRaw: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
     const jahr =
       typeof geschaeftsjahr === 'string' && geschaeftsjahr.length > 0
         ? Number.parseInt(geschaeftsjahr, 10)
-        : undefined;
-    const pageSize =
-      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
-        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
         : undefined;
     const page =
       typeof pageRaw === 'string' && pageRaw.length > 0

@@ -164,7 +164,6 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        mandantId: '00000000-0000-4000-8000-000000000000',
         bilanzId: '00000000-0000-4000-8000-000000000001',
         guvId: '00000000-0000-4000-8000-000000000002',
         anhangId: '00000000-0000-4000-8000-000000000003',
@@ -183,7 +182,6 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        mandantId: loginRes.user.mandanten[0].id,
         bilanzId: '00000000-0000-4000-8000-000000000001',
         guvId: '00000000-0000-4000-8000-000000000002',
         anhangId: '00000000-0000-4000-8000-000000000003',
@@ -200,11 +198,10 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Demo GmbH');
     if (!mandant) throw new Error('Demo GmbH nicht gefunden');
     const headers = await authHeaders(loginRes.accessToken);
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        mandantId: mandant.id,
         // bilanzId fehlt absichtlich
         guvId: '00000000-0000-4000-8000-000000000002',
         anhangId: '00000000-0000-4000-8000-000000000003',
@@ -220,11 +217,10 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const mandant = loginRes.user.mandanten[0];
     const headers = await authHeaders(loginRes.accessToken);
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        mandantId: mandant.id,
         bilanzId: '11111111-1111-4111-8111-111111111111', // nicht existierend
         guvId: '11111111-1111-4111-8111-111111111112',
         anhangId: '11111111-1111-4111-8111-111111111113',
@@ -245,7 +241,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     // Demo GmbH hat GJ 2025 mit saldostimmender Bilanz (per Seed).
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -273,7 +269,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),
@@ -295,7 +291,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),
@@ -316,7 +312,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),
@@ -336,7 +332,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),
@@ -358,7 +354,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),
@@ -387,7 +383,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
 
     // 1. Generieren
-    const genRes = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const genRes = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),
@@ -395,7 +391,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const genBody = (await genRes.json()) as GenerateEbilanzResponse;
 
     // 2. Validieren
-    const valRes = await fetch(`${BASE}/api/ebilanz/validate`, {
+    const valRes = await fetch(`${BASE}/api/ebilanz/validate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ xbrlBase64: genBody.xbrlBase64 }),
@@ -417,7 +413,7 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Demo GmbH');
     if (!mandant) throw new Error('Demo GmbH nicht gefunden');
     const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
-    const genRes = await fetch(`${BASE}/api/ebilanz/generate`, {
+    const genRes = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ bilanzId, guvId, anhangId }),

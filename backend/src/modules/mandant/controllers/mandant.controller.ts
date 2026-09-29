@@ -23,6 +23,7 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import { CreateMandantDto } from '../dto/create-mandant.dto';
 import { UpdateMandantDto } from '../dto/update-mandant.dto';
 import { MandantService } from '../services/mandant.service';
+import { pageSizePipe } from '../../../common/dto/pagination.dto';
 
 @Controller('mandant')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -39,13 +40,9 @@ export class MandantController {
   findAll(
     @CurrentUser() user: AuthUser,
     @Query('cursor') cursor?: string,
-    @Query('pageSize') pageSizeRaw?: string,
+    @Query('pageSize', pageSizePipe) pageSize?: number,
     @Query('kanzleiId') kanzleiId?: string,
   ): ReturnType<MandantService['findAll']> {
-    const pageSize =
-      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
-        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
-        : undefined;
     return this.mandantService.findAll(user, {
       cursor,
       pageSize,

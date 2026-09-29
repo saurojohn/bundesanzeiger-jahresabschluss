@@ -70,25 +70,6 @@ export class CreateApiKeyDto {
 }
 
 /**
- * Antwort eines neu angelegten API-Keys.
- *
- * Enthält den öffentlichen Datensatz (`apiKey`) + den EINMALIG sichtbaren
- * `plaintextSecret`. Letzterer MUSS vom User kopiert werden — wir
- * speichern nur den SHA-256-Hash.
- */
-export class CreateApiKeyResponseDto {
-  @ApiProperty({ description: 'Öffentlicher API-Key-Datensatz' })
-  apiKey!: ApiKeyDto;
-
-  @ApiProperty({
-    description:
-      'Plaintext-Secret des API-Keys. Wird NUR EINMAL bei Create zurückgegeben — sicher kopieren!',
-    example: 'k9PqL2nR7xY3mFvH8cJ6wT5sN1bD4gA0',
-  })
-  plaintextSecret!: string;
-}
-
-/**
  * Öffentlicher API-Key-Datensatz (OHNE plaintextSecret).
  *
  * `plaintextSecret` wird NIE über die API zurückgegeben — nur der SHA-256-
@@ -135,6 +116,25 @@ export class ApiKeyDto {
 
   @ApiProperty({ description: 'Widerrufen am (null = aktiv)', nullable: true })
   revokedAt!: Date | null;
+}
+
+/**
+ * Antwort eines neu angelegten API-Keys.
+ *
+ * Enthält den öffentlichen Datensatz (`apiKey`) + den EINMALIG sichtbaren
+ * `plaintextSecret`. Letzterer MUSS vom User kopiert werden — wir
+ * speichern nur den SHA-256-Hash.
+ */
+export class CreateApiKeyResponseDto {
+  @ApiProperty({ description: 'Öffentlicher API-Key-Datensatz' })
+  apiKey!: ApiKeyDto;
+
+  @ApiProperty({
+    description:
+      'Plaintext-Secret des API-Keys. Wird NUR EINMAL bei Create zurückgegeben — sicher kopieren!',
+    example: 'k9PqL2nR7xY3mFvH8cJ6wT5sN1bD4gA0',
+  })
+  plaintextSecret!: string;
 }
 
 /**

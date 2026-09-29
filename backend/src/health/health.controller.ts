@@ -1,6 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
+import { Public } from '../modules/auth/decorators/public.decorator';
 
 /**
  * Health-Controller (M4 Sprint 2).
@@ -10,6 +11,10 @@ import { PrismaService } from '../prisma/prisma.service';
  *
  * Antwortet IMMER in Deutsch (User-Preference + konsistent mit übriger API).
  */
+@Public() // Liveness/Readiness muessen ohne Token erreichbar sein —
+// NGINX health_check, Docker-Healthcheck und externes Monitoring
+// senden keinen Authorization-Header. Ohne dieses Decorator blockt
+// der globale JwtAuthGuard (APP_GUARD) die Probe mit 401.
 @Controller('health')
 @SkipThrottle() // Health-Checks niemals throttlen
 export class HealthController {

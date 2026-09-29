@@ -184,9 +184,17 @@ export class DatevCsvParser {
     const map = new Map<string, SaldovortragEntry>();
 
     for (const zeile of buchungsZeilen) {
-      // Beide Konten (konto + gegenkonto) berücksichtigen, da beide Saldo-relevant sind.
-      this.accumulate(map, zeile.konto, zeile);
-      this.accumulate(map, zeile.gegenkonto, zeile);
+      // Beide Konten (konto + gegenkonto) berücksichtigen, da beide
+      // Saldo-relevant sind — aber auf GEGEN-Seiten.
+      //
+      // Bugfix 2026-09-28: Vorher wurden beide Konten mit DEMSELBEN
+      // `sollHaben`-Flag akkumuliert. Bei einem Soll/Haben-Paar fielen damit
+      // beide Konten auf Saldo 0 (soll == haben) — der importierte
+      // Saldovortrag war fuer jedes Konto fachlich falsch und wuerde ungeprueft
+      // in die Bilanz uebernommen. Das ist die Grundregel der doppelten
+      // Buchfuehrung: Gegenkonto ist immer die andere Seite.
+      this.accumulate(map, zeile.konto, zeile, false);
+      this.accumulate(map, zeile.gegenkonto, zeile, true);
     }
 
     return map;
@@ -224,6 +232,7 @@ export class DatevCsvParser {
     map: Map<string, SaldovortragEntry>,
     konto: string,
     zeile: ParsedBuchungsZeile,
+    invertSeite: boolean = false,
   ): void {
     const absBetrag = Math.abs(zeile.umsatz);
     if (absBetrag === 0) return;
@@ -240,7 +249,9 @@ export class DatevCsvParser {
       map.set(konto, entry);
     }
 
-    if (zeile.sollHaben === 'S') {
+    // invertSeite === true  →  Gegenkonto: Seite tauschen.
+    const istSoll = (zeile.sollHaben === 'S') !== invertSeite;
+    if (istSoll) {
       entry.soll += absBetrag;
     } else {
       entry.haben += absBetrag;

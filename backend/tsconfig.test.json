@@ -1,0 +1,18 @@
+{
+  "//": "Reine Typpruefung fuer den GESAMTEN Quellbaum inkl. e2e/, prisma/seed.ts und Tools. Ohne diese Datei war `tsc --noEmit` ein Vakuum: tsconfig.json schliesst e2e und seed.ts aus, also wurde genau der Code nicht geprueft, der durchgaengig defekt war. Der Build (tsconfig.json) bleibt unveraendert — rootDir/outDir duerfen nicht mit wachsen, sonst laege dist/main.js unter dist/src/main.js und `npm start` brake.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "outDir": null,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": [
+    "src/**/*",
+    "e2e/**/*",
+    "prisma/**/*",
+    "scripts*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

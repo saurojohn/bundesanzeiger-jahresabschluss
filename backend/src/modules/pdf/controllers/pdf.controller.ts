@@ -9,6 +9,8 @@ import {
   Req,
   Res,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -53,6 +55,10 @@ export class PdfController {
    * Response: { wormObjectKey, sha256Hash, sizeBytes, uploadedAt, retentionExpiresAt, downloadUrl }
    */
   @Post('bilanz/:id/generate')
+  // PDF-Generierung ist eine Umwandlung (Bestehendes -> PDF), keine
+  // Ressourcen-Erstellung: 200 statt Nest-Default 201. Deckt sich mit
+  // dem API-Vertrag in USER-GUIDE/RUNBOOK und den e2e-Specs.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
@@ -100,6 +106,10 @@ export class PdfController {
   // ===========================================================================
 
   @Post('guv/:id/generate')
+  // PDF-Generierung ist eine Umwandlung (Bestehendes -> PDF), keine
+  // Ressourcen-Erstellung: 200 statt Nest-Default 201. Deckt sich mit
+  // dem API-Vertrag in USER-GUIDE/RUNBOOK und den e2e-Specs.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
@@ -147,6 +157,10 @@ export class PdfController {
   // ===========================================================================
 
   @Post('anhang/:id/generate')
+  // PDF-Generierung ist eine Umwandlung (Bestehendes -> PDF), keine
+  // Ressourcen-Erstellung: 200 statt Nest-Default 201. Deckt sich mit
+  // dem API-Vertrag in USER-GUIDE/RUNBOOK und den e2e-Specs.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
@@ -194,6 +208,10 @@ export class PdfController {
   // ===========================================================================
 
   @Post('abschluss/:id/generate')
+  // PDF-Generierung ist eine Umwandlung (Bestehendes -> PDF), keine
+  // Ressourcen-Erstellung: 200 statt Nest-Default 201. Deckt sich mit
+  // dem API-Vertrag in USER-GUIDE/RUNBOOK und den e2e-Specs.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')

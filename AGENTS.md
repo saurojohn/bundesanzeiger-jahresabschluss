@@ -66,7 +66,19 @@ Beispiel: `curl -H "Authorization: Bearer $JWT" http://localhost:3000/api/bilanz
 
 ### 3.3 TypeScript-Validierung
 Next.js dev ist `transpile-only` — TypeScript-Fehler werden **nicht** im Browser sichtbar.
-Vor jedem Commit: `cd frontend && npx tsc --noEmit` und `cd backend && npx tsc --noEmit`.
+Vor jedem Commit:
+
+* Frontend: `cd frontend && npm run typecheck`
+* Backend:  `cd backend && npm run typecheck`
+
+**Wichtig (2026-09-28):** `tsc --noEmit` allein ist im Backend ein **Vakuum** —
+`tsconfig.json` exclude:t `e2e/`, `prisma/seed.ts` und die Tools, d. h. genau der
+Code, der überwiegend defekt war, wurde nie geprüft. `npm run typecheck` führt
+deshalb zwei Durchläufe aus: den Build-Scope (`tsc --noEmit`) **und** den
+Gesamtbaum über `tsconfig.test.json` (src + e2e + prisma + Scripts).
+`tsconfig.json` selbst bleibt bewusst unverändert, weil `rootDir: ./src` und
+`outDir` nicht mitwachsen dürfen — sonst läge `dist/main.js` unter `dist/src/main.js`
+und `npm start` bräche.
 
 ### 3.4 Mandant-ID in jeder Query
 Jede Datenbank-Operation MUSS durch den Mandant-Interceptor (NestJS Guard).

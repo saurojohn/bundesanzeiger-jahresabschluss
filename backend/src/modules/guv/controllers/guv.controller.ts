@@ -25,6 +25,7 @@ import { GuVService } from '../services/guv.service';
 import { CreateGuVDto } from '../dto/create-guv.dto';
 import { UpdateGuVDto } from '../dto/update-guv.dto';
 import { GuVValidierungDto } from '../dto/guv-validierung.dto';
+import { pageSizePipe } from '../../../common/dto/pagination.dto';
 
 /**
  * Controller für GuV (§ 275 HGB).
@@ -59,17 +60,13 @@ export class GuVController {
     @Query('mandantId') mandantId: string,
     @Query('geschaeftsjahr') geschaeftsjahr: string | undefined,
     @Query('cursor') cursor: string | undefined,
-    @Query('pageSize') pageSizeRaw: string | undefined,
+    @Query('pageSize', pageSizePipe) pageSize: number | undefined,
     @Query('page') pageRaw: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
     const jahr =
       typeof geschaeftsjahr === 'string' && geschaeftsjahr.length > 0
         ? Number.parseInt(geschaeftsjahr, 10)
-        : undefined;
-    const pageSize =
-      typeof pageSizeRaw === 'string' && pageSizeRaw.length > 0
-        ? Math.min(Number.parseInt(pageSizeRaw, 10), 100)
         : undefined;
     const page =
       typeof pageRaw === 'string' && pageRaw.length > 0
@@ -143,6 +140,10 @@ export class GuVController {
    * POST /api/guv/:id/validate
    */
   @Post(':id/validate')
+  // Validierung ist eine read-only Auswertung, keine Resource-Erstellung:
+  // Nest wuerde fuer @Post sonst 201 Created zurueckgeben. Der API-Vertrag
+  // (und die e2e-Specs) erwarten 200 OK.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   @UseGuards(MandantGuard)
   validate(

@@ -141,7 +141,6 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        mandantId: '00000000-0000-4000-8000-000000000000',
         guvId: '00000000-0000-4000-8000-000000000001',
         beraternummer: '12345',
         mandantennummer: '67890',
@@ -156,11 +155,10 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
   it('POST /api/datev/generate-buchungsstapel als GF → 403', async () => {
     const loginRes = await loginAs('gf-demo@demo-gmbh.de', 'Demo123!');
     const headers = await authHeaders(loginRes.accessToken);
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${loginRes.user.mandanten[0]!.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        mandantId: loginRes.user.mandanten[0]!.id,
         guvId: '00000000-0000-4000-8000-000000000001',
         beraternummer: '12345',
         mandantennummer: '67890',
@@ -176,11 +174,10 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const mandant = loginRes.user.mandanten[0]!;
     const headers = await authHeaders(loginRes.accessToken);
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        mandantId: mandant.id,
         guvId: '11111111-1111-4111-8111-111111111111', // nicht existierend
         beraternummer: '12345',
         mandantennummer: '67890',
@@ -199,7 +196,7 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const guvId = await findGuV(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -230,7 +227,7 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const guvId = await findGuV(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -273,7 +270,7 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const guvId = await findGuV(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -307,7 +304,7 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const guvId = await findGuV(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -335,7 +332,7 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const guvId = await findGuV(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -367,7 +364,7 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     const headers = await authHeaders(loginRes.accessToken);
     const guvId = await findGuV(mandant.id, 2025, headers);
 
-    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel`, {
+    const res = await fetch(`${BASE}/api/datev/generate-buchungsstapel?mandantId=${mandant.id}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -417,8 +414,18 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     expect(csv).toContain('"4400"');
     expect(csv).toContain('"5000"');
     expect(csv).toContain('"1800"');
-    expect(csv).toContain('"Beratungserlöse"');
-    expect(csv).toContain('"Materialaufwand"');
+
+    // Konto-Bezeichnungen: massgeblich ist die projektinterne SKR04-Tabelle
+    // (src/modules/datev/mappings/skr04-*.ts) — sie ist die Single Source of
+    // Truth fuer Export UNCH Import (Round-Trip).
+    //
+    // HINWEIS/Aufgabe fuer die Fachpruefung: die Bezeichnungen dort sind
+    // teilweise projektintern und nicht 1:1 die offiziellen DATEV-SKR04-
+    // Kontobezeichnungen (offiziell waere 4400 z.B. "Erlöse aus 19% USt").
+    // Fuer den GoBD-rechtssicherten Export sollte die Tabelle spaeter gegen
+    // die offizielle SKR04-Liste abgeglichen werden.
+    expect(csv).toContain('Erlöse aus Beratung'); // 4400
+    expect(csv).toContain('Materialaufwand'); // 5000
   });
 
   // ===========================================================================

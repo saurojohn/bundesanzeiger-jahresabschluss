@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Public } from '../../auth/decorators/public.decorator';
 import { ApiKeyService } from '../services/api-key.service';
 import { asAPIScope } from '../constants/api-key.constants';
 import {
@@ -30,6 +31,11 @@ export class OAuthController {
 
   @Post('token')
   @HttpCode(HttpStatus.OK)
+  // Bugfix 2026-09-28: Ohne @Public() fing der globale JwtAuthGuard die
+  // Anfrage ab und antwortete 401, BEVOR die client_credentials-Authentifizierung
+  // lief — der Token-Endpoint war damit unbenutzbar. Er authentifiziert sich
+  // selbst ueber client_id/client_secret (ApiKeyService), nicht per JWT.
+  @Public()
   @ApiOperation({
     summary: 'OAuth2 Token-Endpoint (client_credentials-Grant)',
     description:

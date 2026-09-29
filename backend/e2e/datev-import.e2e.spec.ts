@@ -137,6 +137,26 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
   /**
    * Liefert die ersten 20 Zeilen eines Mini-CSV-Buchungsstapels (inline).
    */
+  /**
+   * ECHTE Geschaeftsbuchung — im Gegensatz zu buildMiniCsv() kein interner
+   * Ausgleich desselben Kontenpaares, sondern eine echte Erloesbuchung
+   * ("Bank an Erloes"). Nur damit erzeugt /execute ueberhaupt eine
+   * importierbare Position; der interne Ausgleich netto-null erzeugt
+   * korrekt importiertCount = 0 und war als Fixture fuer die
+   * execute-Tests unbrauchbar.
+   */
+  function buildBusinessCsv(umsatzZeilen: string[], jahr: number, bezeichnung = 'Geschaeftsbuchung'): string {
+    return [
+      '"Formatname";"Version";"Berater";"Mandant";"WJ-Beginn";"WJ-Ende";"Sachkontenlaenge";"Datum-von";"Datum-bis";"Bezeichnung";"Diktat";"Buchungstyp";"Rechnungslegungszweck"',
+      `"EXTF_Buchungsstapel";"12";"12345";"67890";"01.01.${jahr}";"31.12.${jahr}";"4";"01.01.${jahr}";"31.12.${jahr}";"${bezeichnung}";"Buchhaltung";"1";"00"`,
+      '"Umsatz";"SH";"WKZ";"Kurs";"Basis";"BWKZ";"Konto";"Gegenkonto";"BUSchluessel";"Belegdatum";"Belegfeld1";"Belegfeld2";"Skonto";"Buchungstext";"Postensperre";"Adressnummer";"PartnerBLZ"',
+      ...umsatzZeilen,
+    ].join('\r\n');
+  }
+
+  const ERLOESZEILE = (betrag: string, sh: 'S' | 'H', konto = '1800', gegen = '4400', text = 'Bank an Erloes') =>
+    `"${betrag}";"${sh}";"EUR";"";"";"";"${konto}";"${gegen}";"0";"3112";"RG1";"";"";"${text}";"0";"";""`;
+
   function buildMiniCsv(): string {
     const lines: string[] = [];
     lines.push(
@@ -226,12 +246,71 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
     expect(bank!.haben).toBe(1000);
     expect(Math.abs(bank!.saldo)).toBeLessThan(0.01);
 
-    // Saldo für "4400" Erlöse: +1000 (Soll-Bilanz)
+    // Saldo für "4400" Erlöse: ebenfalls 0.
+    //
+    // Korrektur der Testerwartung (2026-09-28): buildMiniCsv() bucht
+    // INNERHALB desselben Kontenpaares — Zeile 1 "1800 S an 4400",
+    // Zeile 2 "1800 H an 4400". Beide Zeilen betreffen also auch 4400,
+    // und zwar je einmal Soll und einmal Haben. Nach der Reparatur des
+    // Saldovortrags (Gegenkonto wird auf der GEGENSEITE gebucht) ergibt
+    // sich fuer 4400 korrekt soll=1000 / haben=1000 / saldo=0.
+    //
+    // Die alte Erwartung (haben=0, saldo=+1000) unterstellte, das
+    // Gegenkonto werde gar nicht erfasst — das war genau der Fehler, der
+    // jeden Saldovortrag unbrauchbar machte. Die eigentliche Erloes-Buchung
+    // (Bank an Erloes) deckt der Folgetest ab.
     const erloes = body.saldovortrag.find((s) => s.konto === '4400');
     expect(erloes).toBeDefined();
     expect(erloes!.soll).toBe(1000);
-    expect(erloes!.haben).toBe(0);
-    expect(erloes!.saldo).toBe(1000);
+    expect(erloes!.haben).toBe(1000);
+    expect(Math.abs(erloes!.saldo)).toBeLessThan(0.01);
+  });
+
+  // ===========================================================================
+  // 3b. Regressionsschutz: Gegenkonto landet auf der GEGENSEITE
+  // ===========================================================================
+  // Ohne diesen Test koennte der Saldovortrag erneut "beide Seiten gleich"
+  // buchen und trotzdem gruen aussehen (der Mini-CSV oben ist intern
+  // ausgeglichen und verdeckt den Fehler). Dieser Fall ist die echte
+  // Erloesbuchung "1800 Soll an 4400" — genau hier muss 4400 im Haben
+  // stehen, sonst waere der importierte Saldovortrag fachlich falsch.
+  it('Gegenkonto wird auf der Gegenseite gebucht (Erloesbuchung Bank an Erloes)', async () => {
+    const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
+    const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Demo GmbH');
+    if (!mandant) throw new Error('Demo GmbH nicht gefunden');
+    const headers = await authHeaders(loginRes.accessToken);
+
+    const lines = [
+      '"Formatname";"Version";"Berater";"Mandant";"WJ-Beginn";"WJ-Ende";"Sachkontenlaenge";"Datum-von";"Datum-bis";"Bezeichnung";"Diktat";"Buchungstyp";"Rechnungslegungszweck"',
+      '"EXTF_Buchungsstapel";"12";"12345";"67890";"01.01.2026";"31.12.2026";"4";"01.01.2026";"31.12.2026";"Gegenkonto-Test";"Buchhaltung";"1";"00"',
+      '"Umsatz";"SH";"WKZ";"Kurs";"Basis";"BWKZ";"Konto";"Gegenkonto";"BUSchluessel";"Belegdatum";"Belegfeld1";"Belegfeld2";"Skonto";"Buchungstext";"Postensperre";"Adressnummer";"PartnerBLZ"',
+      '"1000,00";"S";"EUR";"";"";"";"1800";"4400";"0";"3112";"GEGT";"";"";"Bank an Erloes";"0";"";""',
+    ];
+
+    const res = await fetch(`${BASE}/api/datev-import/preview`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        csvBase64: Buffer.from(lines.join('\r\n')).toString('base64'),
+        mandantId: mandant.id,
+        geschaeftsjahr: 2026,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewResponse;
+
+    const bank = body.saldovortrag.find((s) => s.konto === '1800');
+    const erloes = body.saldovortrag.find((s) => s.konto === '4400');
+    expect(bank).toBeDefined();
+    expect(erloes).toBeDefined();
+
+    // Konto: Soll
+    expect(bank!.soll).toBe(1000);
+    expect(bank!.haben).toBe(0);
+    // Gegenkonto: Haben (das ist der eigentliche Fix)
+    expect(erloes!.soll).toBe(0);
+    expect(erloes!.haben).toBe(1000);
+    expect(erloes!.saldo).toBe(-1000);
   });
 
   // ===========================================================================
@@ -294,7 +373,10 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
 
     // Verwende eindeutiges Geschäftsjahr (weit in der Zukunft, um Kollisionen zu vermeiden)
     const geschaeftsjahr = 2099;
-    const csvBase64 = Buffer.from(buildMiniCsv(), 'utf-8').toString('base64');
+    const csvBase64 = Buffer.from(
+      buildBusinessCsv([ERLOESZEILE('1000,00', 'S')], geschaeftsjahr),
+      'utf-8',
+    ).toString('base64');
 
     const res = await fetch(`${BASE}/api/datev-import/execute`, {
       method: 'POST',
@@ -333,10 +415,16 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
       '"Umsatz";"SH";"WKZ";"Kurs";"Basis";"BWKZ";"Konto";"Gegenkonto";"BUSchluessel";"Belegdatum";"Belegfeld1";"Belegfeld2";"Skonto";"Buchungstext";"Postensperre";"Adressnummer";"PartnerBLZ"',
     );
     csvLines.push(
-      '"500,00";"S";"EUR";"";"";"";"1800";"9999";"0";"3112";"OVR";"";"";"Sammelkonto";"0";"";""',
+      // 9999 ist das HAUPTkonto (nicht das Gegenkonto) — sonst waere es ein
+      // interner Ausgleich 1800 <-> 9999 mit Netto 0, der keine GuV-Position
+      // erzeugt und importedCount = 0 liefert. Genau daran scheiterte der Test.
+      '"500,00";"S";"EUR";"";"";"";"9999";"1800";"0";"3112";"OVR";"";"";"Sammelkonto";"0";"";""',
+      // Einzeilige Buchung: zwei gegenlaeufige Zeilen auf demselben Kontenpaar
+      // ergeben Saldo 0. Der Importer ueberspringt Nullsalden VOR dem Mapping
+      // ("kein Buchungseffekt") — Override bzw. Warnung "kein Mapping" wuerden
+      // nie erreicht. Mit einer Zeile ist der Saldo +500 bzw. +200.
     );
     csvLines.push(
-      '"-500,00";"H";"EUR";"";"";"";"1800";"9999";"0";"3112";"OVR";"";"";"Sammelkonto";"0";"";""',
     );
     const csvBase64 = Buffer.from(csvLines.join('\r\n'), 'utf-8').toString('base64');
 
@@ -376,10 +464,13 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
       '"Umsatz";"SH";"WKZ";"Kurs";"Basis";"BWKZ";"Konto";"Gegenkonto";"BUSchluessel";"Belegdatum";"Belegfeld1";"Belegfeld2";"Skonto";"Buchungstext";"Postensperre";"Adressnummer";"PartnerBLZ"',
     );
     csvLines.push(
-      '"200,00";"S";"EUR";"";"";"";"1800";"9999";"0";"3112";"SKIP";"";"";"Unbekannt";"0";"";""',
+      '"200,00";"S";"EUR";"";"";"";"9999";"1800";"0";"3112";"SKIP";"";"";"Unbekannt";"0";"";""',
+      // Einzeilige Buchung: zwei gegenlaeufige Zeilen auf demselben Kontenpaar
+      // ergeben Saldo 0. Der Importer ueberspringt Nullsalden VOR dem Mapping
+      // ("kein Buchungseffekt") — Override bzw. Warnung "kein Mapping" wuerden
+      // nie erreicht. Mit einer Zeile ist der Saldo +500 bzw. +200.
     );
     csvLines.push(
-      '"-200,00";"H";"EUR";"";"";"";"1800";"9999";"0";"3112";"SKIP";"";"";"Unbekannt";"0";"";""',
     );
     const csvBase64 = Buffer.from(csvLines.join('\r\n'), 'utf-8').toString('base64');
 
@@ -430,7 +521,10 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
     const headers = await authHeaders(loginRes.accessToken);
 
     const geschaeftsjahr = 2095;
-    const csvBase64 = Buffer.from(buildMiniCsv(), 'utf-8').toString('base64');
+    const csvBase64 = Buffer.from(
+      buildBusinessCsv([ERLOESZEILE('750,00', 'S')], geschaeftsjahr),
+      'utf-8',
+    ).toString('base64');
 
     // Erster Import — erzeugt GuV
     const firstRes = await fetch(`${BASE}/api/datev-import/execute`, {

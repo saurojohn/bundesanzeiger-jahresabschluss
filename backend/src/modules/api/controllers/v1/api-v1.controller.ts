@@ -18,6 +18,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Public } from '../../../auth/decorators/public.decorator';
 import { ApiKeyGuard } from '../../guards/api-key.guard';
 import { RequireScope } from '../../decorators/require-scope.decorator';
 import { CurrentApiKey } from '../../decorators/current-api-key.decorator';
@@ -51,7 +52,17 @@ import {
  */
 @ApiTags('v1-mandanten')
 @ApiBearerAuth()
-@Controller({ path: 'api/v1', version: '1' })
+// Bugfix 2026-09-28: `path: 'api/v1'` erzeugte unter dem globalen Prefix
+// `/api` die Route `/api/api/v1/...` (doppeltes `api`). Jeder Aufruf der
+// dokumentierten Public-API unter `/api/v1/...` lief deshalb in einen 404.
+// Der globale Prefix liefert das `api` bereits — hier gehoert nur `v1` rein.
+@Controller({ path: 'v1', version: '1' })
+// Der globale JwtAuthGuard (APP_GUARD) laeuft VOR den methoden-/klassen-
+// Guards und beantwortete jede Anfrage mit 401 "Nicht authentifiziert" —
+// der API-Key kam nie bei ApiKeyGuard an. Mit @Public() ueberspringt der
+// JwtGuard, und ApiKeyGuard authentifiziert den Bearer "ak_<keyId>.<secret>".
+// Betrifft die gesamte Public-API (M4 Sprint 1), die sonst unbenutzbar war.
+@Public()
 @UseGuards(ApiKeyGuard)
 export class ApiV1Controller {
   constructor(private readonly readService: PublicApiReadService) {}

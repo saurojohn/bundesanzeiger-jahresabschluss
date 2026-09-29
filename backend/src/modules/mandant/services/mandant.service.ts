@@ -112,15 +112,18 @@ export class MandantService {
           : {}
         : { id: { in: user.mandanten.map((m) => m.id) } };
 
-    // SYSTEM_ADMIN mit kleinem Pilot-Scope (< pageSize) bekommt die volle Liste.
-    if (
-      user.globalRole === 'SYSTEM_ADMIN' &&
-      !pagination?.cursor &&
-      pagination?.pageSize === undefined
-    ) {
+    // Backwards-Compat (M3-Regression-Fix): Ohne explizite Pagination liefern
+    // wir ein flaches Array — so wie vor dem Cursor-Pagination-Rollout. Der
+    // Contract steht auch so im Controller-JSDoc ("Array, Backwards-Compat").
+    //
+    // Vorher galt diese Ausnahme nur fuer SYSTEM_ADMIN. Dadurch bekamen alle
+    // anderen Rollen (GF, Steuerberater, Kanzlei-Admin) auch OHNE pageSize
+    // die Huelle { items, total, ... } zurueck und alle Clients, die ein
+    // flaches Array erwarten, brachen. Jetzt gilt der Vertrag rollenunabhaengig.
+    if (!pagination?.cursor && pagination?.pageSize === undefined) {
       return this.prisma.mandant.findMany({
         where,
-        orderBy: { firmenname: 'asc' },
+        orderBy: [{ firmenname: 'asc' }, { id: 'asc' }],
       });
     }
 

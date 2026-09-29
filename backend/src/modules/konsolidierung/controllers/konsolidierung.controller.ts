@@ -92,6 +92,9 @@ export class KonsolidierungController {
    * Berechnet Eliminations-Buchungen und persistiert sie.
    * Nur WIRTSCHAFTSPRUEFER + KANZLEI_ADMIN.
    */
+  // Berechnung erzeugt kein neues Resource — Nest wuerde sonst 201
+  // zurueckgeben. Der API-Vertrag (und die e2e-Spec) erwarten 200.
+  @HttpCode(HttpStatus.OK)
   @Post('einheiten/:id/calculate')
   @Roles('WIRTSCHAFTSPRUEFER', 'KANZLEI_ADMIN')
   async calculate(

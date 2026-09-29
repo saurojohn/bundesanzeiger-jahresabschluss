@@ -10,6 +10,7 @@ import {
   IsUrl,
   Length,
 } from 'class-validator';
+import { IsPublicHttpUrl } from '../validators/webhook-url.validator';
 import { WEBHOOK_EVENTS, type WebhookEvent } from '../constants/webhook-events.constants';
 
 /**
@@ -28,6 +29,11 @@ export class CreateWebhookSubscriptionDto {
     { protocols: ['http', 'https'], require_protocol: true },
     { message: 'url muss eine gültige HTTP/HTTPS-URL sein' },
   )
+  // Zusätzlich zur Syntaxpruefung: das Ziel muss ein oeffentliches Ziel sein.
+  // Ohne diesen Schritt akzeptierte `@IsUrl` Cloud-Metadaten (169.254.169.254)
+  // und RFC1918-Adressen — die Zustellung erreicht sie und der Antwortkoerper
+  // ist ueber /deliveries auslesbar (SSRF mit Reading).
+  @IsPublicHttpUrl()
   url!: string;
 
   @ApiProperty({

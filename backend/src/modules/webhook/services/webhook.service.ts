@@ -8,13 +8,13 @@ import {
 import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import axios, { AxiosError } from 'axios';
+import { assertResolvesToPublicAddress } from '../../../common/security/ssrf-guard';
 import { AuditService } from '../../audit/services/audit.service';
 import { ApiKeyService } from '../../api/services/api-key.service';
 import {
   WEBHOOK_DELIVERY_TIMEOUT_MS,
   WEBHOOK_MAX_ATTEMPTS,
   WEBHOOK_RETRY_DELAYS_MS,
-  WEBHOOK_RESPONSE_BODY_MAX_LENGTH,
   isWebhookEvent,
   type WebhookEvent,
 } from '../constants/webhook-events.constants';
@@ -314,6 +314,12 @@ export class WebhookService {
     let success = false;
 
     try {
+      // Schicht 2 des SSRF-Schutzes: unmittelbar VOR dem Request aufloesen und
+      // pruefen, dass KEIN A-Record auf einen internen Bereich zeigt. Die
+      // DTO-Pruefung beim Speichern greift nicht bei DNS-Rebinding — ein Host
+      // kann zwischen Registrierung und Zustellung auf 127.0.0.1 wechseln.
+      await assertResolvesToPublicAddress(sub.url);
+
       const response = await axios.post(sub.url, body, {
         timeout: WEBHOOK_DELIVERY_TIMEOUT_MS,
         headers: {
@@ -328,10 +334,16 @@ export class WebhookService {
       });
 
       responseCode = response.status;
-      responseBody = String(response.data ?? '').slice(
-        0,
-        WEBHOOK_RESPONSE_BODY_MAX_LENGTH,
-      );
+
+      // Bugfix 2026-09-28 (Audit): Der Antwortkoerper des Ziels wurde
+      // gespeichert und ueber `GET /api/webhook-subscriptions/:id/deliveries`
+      // ausgegeben. Zusammen mit der fehlenden Adresspruefung ergab das ein
+      // SSRF-Primitive MIT Reading: interne Dienste (Metadaten-Endpoint,
+      // Datenbank, RFC1918) lieferten Statuscode + Koerper an den Aufrufer
+      // zurueck. Der Koerper wird nicht mehr persistiert — Statuscode und
+      // Fehlerklasse genuegen fuer die Zustell-Diagnose; was das Ziel
+      // zurueckgibt, gehoert in das Log des Empfaengers.
+      responseBody = null;
 
       if (response.status >= 200 && response.status < 300) {
         success = true;

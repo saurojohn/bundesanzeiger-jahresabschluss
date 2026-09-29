@@ -62,45 +62,53 @@ export function CustomDomainWizard() {
     async function load() {
       try {
         const token = getAccessToken();
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        // Typannotation noetig: `token ? { Authorization: string } : {}`
+        // inferiert sonst `{ Authorization?: undefined }`, was nicht zu
+        // `Record<string, string>` passt (FetchOptions.headers).
+        const headers: Record<string, string> = token
+          ? { Authorization: `Bearer ${token}` }
+          : {};
+
+        // Bugfix 2026-09-29: `apiFetch` liefert den bereits geparsten JSON-Body,
+        // KEIN `Response`. Das bisherige `res.ok` / `res.json()`-Handling
+        // behandelte ein JSON-Objekt wie eine Response — `ok` ist dort immer
+        // undefined und `json()` existiert nicht. Der Pfad konnte nie laufen.
+        // Ausserdem landeten die Aufrufe unter /api/api/... (doppeltes Praefix).
 
         // kanzleiId via /me
-        const meRes = await apiFetch('/api/auth/me', { headers });
-        if (!meRes.ok) {
-          setReady(true);
-          return;
-        }
-        const me = (await meRes.json()) as { mandanten: { kanzleiId: string }[] };
+        const me = await apiFetch<{ mandanten: { kanzleiId: string }[] }>('/auth/me', {
+          headers,
+        });
         const firstKanzlei = me.mandanten[0]?.kanzleiId;
         if (!firstKanzlei) {
-          setReady(true);
           return;
         }
         setKanzleiId(firstKanzlei);
 
         // Branding (für initial customDomain)
-        const brandRes = await apiFetch(`/api/branding/${firstKanzlei}`, { headers });
-        if (brandRes.ok) {
-          const brand = (await brandRes.json()) as {
-            customDomain: string | null;
-            customDomainVerified: boolean;
-          };
-          setInitialDomain(brand.customDomain);
-          setInitialVerified(brand.customDomainVerified);
-          if (brand.customDomain) {
-            setDomain(brand.customDomain);
-          }
-          if (brand.customDomainVerified) {
-            setStep('done');
-          }
+        const brand = await apiFetch<{
+          customDomain: string | null;
+          customDomainVerified: boolean;
+        }>(`/branding/${firstKanzlei}`, { headers });
+        setInitialDomain(brand.customDomain);
+        setInitialVerified(brand.customDomainVerified);
+        if (brand.customDomain) {
+          setDomain(brand.customDomain);
+        }
+        if (brand.customDomainVerified) {
+          setStep('done');
         }
 
-        // Subscription-Tier → Feature-Flag
-        const subRes = await apiFetch(`/api/subscription/${firstKanzlei}`, { headers });
-        if (subRes.ok) {
-          const sub = (await subRes.json()) as { features: readonly string[] };
+        // Subscription-Tier → Feature-Flag. `apiFetch` wirft bei Fehlern,
+        // deshalb eigener try/catch: ohne Subscription-Endpoint (Dev ohne
+        // Stripe) soll das Feature trotzdem freigeschaltet bleiben.
+        try {
+          const sub = await apiFetch<{ features: readonly string[] }>(
+            `/subscription/${firstKanzlei}`,
+            { headers },
+          );
           setFeatureEnabled(sub.features.includes('custom-domain'));
-        } else {
+        } catch {
           // Kein Subscription-Endpoint → wir erlauben (Dev ohne Stripe-Setup)
           setFeatureEnabled(true);
         }
@@ -124,7 +132,9 @@ export function CustomDomainWizard() {
     setLoading(true);
     try {
       const token = getAccessToken();
-      const res = await apiFetch(`/api/dns/${kanzleiId}/start-verification`, {
+      const data = await apiFetch<VerificationResponse>(
+        `/dns/${kanzleiId}/start-verification`,
+        {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -132,11 +142,6 @@ export function CustomDomainWizard() {
         },
         body: JSON.stringify({ customDomain: domain }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? `Fehler ${res.status}`);
-      }
-      const data = (await res.json()) as VerificationResponse;
       setVerification(data);
       setStep('verify');
     } catch (err) {
@@ -152,17 +157,12 @@ export function CustomDomainWizard() {
     setLoading(true);
     try {
       const token = getAccessToken();
-      const res = await apiFetch(`/api/dns/${kanzleiId}/verify`, {
+      const data = await apiFetch<VerifyCheckResponse>(`/dns/${kanzleiId}/verify`, {
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? `Fehler ${res.status}`);
-      }
-      const data = (await res.json()) as VerifyCheckResponse;
       setVerifyResult(data);
       if (data.verified) {
         setStep('done');

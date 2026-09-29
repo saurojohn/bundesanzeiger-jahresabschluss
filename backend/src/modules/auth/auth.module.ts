@@ -35,6 +35,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtStrategy,
     JwtRefreshStrategy,
   ],
-  exports: [AuthService, TotpService, EncryptionService],
+  // JwtModule wird exportiert, damit ApiModule (M4 Sprint 1, OAuth2
+  // client_credentials) JwtService injizieren kann. Ohne diesen Export
+  // schlug der DI-Container mit "UnknownDependenciesException: JwtService
+  // at index [2] in ApiModule" fehl.
+  exports: [AuthService, TotpService, EncryptionService, JwtModule],
 })
 export class AuthModule {}

@@ -54,6 +54,12 @@ export const WEBHOOK_MAX_ATTEMPTS = 3; // danach DEAD_LETTER
  * Maximale Response-Body-Länge für `WebhookDelivery.responseBody`.
  * Wir kürzen große Responses (z.B. HTML-Error-Pages) auf 500 Zeichen.
  */
+/**
+ * @deprecated Wird seit 2026-09-28 nicht mehr verwendet: Der Antwortkoerper des
+ * Webhook-Ziels wird nicht mehr gespeichert (SSRF-Reading, siehe
+ * ssrf-guard.ts). Die Konstante bleibt erhalten, damit bestehende Imports nicht
+ * brechen, und wird erst mit dem naechsten Major-Version entfernt.
+ */
 export const WEBHOOK_RESPONSE_BODY_MAX_LENGTH = 500;
 
 /**

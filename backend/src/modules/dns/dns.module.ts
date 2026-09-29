@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { CommonRepositoriesModule } from '../../common/repositories/common-repositories.module';
+import { AuditModule } from '../audit/audit.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { DnsProviderService } from './services/dns-provider.service';
 import { DomainVerificationService } from './services/domain-verification.service';
@@ -28,7 +29,7 @@ import { DnsController } from './controllers/dns.controller';
  * Kanzlei hat höchstens 1 customDomain, die über ihre ID zugeordnet wird.
  */
 @Module({
-  imports: [ConfigModule, CommonRepositoriesModule, PrismaModule],
+  imports: [ConfigModule, CommonRepositoriesModule, PrismaModule, AuditModule],
   controllers: [DnsController],
   providers: [DnsProviderService, DomainVerificationService, CertManagerService],
   exports: [DnsProviderService, DomainVerificationService, CertManagerService],

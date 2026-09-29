@@ -51,8 +51,18 @@ async function bootstrap(): Promise<void> {
   });
 
   // Globales Prefix
+  //
+  // Bugfix 2026-09-28: `exclude: ['health']` schliesst NUR exakt `/health` aus,
+  // NICHT `/health/ready`. Die Readiness-Probe wurde dadurch unter `/api/health/ready`
+  // einsortiert (404 unter dem dokumentierten Pfad). Da die Readiness-Probe das
+  // Kriterium fuer den NGINX-Blue-Green-Switch ist (RUNBOOK), wuerde der
+  // Load-Balancer nie umschalten.
+  //
+  // Nest 11 matcht `exclude` per Pfad-Pattern; `{*splat}` deckt beliebige
+  // Unterpfade ab. Beide Health-Pfade sind zudem ueber @Public() von der Auth
+  // ausgenommen (HealthController).
   app.setGlobalPrefix('api', {
-    exclude: ['health'],
+    exclude: ['health', 'health/{*splat}'],
   });
 
   // =========================================================================

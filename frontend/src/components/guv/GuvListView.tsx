@@ -77,6 +77,24 @@ export function GuvListView() {
     }
   }
 
+  /**
+   * Loescht eine GuV und laedt die Liste neu.
+   *
+   * Bugfix 2026-09-29: `onDelete` existierte in dieser Komponente nicht —
+   * der Button war toter Code (TypeScript-Fehler).
+   */
+  async function handleDelete(id: string): Promise<void> {
+    const token = getAccessToken();
+    if (!token) return;
+    if (!window.confirm(t('common.confirm'))) return;
+    try {
+      await apiFetch(`/guv/${id}`, { method: 'DELETE', accessToken: token });
+      await loadList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    }
+  }
+
   async function loadMore(cursor: string) {
     if (loadingMore) return;
     setLoadingMore(true);
@@ -195,14 +213,14 @@ export function GuvListView() {
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => onEdit(g)}
+                  onClick={() => setEditingId(g.id)}
                   className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
                 >
                   {t('common.edit')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDelete(g)}
+                  onClick={() => void handleDelete(g.id)}
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   {t('common.delete')}
@@ -287,6 +305,7 @@ export function GuvListView() {
             </tbody>
           </table>
         </div>
+        </div>
       )}
 
       {/* Pagination (M3+ Performance) */}
@@ -354,7 +373,7 @@ function GuvForm({
         );
         setSchema(schemaData);
         setPositionen(
-          schemaData.positionen.map((p, idx) => ({
+          (schemaData?.positionen ?? []).map((p, idx) => ({
             kontonummer: p.kontonummer,
             bezeichnung: p.bezeichnung,
             kategorie: p.kategorie,

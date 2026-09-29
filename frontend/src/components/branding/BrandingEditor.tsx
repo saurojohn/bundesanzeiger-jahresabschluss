@@ -258,10 +258,17 @@ export function BrandingEditor() {
   }
 
   // Live-Preview ableiten
-  const previewStyle = useMemo<React.CSSProperties>(
+  // React.CSSProperties kennt die CSS-Custom-Properties (`--x`) nicht.
+  // Statt @ts-expect-error (das bei jeder Typaenderung stumm zum Fehler wurde)
+  // wird der Typ lokal um die drei Variablen erweitert.
+  type BrandCssVars = React.CSSProperties & {
+    '--brand-primary': string;
+    '--brand-accent': string;
+    '--brand-primary-hover': string;
+  };
+
+  const previewStyle = useMemo<BrandCssVars>(
     () => ({
-      // CSS-Variablen für die Preview setzen
-      // @ts-expect-error -- CSS custom property
       '--brand-primary': primaryColor,
       '--brand-accent': accentColor,
       '--brand-primary-hover': shadeColor(primaryColor, -15),

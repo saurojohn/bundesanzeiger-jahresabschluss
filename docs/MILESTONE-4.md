@@ -1,6 +1,10 @@
 # Milestone 4 — Production-Tier
 
-> **Status**: ✅ M4 Production-Tier abgeschlossen. Tag: `m4-production-ready`.
+> **Status**: 🟡 Code implementiert, **Produktionsreife nicht nachgewiesen**.
+> Die ursprüngliche Fassung dieser Datei führte Sprint 3/4/5 gleichzeitig als
+> „abgeschlossen" und als „geplant" und nannte einen Release-Tag, den es nicht
+> gibt. Maßgeblich ist der Verifikationsstand in `README.md` sowie
+> `REPARATUR-REPORT.md`.
 > **Vision**: Production-Tier-System für Bundesanzeiger Jahresabschluss
 > mit Multi-VM-Cloud-Deployment, Public-API, Subscription-Billing und
 > vollständiger GoBD-Zertifizierungsreife.
@@ -23,12 +27,11 @@
 | **M4 Sprint 0** | ✅ Vorbereitung | Redis-Cache, Code-Signing, DNS-Wildcard-Cert-Setup |
 | **M4 Sprint 1** | ✅ Public-API | OAuth2 client_credentials, API-Keys, 10 Scopes, OpenAPI 3.1, Webhooks (HMAC + Retry + DLQ) |
 | **M4 Sprint 2** | ✅ Cloud-Migration | Prisma Read-Routing (`$extends`), Hetzner Multi-VM-Compose, NGINX Blue-Green + Cosign-Verify, /health-Probes, Smoke-Test |
-| **M4 Sprint 3** | ✅ Subscription + White-Label | Stripe-Subscription (3 Tiers + Mock-Fallback), Billing-Webhook, Feature-Flags, Custom-Domain-Wizard (DNS-01 + Let's Encrypt) |
-| **M4 Sprint 4** | ✅ Mobile-Responsiveness | Hamburger-Menu, Card-Layout für Listen auf Mobile, Tap-Target ≥44px, PWA (manifest + Service-Worker) |
-| **M4 Sprint 5** | ✅ GoBD-Audit + Tag | Audit-Trail-Hash-Chain (SHA-256), WORM-Retention-Audit-Script, Disaster-Recovery-Plan, GoBD-Audit-Report |
-| **M4 Sprint 3** | ⏳ geplant | Subscription + White-Label-Production |
-| **M4 Sprint 4** | ⏳ geplant | Mobile-Responsiveness |
-| **M4 Sprint 5** | ⏳ geplant | GoBD-Zertifizierungs-Audit + M4-Release-Tag |
+| **M4 Sprint 3** | 🟡 implementiert, nicht abgenommen | Stripe-Subscription (3 Tiers + Mock-Fallback), Billing-Webhook, Feature-Flags, Custom-Domain-Wizard (DNS-01 + Let's Encrypt). Stripe läuft im Mock-Fallback; kein Live-Billing getestet. |
+| **M4 Sprint 4** | 🟡 implementiert, nicht abgenommen | Hamburger-Menu, Card-Layout für Listen auf Mobile, Tap-Target ≥44px, PWA (manifest + Service-Worker). **Keine Frontend-E2E-Tests vorhanden** (siehe README → Verifikationsstand). |
+| **M4 Sprint 5** | 🟡 teilweise, nicht abgenommen | Audit-Trail-Hash-Chain (SHA-256), WORM-Retention-Audit-Script, Disaster-Recovery-Plan, GoBD-Audit-Report. Der enthaltene „Audit" ist eine **Selbstprüfung (Mavis + User) und damit kein IDW-PS-880-Nachweis**. |
+| **M4 Production-Release** | ⏳ offen | Subscription-Production, Mobile-Nachweis, externes IDW-PS-880-Audit, Release-Tag |
+| **M4 Sprint 3–5 Tag** | ⏳ nicht vorhanden | Es existiert kein `m4-production-ready`-Tag — das Verzeichnis ist kein Git-Repository (siehe README → Verifikationsstand). |
 
 ---
 

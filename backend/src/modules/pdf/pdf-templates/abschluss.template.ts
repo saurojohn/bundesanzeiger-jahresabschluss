@@ -288,7 +288,10 @@ export function createAbschlussPdfDoc(
     doc.moveDown(0.5);
   }
 
-  for (const abschnitt of parts.anhang.abschnitte) {
+  // `abschnitte` kann bei unvollstaendigen Entities fehlen — dann rendern wir
+  // den Anhang-Teil ohne Abschnitte, statt eine TypeError zu werfen. Ein
+  // fehlender Anhang-Abschnitt ist ein Daten-, kein Renderfehler.
+  for (const abschnitt of parts.anhang.abschnitte ?? []) {
     doc.fontSize(10).font('Helvetica-Bold').fillColor(PDF_LAYOUT.colors.accent);
     doc.text(abschnitt.titel);
     doc.font('Helvetica').fontSize(9).fillColor(PDF_LAYOUT.colors.primary);
@@ -312,6 +315,12 @@ export function createAbschlussPdfDoc(
 /**
  * Interne Helper für Header+Footer im Abschluss-PDF.
  */
+/**
+ * Dokumente, fuer die die pageAdded-Listener bereits registriert wurden.
+ * Verhindert das Wachstum der Listener-Zahl ueber die Seitenzahl hinweg.
+ */
+const renderedDocs = new WeakSet<PdfKitDoc>();
+
 function drawHeaderFooter(
   doc: PdfKitDoc,
   options: AbschlussRenderOptions,
@@ -323,12 +332,25 @@ function drawHeaderFooter(
     options.branding?.accentColor ?? PDF_LAYOUT.colors.primary;
   const logoBuffer = options.branding?.logoBuffer;
 
-  // Footer
-  doc.on('pageAdded', () => drawFooter());
+  // Footer + Header auf JEDE Seite.
+  //
+  // Bugfix 2026-09-28: `drawHeaderFooter` wird aus einem `pageAdded`-Listener
+  // heraus bei jeder addPage() erneut aufgerufen (siehe renderAbschlussPdf).
+  // Die beiden inneren `doc.on('pageAdded', ...)` wurden dadurch bei JEDER
+  // Seite erneut registriert, ohne dass alte entfernt wurden: bei 120
+  // Bilanzpositionen 311 Listener, dazu eine
+  // MaxListenersExceededWarning und spürbarer Performance-Overhead
+  // (7,8 s für ein 4-seitiges Dokument).
+  //
+  // Fix: pro PDFDocument nur EINMAL registrieren. Das WeakSet haelt die
+  // bereits verdrahteten Dokumente; prozedurale Renderings erzeugen ohnehin
+  // ein neues PDFDocument, es entsteht also kein Leck zwischen Dokumenten.
+  if (!renderedDocs.has(doc)) {
+    renderedDocs.add(doc);
+    doc.on('pageAdded', () => drawFooter());
+    doc.on('pageAdded', () => drawHeader());
+  }
   drawFooter();
-
-  // Header
-  doc.on('pageAdded', () => drawHeader());
   drawHeader();
 
   function drawHeader(): void {
@@ -371,7 +393,12 @@ function drawHeaderFooter(
   }
 
   function drawFooter(): void {
-    const y = doc.page.height - PDF_LAYOUT.margins.bottom + 20;
+    // Bugfix 2026-09-28: identischer Fehler wie in bilanz.template.ts —
+    // `+ 20` legte den Footer jenseits des beschreibbaren Bereichs, was
+    // PDFKit mit addPage() beantwortete; der 'pageAdded'-Listener rief
+    // drawFooter() erneut auf (endlose Seitenschleife). 48pt Reserve fuer
+    // die vier Footer-Zeilen à 12pt.
+    const y = doc.page.height - PDF_LAYOUT.margins.bottom - 48;
     doc
       .fontSize(8)
       .fillColor(PDF_LAYOUT.colors.rule)

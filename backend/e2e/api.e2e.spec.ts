@@ -13,8 +13,8 @@
  *   4. POST /api/v1/mandanten mit ungültigem API-Key → 401
  *   5. POST /api/v1/mandanten mit API-Key ohne scope 'mandant:read' → 403
  *   6. GET /api/v1/mandanten mit validem API-Key → 200 + Liste
- *   7. POST /oauth/token mit grant_type=client_credentials → 200 + JWT
- *   8. POST /oauth/token mit ungültigem client_secret → 400/401
+ *   7. POST /api/oauth/token mit grant_type=client_credentials → 200 + JWT
+ *   8. POST /api/oauth/token mit ungültigem client_secret → 400/401
  *   9. POST /api/webhook-subscriptions → 201 + plaintextSecret
  *  10. POST /api/webhook-subscriptions mit invalid URL → 400
  *  11. Webhook-Delivery mit HMAC-Verifikation
@@ -76,7 +76,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 1. POST /api/api-keys ohne Auth → 401
   // ===========================================================================
   it('POST /api/api-keys ohne Auth → 401', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const res = await fetch(`${BASE}/api/api-keys`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -93,7 +93,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 2. POST /api/api-keys mit STEUERBERATER-Rolle → 403
   // ===========================================================================
   it('POST /api/api-keys mit STEUERBERATER → 403', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const steuerberaterToken = await tryLoginAs('steuerberater');
     if (!steuerberaterToken) return;
     const res = await fetch(`${BASE}/api/api-keys`, {
@@ -115,7 +115,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 3. POST /api/api-keys mit KANZLEI_ADMIN → 201 + plaintextSecret
   // ===========================================================================
   it('POST /api/api-keys mit KANZLEI_ADMIN → 201 + plaintextSecret', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const res = await fetch(`${BASE}/api/api-keys`, {
       method: 'POST',
       headers: {
@@ -144,7 +144,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 4. POST /api/v1/mandanten mit ungültigem API-Key → 401
   // ===========================================================================
   it('POST /api/v1/* mit ungültigem Bearer → 401', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const res = await fetch(`${BASE}/api/v1/mandanten`, {
       method: 'GET',
       headers: {
@@ -158,7 +158,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 5. API-Key mit unzureichendem Scope → 403
   // ===========================================================================
   it('GET /api/v1/mandanten mit Key ohne mandant:read → 403', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     // Erstelle Key NUR mit bilanz:read
     const created = await createTestApiKey(fixture.adminToken, fixture.kanzleiId, [
       'bilanz:read',
@@ -178,7 +178,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 6. GET /api/v1/mandanten mit validem API-Key → 200 + Liste
   // ===========================================================================
   it('GET /api/v1/mandanten mit validem Key → 200 + Liste', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const created = await createTestApiKey(fixture.adminToken, fixture.kanzleiId, [
       'mandant:read',
     ]);
@@ -198,15 +198,15 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // ===========================================================================
   // 7. POST /oauth/token mit grant_type=client_credentials → 200 + JWT
   // ===========================================================================
-  it('POST /oauth/token mit client_credentials → 200 + JWT', async () => {
-    if (!fixture) return;
+  it('POST /api/oauth/token mit client_credentials → 200 + JWT', async () => {
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const created = await createTestApiKey(fixture.adminToken, fixture.kanzleiId, [
       'mandant:read',
       'bilanz:read',
     ]);
     if (!created) return;
 
-    const res = await fetch(`${BASE}/oauth/token`, {
+    const res = await fetch(`${BASE}/api/oauth/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -232,14 +232,14 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // ===========================================================================
   // 8. POST /oauth/token mit ungültigem client_secret → 400
   // ===========================================================================
-  it('POST /oauth/token mit falschem secret → 400', async () => {
-    if (!fixture) return;
+  it('POST /api/oauth/token mit falschem secret → 400', async () => {
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const created = await createTestApiKey(fixture.adminToken, fixture.kanzleiId, [
       'mandant:read',
     ]);
     if (!created) return;
 
-    const res = await fetch(`${BASE}/oauth/token`, {
+    const res = await fetch(`${BASE}/api/oauth/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -255,7 +255,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 9. POST /api/webhook-subscriptions → 201 + plaintextSecret
   // ===========================================================================
   it('POST /api/webhook-subscriptions → 201 + plaintextSecret', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const res = await fetch(`${BASE}/api/webhook-subscriptions`, {
       method: 'POST',
       headers: {
@@ -282,7 +282,7 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   // 10. POST /api/webhook-subscriptions mit invalid URL → 400
   // ===========================================================================
   it('POST /api/webhook-subscriptions mit invalid URL → 400', async () => {
-    if (!fixture) return;
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
     const res = await fetch(`${BASE}/api/webhook-subscriptions`, {
       method: 'POST',
       headers: {
@@ -397,7 +397,7 @@ async function tryGetAuthFixture(): Promise<AuthFixture | null> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         email: 'admin@kanzlei.de',
-        password: 'admin123',
+        password: 'Admin123!',
       }),
     });
     if (!loginRes.ok) return null;
@@ -414,11 +414,28 @@ async function tryGetAuthFixture(): Promise<AuthFixture | null> {
     };
     if (!me.mandanten || me.mandanten.length === 0) return null;
 
+    // Bugfix 2026-09-28: `kanzleiId` war `me.mandanten[0].id`, also die UUID
+    // eines MANDANTEN. Das ist eine andere Entity als die Kanzlei — der
+    // API-Key-/Webhook-Aufruf schlug deshalb mit 500 (FK-Verletzung auf eine
+    // nicht existierende Kanzlei) statt mit dem erwarteten 201/400.
+    // /api/auth/me liefert die kanzleiId gar nicht; sie steht am Mandanten.
+    // Wir lesen sie daher aus /api/mandant.
+    const mandantRes = await fetch(`${BASE}/api/mandant`, {
+      headers: { authorization: `Bearer ${login.accessToken}` },
+    });
+    if (!mandantRes.ok) return null;
+    const mandantJson = (await mandantRes.json()) as
+      | Array<{ id: string; kanzleiId: string }>
+      | { items: Array<{ id: string; kanzleiId: string }> };
+    const mandanten = Array.isArray(mandantJson) ? mandantJson : mandantJson.items;
+    if (!Array.isArray(mandanten) || mandanten.length === 0) return null;
+    if (!mandanten[0]!.kanzleiId) return null;
+
     return {
       adminToken: login.accessToken,
       adminUserId: me.id,
-      kanzleiId: me.mandanten[0]!.id,
-      mandantId: me.mandanten[0]!.id,
+      kanzleiId: mandanten[0]!.kanzleiId,
+      mandantId: mandanten[0]!.id,
     };
   } catch {
     return null;

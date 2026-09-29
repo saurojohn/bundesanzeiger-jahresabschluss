@@ -65,7 +65,7 @@ redis-data/
 # Cache
 .cache/
 .eslintcache
-.tsbuildinfo
+*.tsbuildinfo
 
 # MinIO / S3 data (Dev)
 minio-data/

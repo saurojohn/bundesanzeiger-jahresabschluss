@@ -164,6 +164,14 @@ export function isPrivateAddress(ip: string): boolean {
 export interface ParsedTarget {
   url: URL;
   hostname: string;
+  /**
+   * Die geprueften A-Records. WICHTIG fuer DNS-Rebinding: wer diese Liste
+   * nicht an den HTTP-Client weitergibt, prueft eine Aufloesung und
+   * verbindet dann gegen eine zweite — ein Angreifer mit eigener
+   * DNS-Autoritaet liefert erst eine oeffentliche IP (besteht die Pruefung),
+   * dann 127.0.0.1 ( trifft der Client zu ).
+   */
+  addresses: string[];
 }
 
 /**
@@ -184,12 +192,15 @@ export function parseAndAssertPublicUrl(raw: string): ParsedTarget {
 
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const family = isIP(hostname);
-  if (family !== 0 && isPrivateAddress(hostname)) {
-    throw new BadRequestException(
-      'url darf nicht auf eine interne oder reservierte Adresse zeigen',
-    );
+  if (family !== 0) {
+    if (isPrivateAddress(hostname)) {
+      throw new BadRequestException(
+        'url darf nicht auf eine interne oder reservierte Adresse zeigen',
+      );
+    }
+    return { url, hostname, addresses: [hostname] };
   }
-  return { url, hostname };
+  return { url, hostname, addresses: [] };
 }
 
 /**
@@ -205,7 +216,8 @@ export async function assertResolvesToPublicAddress(raw: string): Promise<Parsed
   const { url, hostname } = parseAndAssertPublicUrl(raw);
 
   if (isIP(hostname) !== 0) {
-    return { url, hostname }; // Literal-IP wurde bereits in Schicht 1 geprueft
+    // Literal-IP wurde bereits in Schicht 1 geprueft.
+    return { url, hostname, addresses: [hostname] };
   }
 
   let addresses: Array<{ address: string }>;
@@ -231,5 +243,5 @@ export async function assertResolvesToPublicAddress(raw: string): Promise<Parsed
       );
     }
   }
-  return { url, hostname };
+  return { url, hostname, addresses: addresses.map((a) => a.address) };
 }

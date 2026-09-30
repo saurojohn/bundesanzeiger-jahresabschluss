@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import axios, { AxiosError } from 'axios';
 import { assertResolvesToPublicAddress } from '../../../common/security/ssrf-guard';
+import { pinnedAgentFor } from '../../../common/security/dns-pinning';
 import { AuditService } from '../../audit/services/audit.service';
 import { ApiKeyService } from '../../api/services/api-key.service';
 import {
@@ -318,9 +319,17 @@ export class WebhookService {
       // pruefen, dass KEIN A-Record auf einen internen Bereich zeigt. Die
       // DTO-Pruefung beim Speichern greift nicht bei DNS-Rebinding — ein Host
       // kann zwischen Registrierung und Zustellung auf 127.0.0.1 wechseln.
-      await assertResolvesToPublicAddress(sub.url);
+      const target = await assertResolvesToPublicAddress(sub.url);
+
+      // Audit-Befund M-4 (DNS-Rebinding): der Client loest sonst ein ZWEITES
+      // Mal auf und koennte an 127.0.0.1 landen, waehrend die Pruefung eine
+      // oeffentliche Adresse sah. Der Agent pinnt auf die geprueften IPs;
+      // Hostname/SNI bleiben fuer TLS unveraendert.
+      const pinnedAgent = pinnedAgentFor(target.url, target.addresses);
 
       const response = await axios.post(sub.url, body, {
+        httpAgent: target.url.protocol === 'https:' ? undefined : pinnedAgent,
+        httpsAgent: target.url.protocol === 'https:' ? pinnedAgent : undefined,
         timeout: WEBHOOK_DELIVERY_TIMEOUT_MS,
         headers: {
           'Content-Type': 'application/json',

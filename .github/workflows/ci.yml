@@ -123,6 +123,14 @@ jobs:
         working-directory: backend
         run: npx ts-node scripts-gen-test-p12.ts
 
+      # CRL-Testartefakte (echte OpenSSL-CA). crl-checker.spec.ts braucht sie,
+      # und faellt bewusst HARD, wenn sie fehlen — dieser CI-Lauf hat genau
+      # daran gescheitert (2026-09-30), weil der Schritt hier fehlte.
+      # node-forge kann keine CRLs erzeugen; darum OpenSSL.
+      - name: CRL-Testartefakte erzeugen
+        working-directory: backend
+        run: bash scripts-gen-test-crl.sh
+
       - name: "Typecheck (Gesamtbaum: src + e2e + prisma + Tools)"
         working-directory: backend
         run: npm run typecheck

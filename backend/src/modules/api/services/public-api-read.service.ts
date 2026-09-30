@@ -8,7 +8,7 @@ import { BilanzRepository } from '../../../common/repositories/bilanz.repository
 import { GuVRepository } from '../../../common/repositories/guv.repository';
 import { AnhangRepository } from '../../../common/repositories/anhang.repository';
 import { KonsolidierungRepository } from '../../../common/repositories/konsolidierung.repository';
-import type { PaginatedResult } from '../../../common/dto/pagination.dto';
+import { CursorCodec, type PaginatedResult } from '../../../common/dto/pagination.dto';
 import type { APIKeyContext } from './api-key.service';
 import type {
   PublicMandantDto,
@@ -43,6 +43,32 @@ export class PublicApiReadService {
   // ===========================================================================
   // Mandanten
   // ===========================================================================
+
+  /**
+   * Baut aus einer bereits seitenweise geholten Zeilenliste (pageSize + 1
+   * Eintraege) eine echte Cursor-Seite.
+   *
+   * Grund fuer den Umbau (Review-Befund M-5): die Public-API lud vorher die
+   * KOMPLETTE Liste in den Speicher, schnitt in JS, und gab
+   * `nextCursor: null` zurueck. Bei mehr als `pageSize` Treffern meldete sie
+   * `hasMore: true` — ein Client, der `nextCursor` folgte (wie die Doku es
+   * beschreibt), bekam aber nie eine zweite Seite. Zusaetzlich wuchs der
+   * Speicherbedarf mit der Mandantengroesse.
+   */
+  private toCursorPage<T extends { id: string; updatedAt: Date }>(
+    rows: Array<T & { wormObjectKey?: string | null }>,
+    pageSize: number,
+  ): { items: T[]; nextCursor: string | null; hasMore: boolean } {
+    const hasMore = rows.length > pageSize;
+    const page = rows.slice(0, pageSize);
+    const last = page[page.length - 1];
+    return {
+      items: page,
+      hasMore,
+      nextCursor:
+        hasMore && last ? CursorCodec.encode(last.id, last.updatedAt.toISOString()) : null,
+    };
+  }
 
   async listMandanten(
     ctx: APIKeyContext,
@@ -98,20 +124,26 @@ export class PublicApiReadService {
 
     const pageSize = Math.min(pagination.pageSize ?? 20, 100);
 
-    // Optional: Cursor-Dekodierung (über createdAt)
-  
-    const items = await this.bilanzRepository.findByMandantAndJahr(
+    // Echtes Cursor-Paging im Repository (take: pageSize + 1) statt
+    // Gesamtliste in den Speicher.
+    const rows = await this.bilanzRepository.findByMandantPaginated({
       mandantId,
-      pagination.geschaeftsjahr,
-    );
-
-    const sliced = items.slice(0, pageSize + 1);
-    const dtos = sliced.slice(0, pageSize).map(this.toPublicBilanzDto);
+      cursor: pagination.cursor,
+      pageSize: pageSize + 1,
+      jahr: pagination.geschaeftsjahr,
+    });
+    const page = this.toCursorPage(rows, pageSize);
+    const [total] = await Promise.all([
+      this.bilanzRepository.countByMandant({
+        mandantId,
+        jahr: pagination.geschaeftsjahr,
+      }),
+    ]);
     return {
-      items: dtos,
-      nextCursor: null,
-      total: items.length,
-      hasMore: sliced.length > pageSize,
+      items: page.items.map(this.toPublicBilanzDto),
+      nextCursor: page.nextCursor,
+      total,
+      hasMore: page.hasMore,
     };
   }
 
@@ -127,17 +159,22 @@ export class PublicApiReadService {
     await this.assertMandantInKanzlei(ctx, mandantId);
 
     const pageSize = Math.min(pagination.pageSize ?? 20, 100);
-    const items = await this.guvRepository.findByMandantAndJahr(
+    const rows = await this.guvRepository.findByMandantPaginated({
       mandantId,
-      pagination.geschaeftsjahr,
-    );
-
-    const sliced = items.slice(0, pageSize + 1);
+      cursor: pagination.cursor,
+      pageSize: pageSize + 1,
+      jahr: pagination.geschaeftsjahr,
+    });
+    const page = this.toCursorPage(rows, pageSize);
+    const total = await this.guvRepository.countByMandant({
+      mandantId,
+      jahr: pagination.geschaeftsjahr,
+    });
     return {
-      items: sliced.slice(0, pageSize).map(this.toPublicGuVDto),
-      nextCursor: null,
-      total: items.length,
-      hasMore: sliced.length > pageSize,
+      items: page.items.map(this.toPublicGuVDto),
+      nextCursor: page.nextCursor,
+      total,
+      hasMore: page.hasMore,
     };
   }
 
@@ -153,16 +190,22 @@ export class PublicApiReadService {
     await this.assertMandantInKanzlei(ctx, mandantId);
 
     const pageSize = Math.min(pagination.pageSize ?? 20, 100);
-    const items = await this.anhangRepository.findByMandantAndJahr(
+    const rows = await this.anhangRepository.findByMandantPaginated({
       mandantId,
-      pagination.geschaeftsjahr,
-    );
-
+      cursor: pagination.cursor,
+      pageSize: pageSize + 1,
+      jahr: pagination.geschaeftsjahr,
+    });
+    const page = this.toCursorPage(rows, pageSize);
+    const total = await this.anhangRepository.countByMandant({
+      mandantId,
+      jahr: pagination.geschaeftsjahr,
+    });
     return {
-      items: items.slice(0, pageSize).map(this.toPublicAnhangDto),
-      nextCursor: null,
-      total: items.length,
-      hasMore: items.length > pageSize,
+      items: page.items.map(this.toPublicAnhangDto),
+      nextCursor: page.nextCursor,
+      total,
+      hasMore: page.hasMore,
     };
   }
 
@@ -188,10 +231,20 @@ export class PublicApiReadService {
   async listBanzSubmissions(
     ctx: APIKeyContext,
     mandantId: string,
-    pagination: { cursor?: string; pageSize?: number },
+    pagination: { pageSize?: number },
   ): Promise<PaginatedResult<PublicBanzSubmissionDto>> {
     await this.assertMandantInKanzlei(ctx, mandantId);
 
+    // Ehrlich statt vorgetaeuscht: fuer BAnz-Submissions gibt es aktuell KEIN
+    // Cursor-Paging im Repository. `cursor` wird deshalb nicht angeboten, und
+    // `hasMore` beschreibt nur den Slice dieser einen Antwort — ein Client
+    // kann die naechste Seite nicht abrufen.
+    //
+    // (Praktisch entschaerft: `prisma.banzSubmission` wird im Repository an
+    //  KEINER Stelle geschrieben — die Tabelle ist bislang leer. Der Weg zu
+    //  echter Paginierung ist, zuerst die Submission-Erzeugung zu
+    //  implementieren, dann das Repository um findByMandantPaginated zu
+    //  erweitern. Beides gehoert nicht in einen Review-Fix hinein.)
     const pageSize = Math.min(pagination.pageSize ?? 20, 100);
     const items = await this.konsolidierungRepository.findBanzSubmissionsByMandant(
       mandantId,
@@ -201,7 +254,7 @@ export class PublicApiReadService {
       items: items.slice(0, pageSize).map(this.toPublicBanzSubmissionDto),
       nextCursor: null,
       total: items.length,
-      hasMore: items.length > pageSize,
+      hasMore: false,
     };
   }
 

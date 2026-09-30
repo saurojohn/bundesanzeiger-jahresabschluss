@@ -299,6 +299,80 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   });
 
   // ===========================================================================
+  // 10a. Cursor-Paging liefert eine BENUTZBARE zweite Seite (M-5)
+  // ===========================================================================
+  // Regressionsschutz. Vorher lud die Public-API die komplette Liste, schnitt
+  // in JS, und gab `nextCursor: null` zurueck — bei `hasMore: true` bekam ein
+  // Client, der der Doku folgte, NIE eine zweite Seite.
+  //
+  // Der Test geht die zweite Seite tatsaechlich ab und prueft, dass sie
+  // existiert und disjunkt zur ersten ist.
+  it('GET /api/v1/mandanten/:id/bilanzen → zweite Seite via nextCursor', async () => {
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
+    const created = await createTestApiKey(fixture.adminToken, fixture.kanzleiId, [
+      'bilanz:read',
+    ]);
+    if (!created) throw new Error('API-Key konnte nicht erstellt werden');
+    const auth = { 'content-type': 'application/json', authorization: `Bearer ${created.apiKey.keyId}.${created.plaintextSecret}` };
+
+    // Genug Daten fuer mindestens zwei Seiten erzeugen (eigenes GJ, damit
+    // der Test unabhaengig vom Seed-Datenbestand laeuft).
+    const jahr = 2077;
+    const seeded = await fetch(
+      `${BASE}/api/bilanz?mandantId=${fixture.mandantId}&geschaeftsjahr=${jahr}&pageSize=100`,
+      { headers: { authorization: `Bearer ${fixture.adminToken}` } },
+    );
+    const vorhanden = ((await seeded.json()) as { items?: unknown[] }).items?.length ?? 0;
+    for (let gj = 2070; gj < 2070 + Math.max(0, 5 - vorhanden); gj += 1) {
+      const r = await fetch(`${BASE}/api/bilanz?mandantId=${fixture.mandantId}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${fixture.adminToken}` },
+        body: JSON.stringify({
+          mandantId: fixture.mandantId,
+          geschaeftsjahr: gj,
+          positionen: [
+            { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+            { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+          ],
+        }),
+      });
+      if (!r.ok) throw new Error(`Bilanz GJ ${gj} konnte nicht angelegt werden: ${r.status}`);
+    }
+
+    // Seite 1 mit kleiner pageSize holen
+    const pageSize = 2;
+    const firstRes = await fetch(
+      `${BASE}/api/v1/mandanten/${fixture.mandantId}/bilanzen?pageSize=${pageSize}`,
+      { headers: auth },
+    );
+    expect(firstRes.status).toBe(200);
+    const first = (await firstRes.json()) as {
+      items: Array<{ id: string }>;
+      nextCursor: string | null;
+      hasMore: boolean;
+      total: number;
+    };
+
+    expect(first.items.length).toBe(pageSize);
+    // Genau hier lag der Fehler: hasMore true, aber nextCursor null.
+    expect(first.nextCursor, 'nextCursor muss gesetzt sein, sonst ist Seite 2 unerreichbar').toBeTruthy();
+
+    // Seite 2 ueber den Cursor holen — der eigentliche Nachweis
+    const secondRes = await fetch(
+      `${BASE}/api/v1/mandanten/${fixture.mandantId}/bilanzen?pageSize=${pageSize}&cursor=${encodeURIComponent(first.nextCursor!)}`,
+      { headers: auth },
+    );
+    expect(secondRes.status).toBe(200);
+    const second = (await secondRes.json()) as { items: Array<{ id: string }> };
+
+    expect(second.items.length).toBeGreaterThan(0);
+    const firstIds = new Set(first.items.map((i) => i.id));
+    for (const item of second.items) {
+      expect(firstIds.has(item.id), `ID ${item.id} steht auf beiden Seiten`).toBe(false);
+    }
+  });
+
+  // ===========================================================================
   // 10b. POST /api/v1/banz-submissions -> 501, NICHT 202 mit erfundener ID
   // ===========================================================================
   // Regressionstest gegen einen Befund aus dem Code-Review: der Endpunkt

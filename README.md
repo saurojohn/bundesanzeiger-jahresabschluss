@@ -6,7 +6,7 @@ Die digitale Plattform für mittelständische GmbHs, Steuerberater und Wirtschaf
 um den **Jahresabschluss (Bilanz + GuV + Anhang + Lagebericht)** gemäß **HGB / PublG** rechtssicher
 im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne DATEV-Briefing.
 
-## Verifikationsstand (Stand 2026-09-29)
+## Verifikationsstand (Stand 2026-09-30)
 
 > **Vor der Reparatur war dieser Abschnitt nicht vorhanden.** Die vorherige Fassung
 > trug durchgehend grüne Häkchen (`✅ Production-Ready`, „Pilot-Ready", Git-Tags wie
@@ -20,7 +20,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 |---|---|---|
 | Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
 | Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
-| Backend-E2E-Suite | ✅ | **138 / 138 grün**, über zwei aufeinanderfolgende Läufe identisch (reproduzierbar) |
+| Backend-E2E-Suite | ✅ | **232 / 232 grün** (138 e2e + 94 Unit), über zwei Läufe identisch, über zwei aufeinanderfolgende Läufe identisch (reproduzierbar) |
 | **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
 | **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
 | Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |

@@ -882,3 +882,104 @@ Aussteller / SAN-Identität / Umlaut-Normalisierung).
   würde als gültig durchgehen.
 * **`timestampValid` bleibt `false`** — der Mock-TSA liefert keinen prüfbaren
   Zeitstempel.
+
+---
+
+# Nachtrag — Runde 11 (AuditInterceptor aktiv, WP-Mandantenprüfung, legalValidity)
+
+Drei Korrekturen aus Runde 11. Die erste davon ist eine **Selbstkorrektur zu Runde 2**.
+
+## 1. Der AuditInterceptor war nie registriert (Korrektur zu Runde 2)
+
+Das Commit aus Runde 2 meldete:
+
+> „AuditInterceptor führt den Audit-Pfad jetzt blockierend aus
+> (`mergeMap` + `recordStrict`) statt `tap()` + `void`."
+
+**Das war falsch.** `grep -rn "AuditInterceptor" src/` findet ihn ausserhalb seiner
+eigenen Datei ausschliesslich in **Kommentaren** — er war nie als Provider
+registriert und lief folglich nie. Die Umstellung auf `recordStrict()` wirkte
+ebenso wenig wie der Rest des Interceptors; der Audit-Pfad lief weiterhin
+ausschliesslich über die 48 `void this.auditService.record(...)`-Aufrufstellen.
+
+Damit war `AGENTS.md §3.5` („Jede Mutation erzeugt einen AuditLog-Eintrag") von
+Anfang an eine Behauptung ohne Deckung.
+
+Jetzt als Provider in `AuditModule` registriert. Nachweis auf frischer DB:
+
+```
+vorher   audit_log: 0 Einträge
+POST /api/auth/login  → LOGIN|User
+POST /api/bilanz      → CREATE|Bilanz
+nachher  audit_log: 2 Einträge, beide OHNE manuellen record()-Aufruf
+```
+
+Die Aussage gilt damit erstmals — und sie hängt nicht mehr daran, dass ein
+Entwickler an 48 Stellen an den Audit gedacht hat.
+
+**232 Tests grün, keine Regression.** Der Interceptor berührt jeden Schreibvorgang;
+ich hatte mit einem brechen erwartet.
+
+### Was weiterhin offen ist
+
+Der Interceptor auditiert **nach** dem Committ des Geschäftsvorgangs. Ein
+fehlgeschlagener Audit-Write macht den Request zur 500, die Geschäftsdaten sind
+aber geschrieben. Die echte Atomarität (Audit + Fachdaten in EINER Transaktion)
+ist damit **nicht** hergestellt — siehe `AUDIT-ATOMICITY-REVIEW.md`.
+
+## 2. Mandantenprüfung lief auf 8 von 10 WP-Routen nie (M-1)
+
+`MandantGuard` war per `@UseGuards` auf der Klasse registriert, steigt aber mit
+`if (!required) return true` aus. Nur Routen mit `@RequireMandant()` wurden
+überhaupt geprüft. Kein Datenleck — die Services prüfen selbst über die
+referenzierte Entität — aber die oberste Schicht fehlte.
+
+Alle acht mandantenbeziehenden Routen haben jetzt `@RequireMandant()`.
+**Das ist eine echte Verhaltensänderung:** die Endpunkte verlangen jetzt
+`?mandantId=`, wie die Bilanz-/GuV-Routen schon immer.
+
+### Zwei Testschwächen, die dabei sichtbar wurden
+
+1. Die Spec nahm `user.mandanten[0]`. Die API sortiert alphabetisch, `[0]` ist
+   **Beispiel GmbH** — und der Seed legt ausschliesslich in **Demo GmbH** eine
+   Bilanz an. Der Test hing an der Sortierreihenfolge. Neu: `mandantOf(user)` per Name.
+2. Anlage- und Abfrage-Pfade teilten sich `wpNotizMandantId`, das erst in Test 6
+   zugewiesen wird — die Tests davor liefen mit leerem String in einen 403.
+
+Der zweite Punkt fiel erst auf, **weil** `@RequireMandant()` den Guard scharf
+schaltete. Vorher hätte ihn niemand bemerkt.
+
+**Nicht verifiziert:** ob die Spec jetzt auch im vollen Lauf grün ist, stand zu
+diesem Zeitpunkt nicht fest — der nächste Gesamtlauf bestätigte es.
+
+## 3. `legalValidity` — „valid" war mehrdeutig (D.1 aus Runde 2)
+
+`timestampValid` stand dauerhaft auf `false` und ging **nicht** in die
+`valid`-Berechnung ein. Im Pilot läuft ein Mock-TSA, ein Client sah also
+`valid: true` und musste selbst erraten, ob damit ein BAnz-taugliches
+Dokument gemeint ist.
+
+Neu:
+
+| Wert | Bedeutung |
+|---|---|
+| `VOLLSTAENDIG` | Signatur + Zertifikat + Zeitstempel geprüft |
+| `OHNE_ZEITSTEMPEL` | Signatur echt, Zeitstempel nicht (Mock/nicht erreichbar) |
+| `UNGUELTIG` | Signatur selbst ungültig |
+
+`valid` bleibt unverändert (Rückwärtskompatibilität); `legalValidity` trägt die
+feinere Aussage. Ist `valid` true, aber `timestampValid` false, erscheint eine
+Warnung, dass das Dokument **nicht** eingereicht werden darf.
+
+### Wieder ein Testname ohne Deckung
+
+`validate mit signed PDF → valid: true` behauptete `valid`, prüfte es aber
+**nie** — nur `signatureCount` und `documentIntegrity`. Tatsächlich ist `valid`
+die ganze Zeit `false`: das Test-P12 ist selbstsigniert (Issuer damit nicht
+vertrauenswürdig, fail-closed seit der CRL-Einführung), der Mock-TSA liefert
+keinen prüfbaren Zeitstempel.
+
+Der Test heißt jetzt **„Signatur intakt, aber nicht rechtswirksam"** und behauptet
+das, was gilt. Genau diese Unterscheidung macht `legalValidity` erst nützlich —
+mit einem nackten `valid: boolean` lässt sich „strukturell intakt, rechtlich
+ungültig" nicht ausdrücken.

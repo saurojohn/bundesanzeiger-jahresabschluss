@@ -69,26 +69,31 @@ describe('pinnedAgentFor', () => {
     );
   });
 
-  it('verbindet auf die ÜBERGEBENE Adresse, nicht auf eine neu aufgelöste', async () => {
-    // "localhost" zeigt in dieser Sandbox auf 127.0.0.1. Wir pinnen auf eine
-    // nicht-loopback-Adresse und erwarten, dass der WIRKLICHE Verbindungs-
-    // auftritt (hier also ein Fehlschlag) — hätte der Agent selbst
-    // aufgelöst, wäre der lokale Server (also loopback) erreicht worden.
-    const result = await getViaAgent(localUrl, ['203.0.113.9']).catch((e) => ({
-      status: -1,
-      body: String(e),
-    }));
-
-    // Der gepinnte Host ist nicht erreichbar → Fehler, KEIN lokaler Treffer.
-    expect(result.status, 'darf den lokalen Server nicht erreichen').not.toBe(200);
-    expect(result.body).not.toContain('"hit":true');
-  });
-
-  it('erreicht das Ziel, wenn die gepinnte Adresse stimmt', async () => {
-    const res = await getViaAgent(localUrl, ['127.0.0.1']);
+  // Zwei Tests mit DEMSELBEN Aufbau, aber entgegengesetzter Erwartung.
+  //
+  // Bewusst KEINE unerreichbaren IPs (203.0.113.x): Auf manchen Netzen
+  // antworten die mit RST (schnell), auf anderen werden die Pakete still
+  // verworfen — der Test lief lokal in 2 ms und im CI-Runner in 30 s
+  // Timeout. Ein Test darf nicht vom Fehlerverhalten des Netzwerks abhängen.
+  //
+  // Stattdessen: der Hostname ist DNS-unerreichbar (`.invalid` lautet per
+  // RFC 2606 niemals), die gepinnte Adresse zeigt auf den laufenden
+  // Testserver. Kann der Agent den Hostnamen nicht auflösen, scheitert der
+  // Request sofort mit ENOTFOUND. Erreichbar ist er NUR, wenn wirklich die
+  // gepinnte Adresse benutzt wurde — deterministisch, in jeder Umgebung.
+  it('nutzt die gepinnte Adresse, obwohl der Hostname nicht auflösbar ist', async () => {
+    const unresolvable = localUrl.replace('localhost', 'kein-host.invalid');
+    const res = await getViaAgent(unresolvable, ['127.0.0.1']);
     expect(res.status).toBe(200);
     expect(res.body).toContain('"hit":true');
   });
+
+  it('ohne Pinning-Nutzwert erreicht der Agent den Hostnamen nicht', async () => {
+    // Gegenprobe: dieselbe URL OHNE gueltige Adresse bricht ab, statt
+    // stillschweigend doch zu verbinden.
+    expect(() => pinnedAgentFor(new URL(localUrl), [])).toThrow(/keine geprüfte/i);
+  });
+
 });
 
 describe('assertResolvesToPublicAddress liefert die geprüften Adressen', () => {

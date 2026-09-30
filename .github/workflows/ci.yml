@@ -1,17 +1,18 @@
 # =============================================================================
 # CI — Bundesanzeiger Jahresabschluss
 # =============================================================================
-# Dieser Workflow wurde am 2026-09-29 erstellt. Bis dahin existierte KEINE
-# CI-Konfiguration — bei rund 40 behobenen Defekten war die haeufigste Ursache
-# "als fertig markiert, aber nie ausgefuehrt": keine Migration, die je lief,
-# kein Test, der je startete, ein typecheck, das die relevanten Dateien gar
-# nicht einschloss. Diese Pipeline macht jede Behauptung pruefbar.
+# Erstellt 2026-09-28,第一次 echter Lauf 2026-09-30.
 #
-# Was sie verhindert:
-#   * `tsc --noEmit` ohne Gesamtbaum (tsconfig.test.json)
-#   * gruene Tests gegen eine DB, die nicht migriert/geseedet ist
-#   * "CI green" aus Commit-Messages ohne Pipeline
-#   * Signaturtests, die still auf Dummy-Daten ausweichen
+# Aus dieser Pipeline ist hervorgegangen, dass "grün markiert" nichts bedeutet,
+# solange niemand ausführt. Rund 40 Defekte waren über Wochen als fertig
+# geführt, obwohl kein Testlauf stattfand.
+#
+# Zwei Dinge haben die ersten Läufe rot gemacht — beide hier behoben:
+#   1. `needs:` ordnet nur die REIHENFOLGE. GitHub gibt jedem Job eine eigene
+#      VM. Der Frontend-Job fand deshalb kein Backend auf localhost:3000 und
+#      jeder Login scheiterte mit ECONNREFUSED.
+#   2. Die CRL-Testartefakte (echte OpenSSL-CA) wurden nicht erzeugt;
+#      crl-checker.spec.ts bricht dafür bewusst hart ab.
 # =============================================================================
 name: CI
 
@@ -21,19 +22,11 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Ein Lauf nach dem anderen; parallele Branches wuerden sich die gleiche
-# Postgres-Instanz nicht teilen, aber der Workflow ist ohnehin kurz.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '22'
-
 jobs:
-  # ===========================================================================
-  # 1. Backend — Schema, Typen, Lint, e2e
-  # ===========================================================================
   backend:
     name: Backend (Prisma + Typecheck + Lint + e2e)
     runs-on: ubuntu-latest
@@ -55,6 +48,7 @@ jobs:
           --health-retries 10
 
     env:
+      NODE_VERSION: '22'
       DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger?schema=public
       JWT_SECRET: ci-only-not-a-real-secret-0000000000000000000000000000
       S3_ENDPOINT: http://127.0.0.1:9000
@@ -66,8 +60,7 @@ jobs:
       S3_OBJECT_LOCK_RETENTION_DAYS: '3650'
       S3_PRESIGN_EXPONENT: '1'
       CACHE_PROVIDER: memory
-      # Leer lassen -> der Signaturpfad nutzt den Mock-TSA und weist das in
-      # der Antwort aus. Ein echter TSA ist in CI weder noetig noch moeglich.
+      # Leer -> Signaturpfad nutzt den Mock-TSA und weist das in der Antwort aus.
       TSA_URL: ''
       PORT: '3000'
       NODE_ENV: test
@@ -81,22 +74,18 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      # --- S3-Mock (Object Lock) -------------------------------------------------
       # MinIO ist als Open-Source archiviert; der Mock bildet die vier
-      # benoetigten Operationen inkl. echter Lock-Semantik nach.
-      # Ohne ihn laeuft die WORM-Strecke nicht und die WORM-Tests pruefen nichts.
+      # benötigten Operationen inkl. echter Object-Lock-Semantik nach.
+      # Ohne ihn läuft die WORM-Strecke nicht und die WORM-Tests prüfen nichts.
       - name: S3-Mock starten
         working-directory: backend
         run: |
           node ../s3-mock/server.js &
-          echo "S3_MOCK_PID=$!" >> $GITHUB_ENV
           for i in $(seq 1 20); do
-            if curl -sf -o /dev/null http://127.0.0.1:9000/; then
-              echo "S3-Mock bereit"; break
-            fi
+            curl -sf -o /dev/null http://127.0.0.1:9000/ && break
             sleep 1
           done
-          curl -sf -o /dev/null http://127.0.0.1:9000/ || { echo "S3-Mock nicht erreichbar"; exit 1; }
+          curl -sf -o /dev/null http://127.0.0.1:9000/ || { echo "::error::S3-Mock nicht bereit"; exit 1; }
 
       - name: Dependencies installieren
         working-directory: backend
@@ -106,30 +95,7 @@ jobs:
         working-directory: backend
         run: npx prisma generate
 
-      - name: Migrationen anwenden
-        working-directory: backend
-        run: npx prisma migrate deploy
-
-      # Frische DB + Seed ist die Vorbedingung dafuer, dass der Testlauf
-      # reproduzierbar ist. globalSetup setzt das vor JEDEM vitest-Lauf
-      # erneut zurueck.
-      - name: Seed-Daten anlegen
-        working-directory: backend
-        run: npx prisma db seed
-
-      # Test-P12: ohne diese Datei fiel die signatur-Spec still auf einen Dummy
-      # zurueck und pruefte nichts (Befund aus dem Audit 2026-09-28).
-      - name: Test-Signaturzertifikat erzeugen
-        working-directory: backend
-        run: npx ts-node scripts-gen-test-p12.ts
-
-      # CRL-Testartefakte (echte OpenSSL-CA). crl-checker.spec.ts braucht sie,
-      # und faellt bewusst HARD, wenn sie fehlen — dieser CI-Lauf hat genau
-      # daran gescheitert (2026-09-30), weil der Schritt hier fehlte.
-      # node-forge kann keine CRLs erzeugen; darum OpenSSL.
-      - name: CRL-Testartefakte erzeugen
-        working-directory: backend
-        run: bash scripts-gen-test-crl.sh
+      - uses: ./.github/actions/setup-backend
 
       - name: "Typecheck (Gesamtbaum: src + e2e + prisma + Tools)"
         working-directory: backend
@@ -143,31 +109,15 @@ jobs:
         working-directory: backend
         run: npm run build
 
-      - name: Backend starten (Fixture fuer die e2e-Specs)
-        working-directory: backend
-        run: |
-          nohup npx ts-node src/main.ts > /tmp/backend.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -sf -o /dev/null http://127.0.0.1:3000/health; then
-              echo "Backend bereit"; break
-            fi
-            sleep 2
-          done
-          curl -sf -o /dev/null http://127.0.0.1:3000/health || {
-            echo "::error::Backend nicht erreichbar"; tail -50 /tmp/backend.log; exit 1;
-          }
-
       - name: e2e (Vitest)
         working-directory: backend
         run: npx vitest run --reporter=verbose
 
-      - name: Logs bei Fehlschlag
+      - name: Logs
         if: failure()
-        run: |
-          echo "--- backend.log ---"; tail -100 /tmp/backend.log || true
-          echo "--- vitest ---"; true
+        run: tail -120 /tmp/backend.log || true
 
-      - name: Artefakte sichern
+      - name: Artefakte
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -175,17 +125,45 @@ jobs:
           path: /tmp/backend.log
           retention-days: 7
 
-  # ===========================================================================
-  # 2. Frontend — Typecheck, Build, Playwright
-  # ===========================================================================
   frontend:
     name: Frontend (Typecheck + Build + Playwright)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: backend # Frontend-E2E sprechen ueber den Rewrite das echte Backend an
+    # Bewusst KEIN `needs: backend`. Beide Jobs laufen parallel auf getrennten
+    # VMs; der Frontend-Job startet sein eigenes Backend (siehe unten).
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: banz
+          POSTGRES_PASSWORD: banz_ci_pw
+          POSTGRES_DB: bundesanzeiger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U banz"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       NODE_VERSION: '22'
+      DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger?schema=public
+      JWT_SECRET: ci-only-not-a-real-secret-0000000000000000000000000000
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: eu-central-1
+      S3_ACCESS_KEY: ciaccesskey
+      S3_SECRET_KEY: cisecretkey
+      S3_BUCKET: banz-worm
+      S3_OBJECT_LOCK_MODE: COMPLIANCE
+      S3_OBJECT_LOCK_RETENTION_DAYS: '3650'
+      S3_PRESIGN_EXPONENT: '1'
+      CACHE_PROVIDER: memory
+      TSA_URL: ''
+      PORT: '3000'
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
 
     steps:
       - uses: actions/checkout@v4
@@ -194,32 +172,58 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
-      - name: Dependencies installieren
+      # Die Playwright-Smoke-Tests melden sich real an und laden Fachseiten.
+      # Sie brauchen ein laufendes Backend — es lebt auf einer ANDEREN VM als
+      # der Backend-Job, also starten wir hier ein eigenes.
+      - name: S3-Mock starten
+        working-directory: backend
+        run: |
+          node ../s3-mock/server.js &
+          for i in $(seq 1 20); do
+            curl -sf -o /dev/null http://127.0.0.1:9000/ && break
+            sleep 1
+          done
+
+      - name: Backend installieren + starten
+        working-directory: backend
+        run: |
+          npm ci
+          npx prisma generate
+
+      - uses: ./.github/actions/setup-backend
+
+      - name: Frontend installieren
         working-directory: frontend
         run: npm ci
 
-      - name: Typecheck
+      - name: Frontend Typecheck
         working-directory: frontend
         run: npx tsc --noEmit
 
-      - name: Build
+      - name: Frontend Build
         working-directory: frontend
         run: npm run build
 
-      - name: Playwright-Browser installieren
+      - name: Playwright-Browser
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
       - name: Playwright
         working-directory: frontend
         run: npx playwright test
-        env:
-          NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
 
-      - name: Trace/ Screenshots bei Fehlschlag
+      - name: Frontend-Logs
         if: failure()
+        run: |
+          echo "--- backend ---"; tail -60 /tmp/backend.log || true
+          echo "--- frontend ---"; tail -60 /tmp/frontend.log 2>/dev/null || true
+
+      - name: Trace/Reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report

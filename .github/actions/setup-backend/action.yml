@@ -1,0 +1,49 @@
+name: 'Backend bereitstellen'
+description: >-
+  Startet Postgres + migriert + seedet + startet den NestJS-Backend auf :3000.
+  Wird von zwei Jobs gebraucht: der e2e-Lauf und die Playwright-Tests. GitHub
+  Actions gibt jedem Job eine EIGENE VM — `needs:` ordnet nur die Reihenfolge,
+  laeuft aber nicht auf derselben Maschine. Ohne diesen Schritt hatte der
+  Frontend-Job kein Backend und jeder Login scheiterte mit ECONNREFUSED.
+
+runs:
+  using: composite
+  steps:
+    - name: Migrationen + Seed
+      working-directory: backend
+      shell: bash
+      run: |
+        npx prisma migrate deploy
+        npx prisma db seed
+
+    - name: Test-Signaturzertifikat
+      working-directory: backend
+      shell: bash
+      run: npx ts-node scripts-gen-test-p12.ts
+
+    - name: CRL-Testartefakte
+      working-directory: backend
+      shell: bash
+      run: bash scripts-gen-test-crl.sh
+
+    - name: Backend starten
+      working-directory: backend
+      shell: bash
+      run: |
+        nohup npx ts-node src/main.ts > /tmp/backend.log 2>&1 &
+        echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+        for i in $(seq 1 60); do
+          if curl -sf -o /dev/null http://127.0.0.1:3000/health; then
+            echo "Backend bereit"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "::error::Backend nicht erreichbar"
+        tail -50 /tmp/backend.log
+        exit 1
+
+    - name: Backend-Log als Artefakt
+      if: failure()
+      shell: bash
+      run: tail -100 /tmp/backend.log

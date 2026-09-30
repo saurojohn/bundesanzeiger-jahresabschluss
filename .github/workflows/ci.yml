@@ -64,6 +64,10 @@ jobs:
       TSA_URL: ''
       PORT: '3000'
       NODE_ENV: test
+      # CORS: main.ts erlaubt per Default nur http://localhost:3000.
+      # Die Playwright-Routen laufen auf 3001; ohne diese Zeile
+      # antwortete das Backend mit "CORS: Origin nicht erlaubt".
+      FRONTEND_URL: http://localhost:3001
 
     steps:
       - uses: actions/checkout@v4
@@ -163,6 +167,10 @@ jobs:
       TSA_URL: ''
       PORT: '3000'
       NODE_ENV: test
+      # CORS: main.ts erlaubt per Default nur http://localhost:3000.
+      # Die Playwright-Routen laufen auf 3001; ohne diese Zeile
+      # antwortete das Backend mit "CORS: Origin nicht erlaubt".
+      FRONTEND_URL: http://localhost:3001
       NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
 
     steps:

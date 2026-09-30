@@ -69,6 +69,13 @@ export class WPController {
   // ===========================================================================
 
   @Post('notizen')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   @Roles('WIRTSCHAFTSPRUEFER')
   @HttpCode(HttpStatus.CREATED)
   async createNotiz(
@@ -84,6 +91,13 @@ export class WPController {
   }
 
   @Patch('notizen/:id/status')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   @Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER', 'KANZLEI_ADMIN', 'GF')
   @HttpCode(HttpStatus.OK)
   async updateNotizStatus(
@@ -100,6 +114,13 @@ export class WPController {
   }
 
   @Get('notizen')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   async listNotizen(
     @Query('bilanzId') bilanzId: string | undefined,
     @Query('guvId') guvId: string | undefined,
@@ -170,6 +191,13 @@ export class WPController {
   // ===========================================================================
 
   @Post('pruefungen')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   @Roles('WIRTSCHAFTSPRUEFER')
   @HttpCode(HttpStatus.CREATED)
   async startPruefung(
@@ -186,6 +214,13 @@ export class WPController {
   }
 
   @Get('pruefungen/:id')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   async findPruefung(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthUser,
@@ -195,6 +230,13 @@ export class WPController {
   }
 
   @Post('pruefungen/:id/finalize')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   @Roles('WIRTSCHAFTSPRUEFER')
   @HttpCode(HttpStatus.OK)
   async finalizePruefung(
@@ -214,6 +256,13 @@ export class WPController {
   }
 
   @Get('pruefungen/:id/report')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   async getReport(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthUser,
@@ -223,6 +272,13 @@ export class WPController {
   }
 
   @Get('bilanz/:bilanzId/pruefungen')
+  // Audit-Befund M-1: MandantGuard war bereits per @UseGuards auf der
+  // Klasse registriert, steigt aber bei `if (!required) return true`
+  // aus. Ohne dieses Decorator lief die Mandantenpruefung fuer diese
+  // Route gar nicht — nur der Service hat sie (ueber die referenzierte
+  // Entitaet) gerettet. Defense-in-Depth: Guard ZUERST, Service als
+  // zweite Schicht.
+  @RequireMandant()
   async listPruefungenByBilanz(
     @Param('bilanzId', new ParseUUIDPipe({ version: '4' })) bilanzId: string,
     @CurrentUser() user: AuthUser,

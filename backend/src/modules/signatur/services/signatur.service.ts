@@ -364,7 +364,12 @@ export class SignaturService {
     if (verification.certificatePem && this.requireRevocationCheck) {
       revocation = await checkCertificateRevocation(
         verification.certificatePem,
-        verification.certificatePem, // selbstsigniert im Pilot: Issuer = Subject
+        // Aussteller aus der PKCS#7-Kette. Das Leaf ist NUR bei
+        // selbstsignierten Zertifikaten sein eigener Aussteller — vorher
+        // wurde es pauschal so behandelt, wodurch die CRL-Signatur bei
+        // jedem echten CA-Zertifikat immer gegen den falschen Schluessel
+        // geprueft wurde (fail-closed, aber toter Pfad).
+        verification.issuerCertificatePem ?? null,
       );
       if (revocation.revoked === true) {
         errors.push('Signaturzertifikat ist gesperrt (CRL)');

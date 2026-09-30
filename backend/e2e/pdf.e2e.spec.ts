@@ -91,7 +91,7 @@ interface PdfGenResponse {
 
 
 describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
-  let app: INestApplication;
+  // (kein lokales Nest-App mehr — die Specs gehen per HTTP gegen den laufenden Server)
   let steuerberaterToken: string;
   let gfToken: string;
   let wpToken: string;
@@ -101,21 +101,20 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
   let beispielBilanzId: string;
   const nonExistentBilanzId = '00000000-0000-4000-8000-000000000000';
 
+  // Kein TestingModule und keine Mock-S3-Env-Variablen mehr.
+  //
+  // Die Specs sprechen HTTP gegen den laufenden Server (siehe BASE). Das hier
+  // erzeugte Nest-App-Objekt wurde nie fuer einen Aufruf benutzt — es war toter
+  // Bootstrap-Code, der zudem S3_ENDPOINT auf ein nicht existierendes
+  // "mock-s3.local" zeigte und damit suggerierte, es werde ein In-Memory-S3
+  // benutzt. Tatsaechlich laeuft die WORM-Strecke gegen s3-mock/server.js.
   beforeAll(async () => {
-    // Setze Mock-Env vor App-Init.
-    process.env['S3_ENDPOINT'] = 'http://mock-s3.local';
-    process.env['S3_REGION'] = 'eu-central-1';
-    process.env['S3_ACCESS_KEY'] = 'mock-access-key';
-    process.env['S3_SECRET_KEY'] = 'mock-secret-key';
-    process.env['S3_BUCKET'] = 'mock-bucket';
-    process.env['S3_OBJECT_LOCK_RETENTION_DAYS'] = '3650';
-
-    const moduleRef: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleRef.createNestApplication();
-    await app.init();
+    const probe = await fetch(`${BASE}/health`).catch(() => null);
+    if (!probe || !probe.ok) {
+      throw new Error(
+        `Backend unter ${BASE} nicht erreichbar — bitte ./run-local.sh starten`,
+      );
+    }
 
     // Login verschiedener Test-User
     const sb = await login('steuerberater@kanzlei.de', 'Demo123!');
@@ -135,10 +134,6 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
 
     const listBeispiel = await fetchBilanzList(steuerberaterToken, beispielMandantId, 2025);
     beispielBilanzId = listBeispiel[0]?.id ?? '';
-  });
-
-  afterAll(async () => {
-    await app.close();
   });
 
   async function login(email: string, password: string): Promise<LoginResponse> {
@@ -339,8 +334,10 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
         (m) => m.firmenname === 'Test AG',
       )?.id ?? '';
     if (testAgMandantId.length === 0) {
-      // Test AG fuer diesen User nicht sichtbar → nichts zu pruefen
-      return;
+      // Kein stiller Skip: der User MUSS Test AG sehen, sonst prüft der
+      // Sicherheitstest nichts. Solange der Seed keine Bilanz für Test AG
+      // anlegt, blieb dieser Test ein `return` und lief nie.
+      throw new Error('Test AG ist für steuerberater@kanzlei.de nicht sichtbar — Setup unvollständig');
     }
 
     // Liste mit einem User MIT Zugriff auf Test AG (sonst waere schon die
@@ -349,8 +346,9 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
     // Wenn WP auf Test AG keinen Zugriff hat, sollte MandantGuard 403 werfen.
     const bilanzIdTestAg = listTestAg[0]?.id;
     if (!bilanzIdTestAg) {
-      // Kein Bilanz in Test AG → skip
-      return;
+      throw new Error(
+        'Test AG hat keine Bilanz GJ 2025 — der Cross-Mandant-Test würde sonst nichts prüfen',
+      );
     }
     const res = await fetch(
       `${BASE}/api/pdf/bilanz/${bilanzIdTestAg}/download?mandantId=${testAgMandantId}`,

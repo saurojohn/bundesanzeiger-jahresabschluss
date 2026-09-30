@@ -1,5 +1,6 @@
 import { createPublicKey, verify } from 'node:crypto';
 import forge from 'node-forge';
+import { assertResolvesToPublicAddress } from '../../../common/security/ssrf-guard';
 
 /**
  * Zertifikatssperrprüfung (CRL) für Signaturzertifikate.
@@ -462,9 +463,20 @@ export async function checkCertificateRevocation(
     };
   }
 
+  // Der CRL-Endpoint stammt aus dem ZERTIFIKAT und ist damit
+  // angreifer-kontrolliert (Audit-Befund M-3). Ohne eigene Pruefung laesst
+  // ein manipulierter Distribution-Point den Server beliebige interne
+  // HTTP-Endpunkte kontaktieren — derselbe SSRF-Vektor wie beim Webhook.
+  //
+  // Der Guard gilt nur fuer den ECHTEN Netzwerkabruf. Ein injiziertes
+  // `fetchCrl` (Tests, Offline-Betrieb) stellt selbst keine Verbindung her —
+  // es wuerde den Aufruf nur blockieren, ohne ein echtes Risiko zu mildern.
   const fetchCrl = options.fetchCrl
     ? (url: string) => options.fetchCrl!(url)
-    : (url: string) => defaultFetchCrl(url, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    : async (url: string) => {
+        await assertResolvesToPublicAddress(url);
+        return defaultFetchCrl(url, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      };
 
   const problems: string[] = [];
   let sawCrl = false;
@@ -483,7 +495,16 @@ export async function checkCertificateRevocation(
       // waere wertlos. `X509Certificate.verify()` prueft nur das Zertifikat
       // selbst und nimmt kein data-Argument — fuer die CRL braucht es
       // `crypto.verify(algo, tbsCertList, publicKey, signature)`.
-      if (issuerCertPem) {
+      // Ohne Ausstellerzertifikat kann die CRL-Signatur nicht geprueft
+      // werden. Das ist KEIN Grund, sie zu akzeptieren — der Audit hat
+      // hier eine fail-open-Stelle gefunden: `if (issuerCertPem)` hat die
+      // Pruefung uebersprungen und danach "nicht gesperrt (CRL geprueft)"
+      // gemeldet, obwohl gar nichts geprueft war.
+      if (!issuerCertPem) {
+        problems.push('kein Ausstellerzertifikat — CRL-Signatur nicht prüfbar');
+        continue;
+      }
+      {
         try {
           if (!crl.tbsDer?.length || !crl.signatureValue?.length) {
             problems.push('CRL ohne tbsCertList/Signaturwert — nicht prüfbar');

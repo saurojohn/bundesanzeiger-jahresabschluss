@@ -102,8 +102,7 @@ export class PublicApiReadService {
     const pageSize = Math.min(pagination.pageSize ?? 20, 100);
 
     // Optional: Cursor-Dekodierung (über createdAt)
-    void CursorCodec; // tutil no-op to silence linter
-
+  
     const items = await this.bilanzRepository.findByMandantAndJahr(
       mandantId,
       pagination.geschaeftsjahr,

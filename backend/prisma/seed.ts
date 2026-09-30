@@ -5,7 +5,8 @@
  *   - 1 Kanzlei "Musterkanzlei Steuerberatung GmbH"
  *   - 3 Mandanten (Demo GmbH, Beispiel GmbH, Test AG)
  *   - 5 User (admin, kanzlei-admin, steuerberater, wp, gf-demo)
- *   - 1 leere Bilanz (DRAFT, GJ 2025) für Demo GmbH
+ *   - 2 leere Bilanzen (DRAFT, GJ 2025): Demo GmbH + Test AG
+ *     (Test AG wird für den Cross-Mandant-Sicherheitstest gebraucht)
  *   - 1 leere GuV (GKV, DRAFT, GJ 2025) für Demo GmbH
  *   - 1 leerer Anhang (DRAFT, GJ 2025) für Demo GmbH
  *
@@ -325,6 +326,31 @@ async function main(): Promise<void> {
     },
   });
   console.log(`[seed] Bilanz angelegt für ${MANDANT_DEMO} GJ 2025 (${bilanz.id})`);
+
+  // Zweite Bilanz für "Test AG" (mandant3).
+  //
+  // Grund: der Cross-Mandant-Test in `pdf.e2e` („WP lädt PDF eines fremden
+  // Mandanten → 403") braucht eine Bilanz, die der angreifende User
+  // grundsätzlich NICHT sehen darf. Vorher gab es für Test AG keine, also
+  // endete der Test in einem stillen `return` — er lief nie. Die Seed-Doku
+  // oben ("1 leere Bilanz ... für Demo GmbH") entsprach dem Ist-Zustand,
+  // nicht dem, was der Test behauptet zu prüfen.
+  const bilanzTestAg = await prisma.bilanz.create({
+    data: {
+      mandantId: mandant3.id,
+      geschaeftsjahr: 2025,
+      status: 'DRAFT',
+      hinweise: 'Seed-Daten — Cross-Mandant-Sicherheitstest.',
+      createdById: steuerberater.id,
+      positionen: {
+        create: [
+          { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kassenbestand', betragAktuell: 100000, reihenfolge: 1 },
+          { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Gezeichnetes Kapital', betragAktuell: 100000, reihenfolge: 1 },
+        ],
+      },
+    },
+  });
+  console.log(`[seed] Bilanz angelegt für ${MANDANT_TEST_AG} GJ 2025 (${bilanzTestAg.id})`);
 
   // ----------------------------------------------------------------------------
   // Demo-GuV (GKV) für Demo GmbH

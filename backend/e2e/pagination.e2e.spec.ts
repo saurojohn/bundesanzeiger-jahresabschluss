@@ -103,6 +103,32 @@ describe('Pagination E2E (M3+)', () => {
     const mandant = loginRes.user.mandanten[0];
     const headers = await authHeaders(loginRes.accessToken);
 
+    // Der Test braucht garantiert genug Datensaetze. Statt darauf zu vertrauen,
+    // dass der Seed eine bestimmte Menge anlegt (und im Zweifel still zu
+    // ueberspringen), erzeugt er seinen eigenen Bestand fuer GJ 2090.
+    const jahr = 2090;
+    const vorhanden = await fetch(
+      `${BASE}/api/bilanz?mandantId=${mandant.id}&geschaeftsjahr=${jahr}&pageSize=100`,
+      { headers },
+    );
+    const vorhandenListe = ((await vorhanden.json()) as PaginatedResponse<BilanzSummary>)
+      .items ?? [];
+    for (let gj = 2030; gj < 2030 + Math.max(0, 6 - vorhandenListe.length); gj += 1) {
+      const r = await fetch(`${BASE}/api/bilanz?mandantId=${mandant.id}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          mandantId: mandant.id,
+          geschaeftsjahr: gj,
+          positionen: [
+            { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+            { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+          ],
+        }),
+      });
+      if (!r.ok) throw new Error(`Bilanz GJ ${gj} konnte nicht angelegt werden: ${r.status}`);
+    }
+
     const first = await fetch(
       `${BASE}/api/bilanz?mandantId=${mandant.id}&pageSize=5`,
       { headers },
@@ -110,8 +136,11 @@ describe('Pagination E2E (M3+)', () => {
     expect(first.status).toBe(200);
     const firstData = (await first.json()) as PaginatedResponse<BilanzSummary>;
     if (!firstData.hasMore || !firstData.nextCursor) {
-      // Skip wenn weniger als 6 Bilanzen vorhanden
-      return;
+      // Kein stiller Skip: ohne genug Datensaetze wird die Cursor-Logik nicht
+      // durchlaufen. Das war ein gruener Test ohne Aussage.
+      throw new Error(
+        `Cursor-Test braucht mindestens 6 Bilanzen, hat ${firstData.items.length} (hasMore=${String(firstData.hasMore)})`,
+      );
     }
     const firstIds = new Set(firstData.items.map((b) => b.id));
 

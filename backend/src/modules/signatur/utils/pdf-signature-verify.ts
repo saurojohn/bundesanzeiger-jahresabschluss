@@ -59,8 +59,18 @@ export interface SignatureVerification {
   notAfter?: string;
   /** Angaben zum mitgelieferten Zertifikat, falls vorhanden. */
   certificate?: CertificateInfo;
-  /** PEM des Zertifikats (fuer die Sperrlistenpruefung). */
+  /** PEM des Signatur-Zertifikats (fuer die Sperrlistenpruefung). */
   certificatePem?: string;
+  /**
+   * PEM des Aussteller-Zertifikats aus der PKCS#7-Kette.
+   *
+   * Wichtig (Audit-Befund): fuer die CRL-Signaturpruefung muss der
+   * Aussteller-Public-Key benutzt werden, NICHT der des Leaf. Bei einem
+   * selbstsignierten Zertifikat ist beides dasselbe; bei jedem echten
+   * CA-signierten waere der Leaf-Key falsch und die Pruefung schlaege immer
+   * fehl (fail-closed, aber toter Pfad).
+   */
+  issuerCertificatePem?: string;
   /** Deutsche Kurzbegründung bei verified === false. */
   reason?: string;
 }
@@ -109,6 +119,8 @@ interface ParsedSignature {
   digestAlgorithm: string | null;
   certificatePem: string | null;
   certificateInfo?: CertificateInfo;
+  /** Alle Zertifikate aus certificates[0] in Reihenfolge. */
+  certificatePems: string[];
 }
 
 /**
@@ -123,6 +135,7 @@ function parsePkcs7(slot: Buffer): ParsedSignature {
     signature: null,
     digestAlgorithm: null,
     certificatePem: null,
+    certificatePems: [],
   };
 
   let t = readTlv(slot, 0); // ContentInfo
@@ -155,6 +168,7 @@ function parsePkcs7(slot: Buffer): ParsedSignature {
             forgeAsn1.fromDer(slot.subarray(n.valueStart, certTlv.valueEnd).toString('binary')),
           );
           out.certificatePem = forgePki.certificateToPem(cert);
+          out.certificatePems.push(out.certificatePem);
           // forge-Typen sind hier unvollstaendig (CertificateField.value: string|any)
           type Field = { name?: string; shortName?: string; value: unknown };
           const render = (fields: Field[]): string =>
@@ -296,9 +310,43 @@ export function verifyPdfSignature(pdf: Buffer): SignatureVerification {
   }
   const slot = Buffer.from(contents[1], 'hex');
   const parsed = parsePkcs7(slot);
+  // Aussteller bestimmen: bei selbstsignierten Zertifikaten ist das
+  // Leaf selbst; sonst das Zertifikat aus der Kette, dessen Subject zum
+  // Issuer des Leaf passt. Ohne dieses Zufuehren waere die CRL-Signatur
+  // immer gegen den falschen Schluessel geprueft.
+  let issuerPem: string | undefined;
+  const certInfo = parsed.certificateInfo;
+  if (certInfo && parsed.certificatePems.length > 0) {
+    if (certInfo.selfSigned) {
+      issuerPem = parsed.certificatePems[0];
+    } else {
+      const wanted = certInfo.issuer.toLowerCase();
+      const match = parsed.certificatePems.find((pem) => {
+        try {
+          const c = forgePki.certificateFromPem(pem);
+          const fields = c.subject.attributes as unknown as Array<{
+            shortName?: string;
+            name?: string;
+            value: unknown;
+          }>;
+          return (
+            fields
+              .map((a) => `${a.shortName ?? a.name ?? '?'}=${String(a.value)}`)
+              .join(', ')
+              .toLowerCase() === wanted
+          );
+        } catch {
+          return false;
+        }
+      });
+      issuerPem = match;
+    }
+  }
+
   const base = {
-    certificate: parsed.certificateInfo,
+    certificate: certInfo,
     certificatePem: parsed.certificatePem ?? undefined,
+    issuerCertificatePem: issuerPem,
   };
 
   // Stufe 2 — Inhalt: messageDigest gegen SHA-256 der ByteRange-Bereiche

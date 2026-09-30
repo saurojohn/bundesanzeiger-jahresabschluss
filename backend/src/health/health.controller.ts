@@ -1,6 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../modules/audit/services/audit.service';
 import { Public } from '../modules/auth/decorators/public.decorator';
 
 /**
@@ -21,7 +22,10 @@ export class HealthController {
   private readonly logger = new Logger(HealthController.name);
   private readonly startupTime = Date.now();
 
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * Liveness-Probe.
@@ -64,15 +68,30 @@ export class HealthController {
       primary: 'up' | 'down';
       replica: 'up' | 'down' | 'disabled';
     };
+    /**
+     * Anzahl fehlgeschlagener Audit-Writes seit Prozessstart.
+     * > 0 heisst: die Nachvollziehbarkeit (§ 146 AO) hat eine Luecke.
+     */
+    auditWriteFailures: number;
     uptime: number;
     timestamp: string;
   }> {
     const dbHealth = await this.prismaService.checkHealth();
     const allUp = dbHealth.primary === 'up' && dbHealth.replica !== 'down';
 
+    // Ein defekter Audit-Pfad macht das System BETRIEBSUNFAEHIG fuer
+    // rechtsverbindliche Vorgaenge — das ist ein Betriebs-, kein Kosmetik-
+    // zustand und muss im Health-Check sichtbar sein.
+    const auditFailures = this.auditService.getFailedWrites();
+    const healthy = allUp && auditFailures === 0;
+
     return {
-      status: allUp ? 'ok' : 'degraded',
-      checks: dbHealth,
+      status: healthy ? 'ok' : 'degraded',
+      checks: {
+        ...dbHealth,
+        ...(auditFailures > 0 ? { audit: 'degraded' as const } : {}),
+      },
+      auditWriteFailures: auditFailures,
       uptime: Math.floor((Date.now() - this.startupTime) / 1000),
       timestamp: new Date().toISOString(),
     };

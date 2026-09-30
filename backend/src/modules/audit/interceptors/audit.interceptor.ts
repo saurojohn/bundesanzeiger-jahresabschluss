@@ -2,12 +2,13 @@ import {
   CallHandler,
   ExecutionContext,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NestInterceptor,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { Observable } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { Observable, from, throwError } from 'rxjs';
+import { catchError, mergeMap } from 'rxjs/operators';
 import { type AuditActionLiteral } from '../constants/audit-actions';
 import { AuditService } from '../services/audit.service';
 
@@ -41,33 +42,69 @@ export class AuditInterceptor implements NestInterceptor {
     const { entityType, entityId } = this.parseEntity(originalUrl);
     const action = this.methodToAction(method);
 
+    // Audit-Pfad blockierend ausfuehren.
+    //
+    // Vorher: `tap()` + `void record()` — die Antwort ging raus, waehrend der
+    // Eintrag im Hintergrund geschrieben wurde. Schlug der Write fehl, blieb
+    // das ein Logeintrag: der Aufrufer bekam Erfolg, die Nachvollziehbarkeit
+    // (§ 146 AO) hatte eine stille Luecke. Das unabhängige Audit hat das als
+    // "fire-and-forget verschluckt den Geschäftsvorgang" markiert.
+    //
+    // Jetzt: der Eintrag wird ABGEWARTET. Schlaegt er nach den Retries fehl,
+    // antwortet der Request mit 500 — der Aufrufer weiss, dass etwas nicht
+    // stimmt, statt einen Erfolg ohne Nachweis zu erhalten.
+    //
+    // Bekannte Grenze (bewusst so gewaehlt): der Geschaeftsvorgang ist zu
+    // diesem Zeitpunkt bereits committet. Ein Audit-Fehler macht die
+    // Geschäftsdaten also nicht rueckgaengig, sondern verhindert, dass der
+    // Fehler unbemerkt bleibt. Waere auch das umkehrbar, muessten Audit und
+    // Geschaeftsvorgang in EINER Transaktion laufen — das waere der
+    // richtige, aber invasive Schritt (49 weitere Aufrufstellen).
+    const base = {
+      userId: req.user?.id ?? null,
+      mandantId: req.activeMandantId ?? null,
+      action,
+      entityType,
+      ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
+      userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+    };
+
     return next.handle().pipe(
-      tap({
-        next: (responseBody: unknown) => {
-          const resolvedId = entityId ?? this.extractIdFromResponse(responseBody);
-          void this.auditService.record({
-            userId: req.user?.id ?? null,
-            mandantId: req.activeMandantId ?? null,
-            action,
-            entityType,
+      mergeMap((responseBody: unknown) => {
+        const resolvedId = entityId ?? this.extractIdFromResponse(responseBody);
+        return from(
+          this.auditService.recordStrict({
+            ...base,
             entityId: resolvedId ?? null,
             newState: this.toJsonValue(responseBody),
-            ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
-            userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
-          });
-        },
-        error: (err: Error) => {
-          void this.auditService.record({
-            userId: req.user?.id ?? null,
-            mandantId: req.activeMandantId ?? null,
-            action,
-            entityType,
-            entityId: entityId ?? null,
-            newState: { error: err.message },
-            ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
-            userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
-          });
-        },
+          }),
+        ).pipe(
+          mergeMap(() => [responseBody]),
+          catchError((auditErr: unknown) =>
+            throwError(
+              () =>
+                new InternalServerErrorException(
+                  `Änderung wurde durchgeführt, die Nachvollziehbarkeit konnte jedoch nicht gesichert werden (Audit-Log: ${(auditErr as Error).message}). Bitte Admin kontaktieren.`,
+                ),
+            ),
+          ),
+        );
+      }),
+      catchError((err: unknown) => {
+        // Fehlgeschlagener Geschaeftsvorgang: Fehler protokollieren und den
+        // urspruenglichen Fehler weiterreichen.
+        if (!(err instanceof Error) || err.name === 'HttpException') {
+          return from(
+            this.auditService
+              .recordStrict({
+                ...base,
+                entityId,
+                newState: { error: (err as Error).message ?? String(err) },
+              })
+              .catch(() => undefined),
+          ).pipe(mergeMap(() => throwError(() => err)));
+        }
+        return throwError(() => err);
       }),
     );
   }

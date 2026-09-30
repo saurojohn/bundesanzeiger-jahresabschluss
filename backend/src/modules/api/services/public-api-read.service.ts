@@ -8,10 +8,7 @@ import { BilanzRepository } from '../../../common/repositories/bilanz.repository
 import { GuVRepository } from '../../../common/repositories/guv.repository';
 import { AnhangRepository } from '../../../common/repositories/anhang.repository';
 import { KonsolidierungRepository } from '../../../common/repositories/konsolidierung.repository';
-import {
-  CursorCodec,
-  type PaginatedResult,
-} from '../../../common/dto/pagination.dto';
+import type { PaginatedResult } from '../../../common/dto/pagination.dto';
 import type { APIKeyContext } from './api-key.service';
 import type {
   PublicMandantDto,

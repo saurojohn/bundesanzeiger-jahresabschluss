@@ -61,6 +61,21 @@ export type AuditPaginatedResult = PaginatedResult<AuditListItem>;
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
+  /**
+   * Anzahl der fehlgeschlagenen Audit-Writes seit Prozessstart.
+   *
+   * Audit-Ausfall ist fuer ein GoBD-System kein Nebenschauplatz: § 146 AO
+   * verlangt Nachvollziehbarkeit. Solange der Fehler nur in ein Logfile
+   * wanderte, konnte niemand erkennen, dass die Kette eine Luecke hat.
+   * Der Zaehler wird ueber `/health/ready` ausgewiesen.
+   */
+  private failedWrites = 0;
+
+  /** Zaehler fuer Monitoring/Health-Check. */
+  getFailedWrites(): number {
+    return this.failedWrites;
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheManagerService,
@@ -68,16 +83,42 @@ export class AuditService {
   ) {}
 
   /**
-   * Erzeugt einen AuditLog-Eintrag.
+   * Schreibt den Audit-Eintrag mit Retry.
    *
-   * `previousState` und `newState` werden als JSON persistiert; für
-   * sensible Felder (Passwörter, TOTP-Secrets) MUSS der Aufrufer vor der
-   * Übergabe sanitizen.
+   * Ein einzelner DB-Fehler (Connection-Reset, Lock-Timeout) darf einen
+   * GoBD-nachweislichen Eintrag nicht stillschweigend vernichten. Drei
+   * Versuche mit exponentiellem Backoff; danach wirft die Methode.
    */
-  async record(params: RecordAuditParams): Promise<void> {
+  private async writeWithRetry(
+    args: Prisma.AuditLogCreateArgs,
+    attempts = 3,
+  ): Promise<{ id: string }> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await this.prisma.auditLog.create(args);
+      } catch (err) {
+        lastError = err;
+        if (attempt < attempts) {
+          // 50 ms, 200 ms, 800 ms
+          await new Promise((r) => setTimeout(r, 50 * 4 ** (attempt - 1)));
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  /**
+   * Wie `record`, aber der Fehler wird NICHT geschluckt.
+   *
+   * fuer Pfade, bei denen ein fehlender Audit-Eintrag den aufrufenden
+   * Vorgang ungueltig machen soll (AuditInterceptor, sicherheitsrelevante
+   * Aktionen). `record` bleibt fuer Bestands-Aufrufstellen fire-and-forget.
+   */
+  async recordStrict(params: RecordAuditParams): Promise<void> {
     let createdAuditLogId: string | null = null;
     try {
-      const created = await this.prisma.auditLog.create({
+      const created = await this.writeWithRetry({
         data: {
           kanzleiId: params.kanzleiId ?? null,
           mandantId: params.mandantId ?? null,
@@ -95,6 +136,62 @@ export class AuditService {
       });
       createdAuditLogId = created.id;
     } catch (err) {
+      this.failedWrites += 1;
+      this.logger.error(
+        `AuditLog write endgueltig fehlgeschlagen (${String(params.action)}/${params.entityType}): ${
+          (err as Error).message
+        }`,
+      );
+      throw err;
+    }
+
+    if (params.kanzleiId) {
+      void this.cache.invalidate(`audit-count:kanzlei:${params.kanzleiId}`);
+    }
+    if (params.mandantId) {
+      void this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
+    }
+    if (createdAuditLogId) {
+      void this.integrityService
+        .computeHashForEntry(createdAuditLogId)
+        .catch((err) => {
+          this.failedWrites += 1;
+          this.logger.warn(
+            `Hash-Chain-Berechnung fehlgeschlagen (${createdAuditLogId}): ${(err as Error).message}`,
+          );
+        });
+    }
+  }
+
+  /**
+   * Erzeugt einen AuditLog-Eintrag.
+   *
+   * `previousState` und `newState` werden als JSON persistiert; für
+   * sensible Felder (Passwörter, TOTP-Secrets) MUSS der Aufrufer vor der
+   * Übergabe sanitizen.
+   */
+  async record(params: RecordAuditParams): Promise<void> {
+    let createdAuditLogId: string | null = null;
+    try {
+      const created = await this.writeWithRetry({
+        data: {
+          kanzleiId: params.kanzleiId ?? null,
+          mandantId: params.mandantId ?? null,
+          userId: params.userId ?? null,
+          jahresabschlussId: params.jahresabschlussId ?? null,
+          action: params.action,
+          entityType: params.entityType,
+          entityId: params.entityId ?? null,
+          previousState: (params.previousState ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          newState: (params.newState ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          ipAddress: params.ipAddress ?? null,
+          userAgent: params.userAgent ?? null,
+        },
+        select: { id: true },
+      });
+      createdAuditLogId = created.id;
+    } catch (err) {
+      this.failedWrites += 1;
       this.logger.error(
         `AuditLog write fehlgeschlagen (${String(params.action)}/${params.entityType}): ${
           (err as Error).message

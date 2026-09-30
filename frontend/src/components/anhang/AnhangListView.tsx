@@ -46,7 +46,6 @@ const PAGE_SIZE = 20;
 
 export function AnhangListView() {
   const t = useTranslations();
-  const paginationLabels = usePaginationLabels('anhang');
   const [anhaenge, setAnhaenge] = useState<Anhang[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -143,6 +142,8 @@ export function AnhangListView() {
       />
     );
   }
+
+  const paginationLabels = usePaginationLabels('anhang', { count: total, shown: anhaenge.length, total });
 
   return (
     <div>

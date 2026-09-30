@@ -43,7 +43,6 @@ const PAGE_SIZE = 20;
 
 export function GuvListView() {
   const t = useTranslations();
-  const paginationLabels = usePaginationLabels('guv');
   const [guvs, setGuvs] = useState<Guv[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -158,6 +157,8 @@ export function GuvListView() {
       />
     );
   }
+
+  const paginationLabels = usePaginationLabels('guv', { count: total, shown: guvs.length, total });
 
   return (
     <div>

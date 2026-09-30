@@ -42,7 +42,6 @@ const PAGE_SIZE = 20;
 
 export function BilanzListView() {
   const t = useTranslations();
-  const paginationLabels = usePaginationLabels('bilanz');
   const [bilanzen, setBilanzen] = useState<BilanzSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -184,6 +183,8 @@ export function BilanzListView() {
       />
     );
   }
+
+  const paginationLabels = usePaginationLabels('bilanz', { count: total, shown: bilanzen.length, total });
 
   return (
     <div>

@@ -56,7 +56,6 @@ const PAGE_SIZE = 50;
 
 export function AuditLogView() {
   const t = useTranslations();
-  const paginationLabels = usePaginationLabels('audit');
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -153,6 +152,8 @@ export function AuditLogView() {
   function resetFilter() {
     setFilter({});
   }
+
+  const paginationLabels = usePaginationLabels('audit', { count: total, shown: entries.length, total });
 
   return (
     <div>

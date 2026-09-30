@@ -48,11 +48,8 @@ export function Pagination({
     <div className="mt-4 flex flex-col items-center gap-2">
       {/* Status-Text: Counter + Hinweis */}
       <div className="text-xs text-slate-500">
-        {total > 0
-          ? labels.showing
-              .replace('{shown}', String(loadedCount))
-              .replace('{total}', String(total))
-          : ''}
+        {/* Platzhalter werden bereits in usePaginationLabels() per t() ersetzt. */}
+        {total > 0 ? labels.showing : ''}
       </div>
 
       {/* "Weitere laden"-Button */}
@@ -98,7 +95,7 @@ export function Pagination({
       {/* "Alle geladen"-Hinweis wenn nichts mehr nachzuladen ist */}
       {!hasMore && total > 0 && (
         <div className="text-xs text-slate-400 italic">
-          {labels.allLoaded.replace('{count}', String(total))}
+          {labels.allLoaded}
         </div>
       )}
     </div>
@@ -114,6 +111,7 @@ export function Pagination({
  */
 export function usePaginationLabels(
   module: 'bilanz' | 'guv' | 'anhang' | 'audit' | 'wp',
+  values: { count?: number; shown?: number; total?: number } = {},
 ): {
   loadMore: string;
   loading: string;
@@ -121,31 +119,35 @@ export function usePaginationLabels(
   showing: string;
 } {
   const t = useTranslations();
-  // Fallback-Strings (falls Modul-spezifische nicht vorhanden)
+
+  // Warum die Werte HIER und nicht per String.replace() in der Komponente:
+  //
+  // next-intl validiert ICU-Meldungen beim Rendern. Eine Meldung mit
+  // {count}/{shown}/{total} WIRFT "FORMATTING_ERROR", wenn der Wert beim
+  // t()-Aufruf nicht mitgegeben wird. Genau das stand am 2026-09-30 im
+  // CI-Log. Der alte Code rief t() ohne Werte auf und ersetzte die
+  // Platzhalter erst danach in der Komponente — bei `wp` ohne try/catch
+  // propagate der Fehler bis in den Render.
+  const { count, shown, total } = values;
+  const filled =
+    typeof count === 'number' && typeof shown === 'number' && typeof total === 'number';
+
+  // Fallback OHNE Platzhalter, solange die Werte fehlen — sonst würde der
+  // Fallback selbst erneut einen Formatiierungsfehler auslösen.
   const fallback = {
     loadMore: 'Weitere Einträge laden',
     loading: 'Lade weitere Einträge…',
-    allLoaded: 'Alle {count} Einträge geladen',
-    showing: '{shown} von {total} angezeigt',
+    allLoaded: filled ? `Alle ${count} Einträge geladen` : 'Alle Einträge geladen',
+    showing: filled ? `${shown} von ${total} angezeigt` : '',
   };
-  if (module === 'wp') {
-    return {
-      loadMore: t('wp.notiz.pagination.loadMore', { fallback: fallback.loadMore }),
-      loading: t('wp.notiz.pagination.loading', { fallback: fallback.loading }),
-      allLoaded: t('wp.notiz.pagination.allLoaded', { fallback: fallback.allLoaded }),
-      showing: t('wp.notiz.pagination.showing', { fallback: fallback.showing }),
-    };
-  }
-  // module === 'bilanz' | 'guv' | 'anhang' | 'audit'
-  const key = `${module}.pagination`;
-  try {
-    return {
-      loadMore: t(`${key}.loadMore`, { fallback: fallback.loadMore }),
-      loading: t(`${key}.loading`, { fallback: fallback.loading }),
-      allLoaded: t(`${key}.allLoaded`, { fallback: fallback.allLoaded }),
-      showing: t(`${key}.showing`, { fallback: fallback.showing }),
-    };
-  } catch {
-    return fallback;
-  }
+
+  const key = module === 'wp' ? 'wp.notiz.pagination' : `${module}.pagination`;
+  const vars = { count, shown, total };
+
+  return {
+    loadMore: t(`${key}.loadMore`, { fallback: fallback.loadMore }),
+    loading: t(`${key}.loading`, { fallback: fallback.loading }),
+    allLoaded: t(`${key}.allLoaded`, { ...vars, fallback: fallback.allLoaded }),
+    showing: t(`${key}.showing`, { ...vars, fallback: fallback.showing }),
+  };
 }

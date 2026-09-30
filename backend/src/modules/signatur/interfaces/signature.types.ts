@@ -56,8 +56,31 @@ export interface SignatureResult {
  * timestampValid, documentIntegrity) plus aggregierte `valid`-Ableitung
  * und `warnings` / `errors` für Detail-Diagnose.
  */
+/**
+ * Rechtliche Wirksamkeitsstufe einer Signatur.
+ *
+ * Warum das noetig ist: `valid: boolean` allein sagt nicht, OB eine
+ * Signatur fuer eine Pflichtveroeffentlichung genuegt. Im Pilot laeuft der
+ * Signaturpfad mit einem Mock-TSA (`TSA_URL` leer) — es entsteht also ein
+ * Schatten mit `valid: true` und `timestampValid: false`. Ein Client konnte
+ * daraus nicht ableiten, ob er ein BAnz-Dokument vorlegen darf.
+ *
+ * - `VOLLSTAENDIG`    Signatur + Zertifikat + Zeitstempel geprueft.
+ * - `OHNE_ZEITSTEMPEL`  Signatur und Zertifikat sind echt und geprueft, der
+ *                      Zeitstempel ist es nicht (Mock-TSA oder TSA nicht
+ *                      erreichbar). Rechtlich NICHT ausreichend.
+ * - `UNGUELTIG`        Signatur selbst ist ungueltig.
+ */
+export type LegalValidity = 'VOLLSTAENDIG' | 'OHNE_ZEITSTEMPEL' | 'UNGUELTIG';
+
 export interface ValidationResult {
   valid: boolean;
+  /**
+   * Feinere Aussage als `valid`: unterscheidet eine rechtlich vollstaendige
+   * Signatur von einer echten, aber zeitstempellosen. Bei `OHNE_ZEITSTEMPEL`
+   * darf das Dokument NICHT eingereicht werden.
+   */
+  legalValidity: LegalValidity;
   signatureCount: number;
   signedBy: string | null;
   issuerTrusted: boolean;

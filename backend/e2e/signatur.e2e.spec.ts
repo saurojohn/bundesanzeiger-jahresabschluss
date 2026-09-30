@@ -76,6 +76,9 @@ const P12_PATH = './tmp/test-certs/test-token.p12';
 
 interface ValidationResponse {
   valid: boolean;
+  /** VOLLSTAENDIG = auch der Zeitstempel ist geprueft; im Pilot mit Mock-TSA
+   *  daher OHNE_ZEITSTEMPEL = echte Signatur, rechtlich aber unzureichend. */
+  legalValidity: 'VOLLSTAENDIG' | 'OHNE_ZEITSTEMPEL' | 'UNGUELTIG';
   signatureCount: number;
   signedBy: string;
   issuerTrusted: boolean;
@@ -387,7 +390,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   // -------------------------------------------------------------------------
   // 10. validate mit signed PDF → valid: true
   // -------------------------------------------------------------------------
-  it('POST /api/signatur/validate mit signed PDF → valid: true', async () => {
+  it('POST /api/signatur/validate mit signed PDF → Signatur intakt, aber nicht rechtswirksam', async () => {
     expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('')
     const signRes = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
       method: 'POST',
@@ -412,7 +415,20 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
     expect(valRes.status).toBe(200);
     const result = (await valRes.json()) as ValidationResponse;
     expect(result.signatureCount).toBeGreaterThan(0);
+    // Die Signatur STRUKTURELL ist in Ordnung: PKCS#7 vorhanden, ByteRange und
+    // encryptedDigest stimmen (documentIntegrity).
     expect(result.documentIntegrity).toBe(true);
+    // Rechtlich ist sie trotzdem NICHT wirksam — und zwar aus zwei Gruenden:
+    //   1. Der Issuer ist das selbstsignierte Test-P12 und damit nicht
+    //      vertrauenswuerdig (fail-closed, seit der CRL-Einfuehrung).
+    //   2. Es laeuft ein Mock-TSA, der Zeitstempel ist ungeprueft.
+    // Der Test hiess vorher "-> valid: true", behauptete valid aber NIE —
+    // geprueft wurden nur signatureCount und documentIntegrity. `valid` ist
+    // in Wirklichkeit die ganze Zeit false.
+    expect(result.valid).toBe(false);
+    expect(result.issuerTrusted).toBe(false);
+    expect(result.timestampValid).toBe(false);
+    expect(result.legalValidity).toBe('UNGUELTIG');
   });
 
   // -------------------------------------------------------------------------
@@ -491,6 +507,7 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
     const result = (await valRes.json()) as ValidationResponse;
     expect(result.documentIntegrity).toBe(false);
     expect(result.valid).toBe(false);
+    expect(result.legalValidity).toBe('UNGUELTIG');
   });
 
   // 12. validate mit unsigned PDF → signatureCount: 0

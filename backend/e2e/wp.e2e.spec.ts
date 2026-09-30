@@ -188,7 +188,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
     const sb = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const bilanzRes = await authFetch(
       sb.accessToken,
-      `/api/bilanz?mandantId=${sb.user.mandanten[0]?.id}`,
+      `/api/bilanz?mandantId=${mandantOf(sb)}`,
     );
     const bilanzList = (await bilanzRes.json()) as BilanzSummary[];
     const bilanzId = bilanzList[0]?.id;
@@ -217,7 +217,7 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
     const sb = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const bilanzRes = await authFetch(
       sb.accessToken,
-      `/api/bilanz?mandantId=${sb.user.mandanten[0]?.id}`,
+      `/api/bilanz?mandantId=${mandantOf(sb)}`,
     );
     const bilanzList = (await bilanzRes.json()) as BilanzSummary[];
     wpBilanzId = bilanzList[0]?.id ?? '';

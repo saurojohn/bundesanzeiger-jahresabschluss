@@ -32,6 +32,7 @@ import type {
   ValidationResult,
 } from '../interfaces/signature.types';
 import { P12Service } from './p12.service';
+import type { LegalValidity } from '../interfaces/signature.types';
 import { TsaClientService } from './tsa-client.service';
 
 /**
@@ -313,6 +314,7 @@ export class SignaturService {
       errors.push('Keine eingebettete PKCS#7-Signatur gefunden');
       return {
         valid: false,
+        legalValidity: 'UNGUELTIG',
         signatureCount: 0,
         signedBy: null,
         issuerTrusted: false,
@@ -421,8 +423,26 @@ export class SignaturService {
       !certificateExpired &&
       errors.length === 0;
 
+    // Rechtliche Wirksamkeitsstufe. Bewusst getrennt von `valid`:
+    // `valid` bleibt aus Rueckwaerts-Kompatibilitaet, aber ein Client soll
+    // an `legalValidity` erkennen, dass ein Mock-/Fehl-Zeitstempel kein
+    // BAnz-taugliches Dokument ergibt.
+    const legalValidity: LegalValidity = !valid
+      ? 'UNGUELTIG'
+      : timestampValid
+        ? 'VOLLSTAENDIG'
+        : 'OHNE_ZEITSTEMPEL';
+
+    if (valid && !timestampValid) {
+      warnings.push(
+        'Zeitstempel nicht verifiziert (Mock-TSA oder TSA nicht erreichbar) — ' +
+          'die Signatur ist rechtlich NICHT ausreichend für eine Pflichtveröffentlichung',
+      );
+    }
+
     return {
       valid,
+      legalValidity,
       signatureCount,
       signedBy,
       issuerTrusted,

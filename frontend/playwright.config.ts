@@ -28,6 +28,10 @@ export default defineConfig({
 
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3001',
+    // CI-Runner sind gemeinsam; 20 s war dort knapp. 45 s laesst echte
+    // Langsamkeit zu, ohne haengende Tests zu verdecken.
+    actionTimeout: 45_000,
+    navigationTimeout: 45_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     locale: 'de-DE',

@@ -20,6 +20,44 @@ const SEED_USER = {
   password: 'Demo123!',
 };
 
+/**
+ * Backend-Vorabtest — trennt „Backend nicht erreichbar/kein Login" von
+ * „Frontend navigiert nicht".
+ *
+ * Motivation: In den CI-Läufen am 2026-09-30 erschienen zwei völlig
+ * verschiedene Ursachen als GLEICHE Fehlermeldung (`waitForURL: Timeout`):
+ *   * 12:13 — CORS verweigerte die Origin, jeder Login scheiterte
+ *   * weitere Läufe — Varianten davon
+ * Wer nur auf `waitForURL` wartet, erfährt nicht, ob das Backend tot ist,
+ * der Login abgelehnt wird oder der Router hängt. Dieser Vorabtest macht das
+ * unterscheidbar: er schlägt mit einer Meldung fehl, die die Ursache nennt.
+ */
+async function assertBackendLoginWorks(): Promise<void> {
+  const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3000'}/api/auth/login`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(SEED_USER),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    throw new Error(
+      `VORABTEST FEHLGESCHLAGEN: Backend unter ${url} nicht erreichbar (${(err as Error).message}). ` +
+        'Ursache ist das Backend/Netzwerk, NICHT der Next-Router.',
+    );
+  }
+  if (response.status !== 200) {
+    const body = await response.text().catch(() => '');
+    throw new Error(
+      `VORABTEST FEHLGESCHLAGEN: POST ${url} antwortete ${response.status} — ` +
+        `Body: ${body.slice(0, 220)}. Häufigste Ursache: CORS (FRONTEND_URL im Job-Env ` +
+        'fehlt oder enthält die Origin des Frontends nicht).',
+    );
+  }
+}
+
 /** Meldet sich an und legt den Token in localStorage ab (wie LoginForm). */
 async function login(page: Page, email = SEED_USER.email, password = SEED_USER.password) {
   await page.goto(`/${LOCALE}/login`);
@@ -38,8 +76,10 @@ test.describe('Anmeldung', () => {
   });
 
   test('gültige Anmeldung landet im Dashboard und speichert das Token', async ({ page }) => {
+    // Erst das Backend prüfen. Sonst ist ein Timeout nicht interpretierbar.
+    await assertBackendLoginWorks();
     await login(page);
-    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 20_000 });
+    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
 
     const token = await page.evaluate(() => localStorage.getItem('accessToken'));
     expect(token, 'accessToken muss nach dem Login in localStorage stehen').toBeTruthy();
@@ -64,8 +104,9 @@ test.describe('Anmeldung', () => {
 
 test.describe('Fachseiten (mit Session)', () => {
   test.beforeEach(async ({ page }) => {
+    await assertBackendLoginWorks();
     await login(page);
-    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 20_000 });
+    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
   });
 
   for (const [pfad, erwartet] of [

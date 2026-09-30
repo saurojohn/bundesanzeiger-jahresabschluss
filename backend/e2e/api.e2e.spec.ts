@@ -299,6 +299,47 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
   });
 
   // ===========================================================================
+  // 10b. POST /api/v1/banz-submissions -> 501, NICHT 202 mit erfundener ID
+  // ===========================================================================
+  // Regressionstest gegen einen Befund aus dem Code-Review: der Endpunkt
+  // antwortete 202 Accepted mit `id: "placeholder-<timestamp>"`. Es wurde
+  // nichts persistiert — ein Client, der die ID speicherte, verwies auf einen
+  // Datensatz, den es nie gab. Die Antwort behauptete zudem "asynchron",
+  // also eine angenommene Einreichung.
+  //
+  // 501 ist hier die ehrliche Antwort: `BanzSubmission` verlangt die
+  // Pflichtfelder jahresabschlussId, rawPayload und payloadHash, die ein
+  // Public-API-Aufruf nicht liefern kann.
+  it('POST /api/v1/banz-submissions → 501 statt 202 mit Platzhalter-ID', async () => {
+    if (!fixture) throw new Error('Auth-Fixture fehlt — Seed nicht gelaufen oder /api/mandant leer');
+    const created = await createTestApiKey(fixture.adminToken, fixture.kanzleiId, [
+      'banz-submission:write',
+    ]);
+    if (!created) throw new Error('API-Key konnte nicht erstellt werden');
+
+    const res = await fetch(`${BASE}/api/v1/banz-submissions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${created.apiKey.keyId}.${created.plaintextSecret}`,
+      },
+      body: JSON.stringify({
+        mandantId: fixture.mandantId,
+        geschaeftsjahr: 2025,
+        publishChannel: 'XML_XBRL',
+      }),
+    });
+
+    expect(res.status).toBe(501);
+    const raw = await res.text();
+    // Kein Platzhalter, keine erfundene ID
+    expect(raw).not.toContain('placeholder');
+    // Die alte ID war `placeholder-${Date.now()}` — 13-stellige Ziffernfolge
+    expect(raw).not.toMatch(/placeholder-\d{13}/);
+    expect(JSON.parse(raw)).toMatchObject({ statusCode: 501 });
+  });
+
+  // ===========================================================================
   // 11. Webhook-Delivery mit HMAC-Verifikation erfolgreich
   // ===========================================================================
   it('Webhook-Delivery HMAC-Signatur wird korrekt berechnet', () => {

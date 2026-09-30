@@ -3,13 +3,12 @@ import {
   Controller,
   ForbiddenException,
   Get,
-  HttpCode,
-  HttpStatus,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
+  NotImplementedException,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -32,7 +31,6 @@ import {
   type PublicBanzSubmissionListResponse,
   type PublicMandantDto,
   type PublicJahresabschlussDto,
-  type PublicBanzSubmissionDto,
   CreatePublicBanzSubmissionDto,
 } from '../../dto/v1-dtos';
 
@@ -217,39 +215,49 @@ export class ApiV1Controller {
    * akzeptiert Body gem. CreatePublicBanzSubmissionDto.
    */
   @Post('banz-submissions')
-  @HttpCode(HttpStatus.ACCEPTED)
   @RequireScope('banz-submission:write')
   @ApiOperation({
-    summary: 'BAnz-Submission erstellen',
+    summary: 'BAnz-Submission erstellen (noch nicht implementiert)',
     description:
-      'Erstellt eine neue Bundesanzeiger-Submission. Asynchron, antwortet mit 202.',
+      'NICHT IMPLEMENTIERT. Derzeit wird 501 zurueckgegeben.\n\n' +
+      'Die frueher hier zurueckgegebene Antwort (202 Accepted mit ' +
+      '`id: "placeholder-<timestamp>"`) war fachlich falsch: es wurde ' +
+      'nichts persistiert, die ID existierte in der Datenbank nie. ' +
+      'Ein Client, der sie gespeichert hat, verweist auf einen ' +
+      'Datensatz, den es nie gab.\n\n' +
+      'Warum das nicht einfach baubar ist: `BanzSubmission` verlangt ' +
+      'Pflichtfelder, die ein Public-API-Aufruf nicht liefern kann — ' +
+      '`jahresabschlussId` (FK auf einen bereits erstellten ' +
+      'Jahresabschluss), `rawPayload` (die generierten XML/XBRL-Daten) ' +
+      'und `payloadHash`. Die Erzeugung gehoert in das Ebilanz-Modul, ' +
+      'nicht in die Public-API.',
+  })
+  @ApiResponse({
+    status: 501,
+    description:
+      'Nicht implementiert — es wird kein Datensatz angelegt und keine ID vergeben.',
   })
   async createBanzSubmission(
     @CurrentApiKey() ctx: APIKeyContext,
     @Body() dto: CreatePublicBanzSubmissionDto,
-  ): Promise<PublicBanzSubmissionDto> {
-    // Validate mandant is in our kanzlei
+  ): Promise<never> {
+    // Berechtigungspruefung bleibt: sie verhindert, dass ein Aufrufer ueber
+    // den Fehlerstatus Mandanten fremder Kanzleien enumeriert.
     try {
       await this.readService.assertMandantInKanzleiForApiKey(ctx, dto.mandantId);
     } catch {
       throw new ForbiddenException('Mandant nicht zugänglich');
     }
 
-    // Implementation: erstelle eine Submission im Status QUEUED.
-    // Vollständige Generierung (XML/XBRL/PDF) übernimmt das Ebilanz-Modul
-    // — die Public-API legt nur den "Trigger" an und liefert die ID.
-    // Für die Pilot-Phase geben wir einen Platzhalter-Datensatz zurück.
-    const placeholder: PublicBanzSubmissionDto = {
-      id: `placeholder-${Date.now()}`,
-      jahresabschlussId: 'pending',
-      mandantId: dto.mandantId,
-      geschaeftsjahr: dto.geschaeftsjahr,
-      channel: dto.publishChannel,
-      status: 'PREPARED',
-      banzVorgangsnummer: null,
-      submittedAt: null,
-    };
-    return placeholder;
+    // KEIN Verweis auf einen Alternativ-Endpunkt: es gibt derzeit keinen.
+    // (Ein solcher Verweis stand in einem ersten Entwurf dieser Meldung —
+    //  `POST /api/jahresabschluss/{id}/banz-submission` existiert nicht.)
+    throw new NotImplementedException(
+      'Die Erstellung einer BAnz-Submission ueber die Public-API ist nicht ' +
+        'implementiert. Es wurde NICHTS angelegt und keine Auftragsnummer ' +
+        'vergeben. Einzelauskunft: derzeit existiert im System kein ' +
+        'Endpunkt, der eine BAnz-Submission anlegt.',
+    );
   }
 
   private parsePageSize(raw: string | undefined, fallback: number): number {

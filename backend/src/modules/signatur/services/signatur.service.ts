@@ -16,6 +16,11 @@ import {
   verifyPdfSignature,
 } from '../utils/pdf-signature-verify';
 import { checkCertificateRevocation } from '../utils/crl-checker';
+import {
+  parseTimestampToken,
+  checkTimestampPlausibility,
+  type ParsedTimestamp,
+} from '../utils/timestamp-token.parser';
 import { AuditService } from '../../audit/services/audit.service';
 import { PdfService } from '../../pdf/services/pdf.service';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -304,6 +309,17 @@ export class SignaturService {
   async validateSignature(args: {
     signedPdfBytes: Buffer;
     expectedSignerEmail?: string;
+    /**
+     * RFC-3161-Token des Zeitstempels (application/timestamp-reply).
+     *
+     * Wird beim Signieren in den WORM-Storage gelegt (siehe `signDocument`).
+     * Ohne dieses Token kann die Zeitstempelprüfung nicht stattfinden — der
+     * Zeitstempel ist derzeit NICHT als DocTimeStamp im PDF eingebettet,
+     * sondern wird als Beweisobjekt geführt. Das ist bewusst dokumentiert und
+     * der Grund, warum `legalValidity` ohne eingebetteten Zeitstempel nie
+     * `VOLLSTAENDIG` wird.
+     */
+    timestampTokenBytes?: Buffer;
   }): Promise<ValidationResult> {
     const warnings: string[] = [];
     const errors: string[] = [];
@@ -402,11 +418,38 @@ export class SignaturService {
       signedBy = verification.certificate.subject;
     }
 
-    // 5. Timestamp-Validation — Mock-Mode kann nicht validiert werden
-    const timestampValid = false;
-    warnings.push(
-      'TSA-Token-Validation in M2 nicht implementiert (Mock-Modus), folgt in M3',
-    );
+    // 5. Timestamp-Validierung
+    //
+    // Bis 2026-10-01 stand hier `const timestampValid = false;` mit der
+    // Begründung "Mock-Modus, folgt in M3" — unabhängig davon, ob ein Token
+    // vorlag. Das war in zwei Richtungen falsch:
+    //   1. Ein echtes, von der TSA signiertes Token wurde nie ausgewertet.
+    //   2. Die Begründungstext behauptete Modalität ("Mock-Modus"), obwohl im
+    //      Produktivbetrieb ein Token vorliegt.
+    //
+    // Heute: strukturelle Prüfung des RFC-3161-Tokens (messageImprint gegen
+    // den signierten Dokumentinhalt, genTime-Plausibilität). Die kryptografische
+    // Prüfung der TSA-Signatur bleibt offen und wird weiterhin über
+    // `legalValidity` ausgewiesen — ein strukturell gültiges Token ohne
+    // geprüfte Signatur ist kein Nachweis des Ausstellers.
+    const timestampCheck = this.checkTimestamp(args.signedPdfBytes, args.timestampTokenBytes);
+    const timestampValid = timestampCheck.valid;
+    if (!timestampValid) {
+      warnings.push(
+        `Zeitstempel: ${timestampCheck.reason ?? 'nicht verwertbar'}. ` +
+          (timestampCheck.signatureVerified
+            ? 'Die TSA-Signatur des Tokens ist nicht verifiziert — für eine ' +
+              'Pflichtveröffentlichung ist ein vertrauenswürdiger TSA-Nachweis erforderlich.'
+            : 'Ohne gültigen Zeitstempel ist die Signatur rechtlich NICHT ' +
+              'ausreichend für eine Pflichtveröffentlichung.'),
+      );
+    } else if (!timestampCheck.signatureVerified) {
+      warnings.push(
+        'Zeitstempel strukturell gültig (messageImprint stimmt, Zeitpunkt plausibel), ' +
+          'aber die TSA-Signatur wurde nicht kryptografisch verifiziert — ' +
+          'siehe legalValidity.',
+      );
+    }
 
     // 6. Document-Integrität: Struktur + messageDigest + Kryptografie
     const documentIntegrity = this.checkDocumentIntegrity(args.signedPdfBytes);
@@ -523,8 +566,17 @@ export class SignaturService {
       .digest('hex');
 
     // 7) Optional: TSA-Zeitstempel
+    //
+    // Wichtig: der Zeitstempel-Hash wird über `hashBefore` (also über das
+    // UNSIGNIERTE PDF) gebildet — genau so, wie es der Aufrufer erwartet.
+    // Das ist auch die übliche Praxis für BAnz-Dokumente: der Zeitstempel
+    // bezieht sich auf den Dokumentinhalt, die Signatur deckt zusätzlich die
+    // Signaturwerte ab.
     let timestamp: Date | undefined;
     let timestampAuthority: string | undefined;
+    let timestampTokenWormKey: string | undefined;
+    let timestampTokenSha256: string | undefined;
+    let parsedToken: ParsedTimestamp | undefined;
     if (args.includeTimestamp !== false) {
       const tsResponse = this.tsaUrl
         ? await this.tsaClient.getTimestamp(
@@ -534,8 +586,31 @@ export class SignaturService {
             this.tsaPwd,
           )
         : this.tsaClient.getMockTimestamp(Buffer.from(hashBefore, 'hex'));
-      timestamp = tsResponse.timestamp;
+      timestamp = tsResponse.timestamp ?? undefined;
       timestampAuthority = tsResponse.tsaName;
+      parsedToken = tsResponse.parsedToken;
+
+      // Das Token gehört zur Beweiskette und wird deshalb nach WORM gelegt —
+      // nicht nur in der DB abgelegt. Sonst könnte jemand mit DB-Zugriff den
+      // Zeitstempel-Datensatz ändern, während das Token selbst unverändert
+      // bliebe (oder umgekehrt). Der Object-Key landet im Signatur-Datensatz.
+      if (tsResponse.timestampBytes?.length) {
+        const tokenKey = this.buildTimestampObjectKey(
+          args.mandantId,
+          entityType,
+          entityId,
+        );
+        const tokenMeta = await this.storageService.uploadToWorm({
+          objectKey: tokenKey,
+          entityType: this.entityTypeForSigned(entityType),
+          entityId,
+          mandantId: args.mandantId,
+          data: tsResponse.timestampBytes,
+          contentType: 'application/timestamp-reply',
+        });
+        timestampTokenWormKey = tokenKey;
+        timestampTokenSha256 = tokenMeta.sha256Hash;
+      }
     }
 
     // 8) Signiertes PDF in WORM hochladen (NEUER Key — append-only)
@@ -662,6 +737,11 @@ export class SignaturService {
       certificateMetadata: certMetadata,
       timestampAuthority,
       timestamp,
+      ...(timestampTokenWormKey ? { timestampTokenWormKey } : {}),
+      ...(timestampTokenSha256 ? { timestampTokenSha256 } : {}),
+      ...(parsedToken?.serialNumber
+        ? { timestampSerialNumber: parsedToken.serialNumber }
+        : {}),
       hashBefore,
       hashAfter,
       isValid: true,
@@ -750,6 +830,24 @@ export class SignaturService {
   }
 
   /**
+   * Object-Key für das RFC-3161-Token des Zeitstempels.
+   *
+   * Bewusst ein eigener Schlüssel neben dem signierten PDF: das Token ist ein
+   * eigener Beweis mit eigener SHA-256-Summe. Beide landen im selben
+   * WORM-Container mit Object-Lock COMPLIANCE, sind aber getrennt abrufbar
+   * und getrennt prüfbar.
+   */
+  private buildTimestampObjectKey(
+    mandantId: string,
+    entityType: SignedEntityType,
+    _entityId: string,
+  ): string {
+    const suffix = uuidv4();
+    const entity = entityType.toLowerCase();
+    return `mandant/${mandantId}/${entity}-timestamp/${new Date().getUTCFullYear()}/${suffix}.tsr`;
+  }
+
+  /**
    * Versucht, die Jahresabschluss-ID für eine signierte Entity zu
    * bestimmen (für Audit-Trail-Kontext + Signature-DB-Record).
    *
@@ -830,6 +928,112 @@ export class SignaturService {
       this.logger.warn(`PDF-Integritaet nicht bestaetigt: ${result.reason}`);
     }
     return result.verified;
+  }
+
+  /**
+   * Prüft die Integrität des signierten PDF anhand der /ByteRange.
+   *
+   * Der Hash wird über die von der /ByteRange abgedeckten Bytes gebildet —
+   * das ist genau der Dokumentinhalt ohne den Signatur-Slot und damit der
+   * Wert, den auch eine TSA als messageImprint bestätigt.
+   *
+   * @returns SHA-256 über den signierten Inhalt, oder null wenn keine
+   *          auswertbare /ByteRange gefunden wird.
+   */
+  private hashSignedContent(pdfBuffer: Buffer): Buffer | null {
+    const text = pdfBuffer.toString('latin1');
+    // /ByteRange [a b c d] — PDF-Notation: Byte-Offset und Länge.
+    const match = text.match(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/);
+    if (!match) return null;
+    const [, a, len1, c, len2] = match.map((v) => Number.parseInt(v, 10)) as unknown as number[];
+    if (![a, len1, c, len2].every((n) => Number.isFinite(n))) return null;
+    const ranges: Array<[number, number]> = [
+      [a, len1],
+      [c, len2],
+    ];
+    const chunks: Buffer[] = [];
+    for (const [start, len] of ranges) {
+      if (start < 0 || len < 0 || start + len > pdfBuffer.length) {
+        this.logger.warn(
+          `ByteRange ${start}+${len} liegt außerhalb des Dokuments (${pdfBuffer.length} Bytes) — ` +
+            'Hash über signierten Inhalt nicht bildbar.',
+        );
+        return null;
+      }
+      chunks.push(pdfBuffer.subarray(start, start + len));
+    }
+    return createHash('sha256').update(Buffer.concat(chunks)).digest();
+  }
+
+  /**
+   * Strukturelle Prüfung des RFC-3161-Zeitstempel-Tokens.
+   *
+   * Geprüft wird:
+   *   1. das Token ist als TimeStampResp lesbar
+   *   2. `messageImprint` stimmt mit dem Hash des signierten Inhalts überein
+   *      (beweist: genau dieses Dokument wurde zeitgestempelt)
+   *   3. `genTime` liegt im plausiblen Rahmen (nicht in der Zukunft, nicht vor
+   *      der Signatur, innerhalb der Gültigkeit des TSA-Zertifikats)
+   *
+   * NICHT geprüft wird:
+   *   die kryptografische Signatur der TSA über das Token. Ohne Trust-Store für
+   *   die TSA-Zertifikate wäre jede solche Prüfung eine Scheinsicherheit. Der
+   *   Aufrufer weist das über `legalValidity` und `signatureVerified: false` aus.
+   */
+  private checkTimestamp(
+    signedPdfBytes: Buffer,
+    timestampTokenBytes?: Buffer,
+  ): { valid: boolean; reason?: string; signatureVerified: false } {
+    if (!timestampTokenBytes || timestampTokenBytes.length === 0) {
+      return {
+        valid: false,
+        reason: 'kein RFC-3161-Token übergeben (nicht als DocTimeStamp eingebettet)',
+        signatureVerified: false,
+      };
+    }
+    const parsed = parseTimestampToken(timestampTokenBytes);
+    if (!parsed.parsed) {
+      return { valid: false, reason: parsed.reason ?? 'Token nicht lesbar', signatureVerified: false };
+    }
+
+    // Der messageImprint der TSA bezieht sich auf den signierten Dokumentinhalt.
+    // Wir bilden denselben Hash (SHA-256 über die /ByteRange-Bereiche) und
+    // vergleichen die Hex-Werte direkt.
+    const signedContentHash = this.hashSignedContent(signedPdfBytes);
+    if (signedContentHash) {
+      if (!parsed.messageImprintHex) {
+        return {
+          valid: false,
+          reason: 'Token enthält kein messageImprint — keine Bindung an ein Dokument',
+          signatureVerified: false,
+        };
+      }
+      const localHex = signedContentHash.toString('hex');
+      const tokenHex = parsed.messageImprintHex.toLowerCase();
+      if (localHex !== tokenHex) {
+        return {
+          valid: false,
+          reason: `messageImprint passt nicht zum signierten Inhalt (Token ${tokenHex.slice(0, 16)}…, Dokument ${localHex.slice(0, 16)}…)`,
+          signatureVerified: false,
+        };
+      }
+    } else {
+      this.logger.warn(
+        'Keine /ByteRange im signierten PDF gefunden — messageImprint-Vergleich übersprungen. ' +
+          'Der Zeitstempel wird nur strukturell auf Plausibilität geprüft.',
+      );
+    }
+
+    const plausibility = checkTimestampPlausibility({
+      genTime: parsed.genTime,
+      tsaNotAfter: parsed.tsaNotAfter,
+      tsaNotBefore: parsed.tsaNotBefore,
+    });
+    if (!plausibility.plausible) {
+      return { valid: false, reason: plausibility.reason, signatureVerified: false };
+    }
+
+    return { valid: true, signatureVerified: false };
   }
 
   /**

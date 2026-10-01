@@ -310,7 +310,12 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
       // Das Ergebnis MUSS das auch ausweisen — ein echter TSA liefert hier
       // einen anderen Autoritaetsnamen.
       expect(body.timestampAuthority).toMatch(/MOCK/i);
-      expect(body.timestamp).toBeTruthy();
+      // Und es darf KEIN Zeitpunkt behauptet werden: der Mock-TSA hat keinen.
+      // Bis 2026-10-01 stand hier `new Date()` — die lokale Uhrzeit wurde als
+      // Zeitstempel der TSA ausgegeben, ohne dass eine TSA etwas bestätigt
+      // hatte. Ein nicht bestätigter Zeitpunkt ist als `null` zu führen, nicht
+      // als geratener Wert (siehe tsa-client.service.ts / getMockTimestamp).
+      expect(body.timestamp ?? null).toBeNull();
       // Signatur und Hash-Kette muessen vollstaendig sein
       expect(body.signedPdfBase64.length).toBeGreaterThan(1000);
       expect(body.hashBefore).not.toBe(body.hashAfter);

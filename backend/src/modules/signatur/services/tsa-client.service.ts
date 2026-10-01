@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios, { type AxiosResponse } from 'axios';
 import { createHash } from 'node:crypto';
 import forge from 'node-forge';
+import {
+  parseTimestampToken,
+  type ParsedTimestamp,
+} from '../utils/timestamp-token.parser';
 
 /**
  * RFC-3161-konformer TSA-Client.
@@ -24,8 +28,10 @@ export class TsaClientService {
    *
    * HTTP-Transport: POST application/timestamp-query (RFC 3161 §3).
    *
-   * Response: DER-codierter TimeStampResp — wir geben den Inhalt als
-   * Bytes zurück, ohne ihn zu parsen (das macht @signpdf intern).
+   * Response: DER-codierter TimeStampResp. Die Bytes werden per
+   * `parseTimestampToken` ausgewertet — Zeitpunkt, Seriennummer und
+   * Ausstellername stammen damit aus dem Token und nicht aus der URL oder
+   * der lokalen Uhr (siehe `utils/timestamp-token.parser.ts`).
    */
   async getTimestamp(
     hash: Buffer,
@@ -33,10 +39,11 @@ export class TsaClientService {
     tsaUser?: string,
     tsaPwd?: string,
   ): Promise<{
-    timestamp: Date;
+    timestamp: Date | null;
     timestampBytes: Buffer;
     tsaName: string;
-    serialNumber: string;
+    serialNumber: string | null;
+    parsedToken: ParsedTimestamp;
   }> {
     const req = this.buildTimeStampRequest(hash);
     const headers: Record<string, string> = {
@@ -68,17 +75,34 @@ export class TsaClientService {
     }
 
     const timestampBytes = Buffer.from(response.data);
-    const serialNumber = createHash('sha256')
-      .update(timestampBytes)
-      .digest('hex')
-      .slice(0, 16);
-    const tsaName = this.extractTsaNameFromUrl(tsaUrl);
+
+    // Werte aus dem Token lesen, NICHT aus der URL oder der lokalen Uhr
+    // ableiten. Bis 2026-10-01 stand hier `new Date()` + Hostname — beide
+    // sind keine Aussage der TSA über den Zeitpunkt und den Aussteller.
+    const parsed = parseTimestampToken(timestampBytes);
+    if (!parsed.parsed) {
+      this.logger.warn(
+        `TSA-Antwort nicht auswertbar (${tsaUrl}): ${parsed.reason ?? 'unbekannt'}. ` +
+          'Zeitstempel wird als nicht verwertbar geführt.',
+      );
+      return {
+        timestamp: null,
+        timestampBytes,
+        tsaName: this.extractTsaNameFromUrl(tsaUrl),
+        serialNumber: null,
+        parsedToken: parsed,
+      };
+    }
+    if (parsed.reason) {
+      this.logger.warn(`TSA-Token-Hinweis: ${parsed.reason}`);
+    }
 
     return {
-      timestamp: new Date(),
+      timestamp: parsed.genTime,
       timestampBytes,
-      tsaName,
-      serialNumber,
+      tsaName: parsed.tsaCommonName ?? this.extractTsaNameFromUrl(tsaUrl),
+      serialNumber: parsed.serialNumber,
+      parsedToken: parsed,
     };
   }
 
@@ -89,20 +113,37 @@ export class TsaClientService {
    * `timestampBytes` sind NICHT RFC-3161-konform — nur als
    * Platzhalter zu verstehen. Die Validierung würde diese Bytes
    * ablehnen.
+   *
+   * `timestamp` bleibt hier bewusst `null`: ein Mock hat keinen Zeitpunkt, den
+   * eine TSA bestätigt hat. previously stand hier `new Date()` — das sah in der
+   * Signatur-Datenbank aus wie ein echter Zeitstempel und wurde deshalb zu
+   * Recht als geratenes Wert behandelt.
    */
   getMockTimestamp(hash: Buffer): {
-    timestamp: Date;
+    timestamp: null;
     timestampBytes: Buffer;
     tsaName: string;
-    serialNumber: string;
+    serialNumber: null;
+    parsedToken: ParsedTimestamp;
   } {
     return {
-      timestamp: new Date(),
+      timestamp: null,
       // Wir geben den SHA-256-Hash als 32 Bytes zurück — leicht zu
       // erkennen in einem Hex-Dump, kein gültiges RFC-3161-Token.
       timestampBytes: hash.subarray(0, 32),
       tsaName: 'MOCK-TSA-BANZ-PILOT',
-      serialNumber: `MOCK-${Date.now()}`,
+      serialNumber: null,
+      parsedToken: {
+        genTime: null,
+        serialNumber: null,
+        hashAlgorithmOid: null,
+        messageImprintHex: null,
+        tsaCommonName: null,
+        tsaNotBefore: null,
+        tsaNotAfter: null,
+        parsed: false,
+        reason: 'Mock-TSA: es liegt kein RFC-3161-Token vor',
+      },
     };
   }
 

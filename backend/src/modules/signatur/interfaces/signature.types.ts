@@ -43,6 +43,19 @@ export interface SignatureResult {
   certificateMetadata: P12Metadata;
   timestampAuthority?: string;
   timestamp?: Date;
+  /**
+   * WORM-Key des RFC-3161-Tokens (`application/timestamp-reply`).
+   *
+   * Das Token wird nicht ins PDF eingebettet, sondern als eigenes Beweisobjekt
+   * mit Object-Lock COMPLIANCE abgelegt. Erst dadurch ist der Zeitstempel
+   * überhaupt prüfbar — bis 2026-10-01 wurden die Token-Bytes direkt nach dem
+   * Abruf verworfen.
+   */
+  timestampTokenWormKey?: string;
+  /** SHA-256 über das Token (entspricht dem Manifest-Eintrag im WORM-Storage). */
+  timestampTokenSha256?: string;
+  /** Seriennummer des Zeitstempels, wie von der TSA vergeben. */
+  timestampSerialNumber?: string | null;
   hashBefore: string;
   hashAfter: string;
   isValid: boolean;

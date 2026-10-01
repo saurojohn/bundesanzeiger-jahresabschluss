@@ -20,7 +20,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 |---|---|---|
 | Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
 | Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
-| Backend-E2E-Suite | ✅ | **241 / 241 grün** (19 Test-Dateien), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
+| Backend-E2E-Suite | ✅ | **256 / 256 grün** (20 Test-Dateien, davon 15 für den RFC-3161-Token-Parser), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
 | **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
 | **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
 | Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |
@@ -39,7 +39,8 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 | **Dokumente*| ~~`docs/rollen-rbac.md`, `docs/gobd-architektur.md`, `docs/datenmodell.md`~~ | ✅ ergänzt (aus dem tatsächlichen Code abgeleitet) |
 | **`scripts/`** (seed-Skript, BAnz-Test-Fixtures) | ❌ fehlt, in dieser README referenziert |
 | **Signatur-Integrität** | ✅ dreistufig geprüft (Struktur + messageDigest + **Kryptografie**: `encryptedDigest` gegen den Zertifikatsschlüssel, `node:crypto`). 21/21 Manipulationsversuche erkannt, inkl. des Bypass-Versuchs „Inhalt ändern + Digest neu berechnen". Vertrauenswürdigkeit des Zertifikats ist damit **nicht** geprüft. |
-| **Signatur-Zertifikat** | ✅ Gültigkeitszeitraum, KeyUsage, CA-Status und Aussteller werden geprüft; `valid` verlangt einen vertrauenswürdigen Aussteller (fail-closed). `
+| **Signatur-Zertifikat** | ✅ Gültigkeitszeitraum, KeyUsage, CA-Status und Aussteller werden geprüft; `valid` verlangt einen vertrauenswürdigen Aussteller (fail-closed). |
+| **TSA-Zeitstempel** | 🟡 **strukturell geprüft, nicht eingebettet.** Das RFC-3161-Token wird ausgewertet (`genTime`, Seriennummer, TSA-Common-Name, Gültigkeit) und in den WORM-Storage gelegt (Object-Lock COMPLIANCE, eigener SHA-256). `messageImprint` wird gegen den Hash des signierten PDF-Inhalts (`/ByteRange`) verglichen, `genTime` auf Plausibilität geprüft. **Nicht** geprüft: die kryptografische TSA-Signatur — dafür fehlt ein Trust-Store für TSA-Zertifikate. Und: der Zeitstempel ist **nicht** als DocTimeStamp im PDF eingebettet, sondern wird als Beweisobjekt geführt. `legalValidity` erreicht deshalb nie `VOLLSTAENDIG`, sondern höchstens `OHNE_ZEITSTEMPEL`. Bis 2026-10-01 wurden Zeitpunkt, Ausstellername und Seriennummer **geraten** (lokale Uhr, URL-Hostname, Hash der Antwortbytes) — die Token-Bytes wurden direkt nach dem Abruf verworfen. |
 | **Zertifikatskette / EU Trusted List / CRL-OCSP** | ❌ nicht implementiert — geprüft wird nur eine Betreiber-Liste (`SIGNATURE_TRUSTED_ISSUERS`) |
 | **IDW-PS-880-Audit** | ❌ `SECURITY-AUDIT.md` nennt als Auditor „Mavis + User" — eine **Selbstprüfung ist kein Normnachweis** |
 | **Deployment** | ❌ nicht erfolgt (Hetzner-VPS-IP + SSH-Key fehlen weiterhin) |

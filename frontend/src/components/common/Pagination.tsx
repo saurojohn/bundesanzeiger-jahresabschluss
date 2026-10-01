@@ -142,7 +142,16 @@ export function usePaginationLabels(
   };
 
   const key = module === 'wp' ? 'wp.notiz.pagination' : `${module}.pagination`;
-  const vars = { count, shown, total };
+
+  // next-intl 4 akzeptiert in Platzhalter-Values keine `undefined`. Solange
+  // die Zählwerte fehlen, übergeben wir die neutralen Defaults 0 — die
+  // Platzhalter werden in diesem Zustand ohnehin nicht ausgewertet, weil
+  // der jeweilige `fallback` greift.
+  const vars = {
+    count: count ?? 0,
+    shown: shown ?? 0,
+    total: total ?? 0,
+  };
 
   return {
     loadMore: t(`${key}.loadMore`, { fallback: fallback.loadMore }),

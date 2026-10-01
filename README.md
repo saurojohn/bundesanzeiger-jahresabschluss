@@ -20,7 +20,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 |---|---|---|
 | Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
 | Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
-| Backend-E2E-Suite | ✅ | **232 / 232 grün** (138 e2e + 94 Unit), über zwei Läufe identisch, über zwei aufeinanderfolgende Läufe identisch (reproduzierbar) |
+| Backend-E2E-Suite | ✅ | **241 / 241 grün** (19 Test-Dateien), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
 | **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
 | **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
 | Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |
@@ -32,9 +32,10 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 
 | Punkt | Status |
 |---|---|
-| **Git-Tags** (`m1-pilot-ready`, `m2-…`, `m3-…`, `m4-production-ready`) | ❌ **existieren nicht** — das Verzeichnis ist kein Git-Repository |
+| **Git-Tags** (`m1-pilot-ready`, `m2-pilot-ready`, `m3-kanzlei-ready`, `m4-production-ready`) | ✅ vorhanden — Repository `github.com/saurojohn/bundesanzeiger-jahresabschluss`, alle vier Tags auf `origin`. **Achtung:** die Tags markieren den *Code-Stand* der jeweiligen Runde, nicht eine abgenommene Abnahme (siehe übernächste Zeile). |
 | **Frontend-E2E-Coverage** | 🟡 10 Smoke-Tests vorhanden, aber **keine** Abdeckung der Formularstrecken (Bilanz-/GuV-Erfassung, PDF-Download, Signatur). `AGENTS.md §6` fordert 90 % für M4. |
-| **`next@15.0.3`** | ⚠️ **bekannte Sicherheitslücke CVE-2025-66478** (npm warnt beim Installieren). Upgrade auf eine gepatchte 15.x erforderlich. |
+| **`next@15.0.3` / `react@19.0.0-rc`** | ✅ behoben (2026-10-01): CVE-2025-66478 (RCE, CVSS 10.0) und die Nachfolge-Advisories CVE-2025-55183 / -55184 / -67779 sind mit **`next@15.5.27`** und **`react@19.0.8`** gepatcht. Zusätzlich `next-intl` 3.25.1 → **4.14.8** (Open Redirect + Prototype Pollution) und `outputFileTracingRoot` in `next.config.ts` gesetzt. Verifiziert mit 10/10 Playwright gegen den Production-Build. |
+| **Restliche Advisories** | 🟡 2 offen, beide nur per Next-Major löschen: `next` (moderate, DoS) und `postcss` (high, transitiv). `npm audit fix --force` will dafür **Next 16.3.8** — das ist ein eigener, getesteter Migrations-Schritt und wurde hier bewusst nicht als Nebenwirkung gemacht. |
 | **Dokumente*| ~~`docs/rollen-rbac.md`, `docs/gobd-architektur.md`, `docs/datenmodell.md`~~ | ✅ ergänzt (aus dem tatsächlichen Code abgeleitet) |
 | **`scripts/`** (seed-Skript, BAnz-Test-Fixtures) | ❌ fehlt, in dieser README referenziert |
 | **Signatur-Integrität** | ✅ dreistufig geprüft (Struktur + messageDigest + **Kryptografie**: `encryptedDigest` gegen den Zertifikatsschlüssel, `node:crypto`). 21/21 Manipulationsversuche erkannt, inkl. des Bypass-Versuchs „Inhalt ändern + Digest neu berechnen". Vertrauenswürdigkeit des Zertifikats ist damit **nicht** geprüft. |

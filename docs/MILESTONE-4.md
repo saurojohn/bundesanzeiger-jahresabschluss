@@ -31,7 +31,7 @@
 | **M4 Sprint 4** | 🟡 implementiert, nicht abgenommen | Hamburger-Menu, Card-Layout für Listen auf Mobile, Tap-Target ≥44px, PWA (manifest + Service-Worker). **Keine Frontend-E2E-Tests vorhanden** (siehe README → Verifikationsstand). |
 | **M4 Sprint 5** | 🟡 teilweise, nicht abgenommen | Audit-Trail-Hash-Chain (SHA-256), WORM-Retention-Audit-Script, Disaster-Recovery-Plan, GoBD-Audit-Report. Der enthaltene „Audit" ist eine **Selbstprüfung (Mavis + User) und damit kein IDW-PS-880-Nachweis**. |
 | **M4 Production-Release** | ⏳ offen | Subscription-Production, Mobile-Nachweis, externes IDW-PS-880-Audit, Release-Tag |
-| **M4 Sprint 3–5 Tag** | ⏳ nicht vorhanden | Es existiert kein `m4-production-ready`-Tag — das Verzeichnis ist kein Git-Repository (siehe README → Verifikationsstand). |
+| **M4 Sprint 3–5 Tag** | ✅ vorhanden | `m4-production-ready` liegt auf `origin` (Repository `github.com/saurojohn/bundesanzeiger-jahresabschluss`). Der Tag markiert den Code-Stand — er ist **keine** Abnahme-Freigabe, siehe Verifikationsstand in `README.md`. |
 
 ---
 

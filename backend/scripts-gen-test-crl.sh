@@ -106,7 +106,12 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days "$DAYS_CA" -nodes \
 
 mkdir -p fakeca/newcerts
 cp openssl.cnf fake-ca.cnf
-sed -i 's|^dir .*|dir               = ./fakeca|; s|^database .*|database          = $dir/index.txt|; s|^new_certs_dir .*|new_certs_dir     = $dir/newcerts|; s|^serial .*|serial            = $dir/serial|; s|^crlnumber .*|crlnumber         = $dir/crlnumber|; s|^certificate .*|certificate       = ./fake.crt|; s|^private_key .*|private_key       = ./fake.key|' fake-ca.cnf
+# Portable sed: `-i.bak` funktioniert auf GNU sed UND auf BSD sed (macOS).
+# Ein blankes `-i` ist auf BSD sed kein "in-place" — der nachfolgende Ausdruck
+# wird dort als Backup-Suffix interpretiert und die Ersetzung findet nicht statt
+# (Fehlerbild: `sed: 1: "fake-ca.cnf\n": invalid command code f`).
+sed -i.bak 's|^dir .*|dir               = ./fakeca|; s|^database .*|database          = $dir/index.txt|; s|^new_certs_dir .*|new_certs_dir     = $dir/newcerts|; s|^serial .*|serial            = $dir/serial|; s|^crlnumber .*|crlnumber         = $dir/crlnumber|; s|^certificate .*|certificate       = ./fake.crt|; s|^private_key .*|private_key       = ./fake.key|' fake-ca.cnf
+rm -f fake-ca.cnf.bak
 echo 2000 > fakeca/serial
 echo 2000 > fakeca/crlnumber
 : > fakeca/index.txt

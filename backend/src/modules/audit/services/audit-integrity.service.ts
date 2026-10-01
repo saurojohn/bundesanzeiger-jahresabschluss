@@ -73,18 +73,21 @@ export class AuditIntegrityService {
     const entryString = this.serializeForHashing(current);
     const entryHash = crypto.createHash('sha256').update(prevHash + entryString).digest('hex');
 
-    // Update in DB (ein zusätzlicher Roundtrip — akzeptabel für Audit-Writes)
+    // Update in DB (ein zusätzlicher Roundtrip — akzeptabel für Audit-Writes).
+    //
+    // Bugfix 2026-10-01 (Befund aus AUDIT-ATOMICITY-REVIEW.md, Abschnitt 2.2):
+    // `data` war ein LEERES OBJEKT. Der Hash wurde berechnet, aber nie
+    // persistiert — `as never` unterdrückte zusätzlich den TypeScript-Fehler,
+    // der auf das leere data aufmerksam gemacht hätte. Folge: entryHash und
+    // prevHash blieben für IMMER null, verifyIntegrity() meldete dauerhaft
+    // PARTIAL, und die als "Manipulationserkennung" verkaufte Hash-Chain
+    // (M4 Sprint 5) hat noch nie einen einzigen Hash gespeichert.
+    //
+    // Die Spalten existieren im Prisma-Modell und in beiden Migrationen —
+    // es war nie ein Migrationsproblem, sondern ein Logik-Problem.
     await this.prisma.auditLog.update({
       where: { id: auditLogId },
-      data: {
-        // Schema-Felder sind optional — wenn Schema-Migration noch nicht
-        // gelaufen ist, schlägt das Update fehl. Wir loggen nur.
-      } as never,
-    }).catch((err) => {
-      this.logger.warn(
-        `entryHash-Update fehlgeschlagen (Schema-Migration pending?): ${(err as Error).message}. ` +
-          'Siehe M4 Sprint 5 Migration: ALTER TABLE audit_log ADD COLUMN entry_hash, prev_hash.',
-      );
+      data: { entryHash, prevHash },
     });
 
     return { prevHash, entryHash };

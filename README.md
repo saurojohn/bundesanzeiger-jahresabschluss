@@ -20,7 +20,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 |---|---|---|
 | Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
 | Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
-| Backend-E2E-Suite | ✅ | **257 / 257 grün** (20 Test-Dateien; 15 für den RFC-3161-Token-Parser, 2 für die Steuernummer im E-Bilanz), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
+| Backend-E2E-Suite | ✅ | **261 / 261 grün** (21 Test-Dateien; 15 für den RFC-3161-Token-Parser, 2 für die Steuernummer im E-Bilanz, 4 für das PDF-Layout), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
 | **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
 | **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
 | Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |
@@ -46,7 +46,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 | **Deployment** | ❌ nicht erfolgt (Hetzner-VPS-IP + SSH-Key fehlen weiterhin) |
 | **Produktions-Abhängigkeiten** | ❌ Stripe live, qeS-Zertifikate, BAnz-Portal-Zugang — alles ungetestet |
 | **Kontobezeichnungen SKR04** | ⚠️ projektintern, nicht gegen die offizielle DATEV-Liste abgeglichen |
-| **PDF-Tabellenausschrieb** | ⚠️ `bezeichnung` wird per `ellipsis` gekürzt („Selbst geschaffene…") — für die Pflichtveröffentlichung zu kurz |
+| **PDF-Tabellenausschrieb** | ✅ behoben (2026-10-01). Bilanz und GuV schnitten Kontobezeichnungen per `ellipsis` ab und hatten **keinen Seitenumbruch** — bei vielen Konten lief die Tabelle über den unteren Rand. Jetzt: Umbruch erlaubt, Zeilenhöhe aus `heightOfString`, Seitenumbruch mit wiederholtem Spaltenkopf. 4 Tests prüfen das über den PDF-Text-Layer (`pdf-parse`), negativ verifiziert gegen den alten Code. |
 | **Steuernummer im E-Bilanz-Formular** | ✅ behoben (2026-10-01). Bis dahin schrieb der XBRL-Generator die **Handelsregisternummer** in `genInfo.companyInfo.taxNumber` und erfindete sonst `MANDANT-<id>` — beides eine falsche Angabe an das Finanzamt. Jetzt existiert `Mandant.steuernummer` (nullable, Migration `2026_10_01_add_mandant_steuernummer`); fehlt sie, bricht der Export mit 400 ab, statt sie zu ersetzen. Ein Mandanten-Erfassungsformular im Frontend existiert seit 2026-10-01 unter `/mandant` (Firmendaten inkl. Steuernummer, Sitz, Geschäftsführung, Veröffentlichungskanal). |
 
 ### CI

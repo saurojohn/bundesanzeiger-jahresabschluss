@@ -98,32 +98,50 @@ export async function renderGuVPdf(
       doc.font('Helvetica');
 
       let katSumme = 0;
+      // Siehe bilanz.template.ts: feste Zeilenhöhe mit `lineBreak: false`
+      // schnitt Kontobezeichnungen ab und erlaubte keinen Seitenumbruch.
+      // Für die Pflichtveröffentlichung muss die Bezeichnung vollständig
+      // lesbar sein (HGB § 266 / Gliederungsraster).
+      const pageBottom = doc.page.height - PDF_LAYOUT.margins.bottom - 30;
       for (let i = 0; i < filtered.length; i += 1) {
         const pos = filtered[i];
+        const rowText = `${pos.kontonummer}  ${pos.bezeichnung}`;
+        doc.fontSize(9);
+        const rowHeight = Math.max(
+          doc.heightOfString(rowText, { width: tableWidth - 100 }),
+          11,
+        );
+        if (doc.y + rowHeight + 6 > pageBottom) {
+          doc.addPage();
+          doc.fontSize(PDF_LAYOUT.font.size);
+          // Kategorie-Überschrift auf der Folgeseite wiederholen.
+          doc.fontSize(11).font('Helvetica-Bold').fillColor(PDF_LAYOUT.colors.accent);
+          doc.text(guvKategorieLabel(kat), { align: 'left' });
+          doc.font('Helvetica').fillColor(PDF_LAYOUT.colors.primary);
+        }
         const y = doc.y;
         if (i % 2 === 0) {
           doc
             .save()
-            .rect(tableLeft - 4, y - 2, tableWidth + 8, 14)
+            .rect(tableLeft - 4, y - 2, tableWidth + 8, rowHeight + 4)
             .fill(PDF_LAYOUT.colors.zebra)
             .restore();
         }
         const betrag = Number(pos.betragAktuell);
         katSumme += betrag;
         doc.fontSize(9).fillColor(PDF_LAYOUT.colors.primary);
-        doc.text(
-          `${pos.kontonummer}  ${pos.bezeichnung}`,
-          tableLeft,
-          y,
-          { width: tableWidth - 100, align: 'left', lineBreak: false },
-        );
+        doc.text(rowText, tableLeft, y, {
+          width: tableWidth - 100,
+          align: 'left',
+          lineBreak: true,
+        });
         doc.text(
           formatBetrag(betrag),
           tableLeft + tableWidth - 100,
           y,
-          { width: 100, align: 'right', lineBreak: false },
+          { width: 100, align: 'right', lineBreak: false, height: 11 },
         );
-        doc.y = y + 14;
+        doc.y = y + rowHeight + 3;
       }
       doc.moveDown(0.3);
       doc.fontSize(9).fillColor(PDF_LAYOUT.colors.accent).font('Helvetica-Bold');

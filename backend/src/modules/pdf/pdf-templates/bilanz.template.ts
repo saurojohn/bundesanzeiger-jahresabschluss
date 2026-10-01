@@ -283,20 +283,68 @@ export async function renderBilanzPdf(
     const colWidthPassiva = colWidthAktiva;
     const startX = PDF_LAYOUT.margins.left;
 
-    // Spaltenkopf
-    doc.fontSize(10).fillColor(PDF_LAYOUT.colors.accent);
-    doc.text('AKTIVA', startX, doc.y, { width: colWidthAktiva, align: 'left' });
-    doc.text(
-      'PASSIVA',
-      startX + colWidthAktiva + 20,
-      doc.y - 12,
-      { width: colWidthPassiva, align: 'left' },
-    );
-    doc.moveDown(0.5);
-
     // Tabelle (zwei Spalten) — wir gehen positionen-weise parallel durch.
+    //
+    // Zeilenhöhe und Umbruch (2026-10-01):
+    //   Vorher stand hier `ellipsis: true` mit fester Zeilenhöhe 11 und
+    //   `doc.y = y + 14`. Zwei Folgen für eine Pflichtveröffentlichung:
+    //     1. Eine zu lange Kontobezeichnung wurde abgeschnitten
+    //        („Selbst geschaffene…"). Die vollständige Bezeichnung gehört
+    //        in den Anhang bzw. das Gliederungsraster.
+    //     2. Es gab KEINEN Seitenumbruch. Bei vielen Konten lief die Tabelle
+    //        über den unteren Rand hinaus, ohne dass die Abschnitte
+    //        sichtbar wurden.
+    //   Jetzt: Umbruch ist erlaubt, die Zeilenhöhe ergibt sich aus dem
+    //   tatsächlichen Textumfang beider Spalten, und vor jeder Zeile wird
+    //   geprüft, ob noch Platz bis zum Fußbereich ist.
     const maxLen = Math.max(aktiva.length, passiva.length);
+    const textWidthAktiva = colWidthAktiva - 80;
+    const textWidthPassiva = colWidthPassiva - 80;
+    const FONT_SIZE_ROW = 9;
+    const LINE_HEIGHT_ROW = 11;
+    // Unterer Rand: Seitenhöhe minus unterer Rand (WORM-Footer-Zone).
+    const pageBottom = doc.page.height - PDF_LAYOUT.margins.bottom - 30;
+
+    // Spaltenkopf — als Funktion, damit er auf jeder Folgeseite wiederholt wird.
+    const drawColumnHeader = (): void => {
+      doc.fontSize(10).fillColor(PDF_LAYOUT.colors.accent);
+      doc.text('AKTIVA', startX, doc.y, { width: colWidthAktiva, align: 'left' });
+      doc.text('PASSIVA', startX + colWidthAktiva + 20, doc.y - 12, {
+        width: colWidthPassiva,
+        align: 'left',
+      });
+      doc.fillColor(PDF_LAYOUT.colors.primary);
+      doc.moveDown(0.5);
+    };
+
+    drawColumnHeader();
+
     for (let i = 0; i < maxLen; i += 1) {
+      const akt = aktiva[i];
+      const pas = passiva[i];
+
+      // Zeilenhöhe aus dem tatsächlichen Textumlauf bestimmen — eine Seite
+      // darf mehr Zeilen benötigen als die andere.
+      doc.fontSize(FONT_SIZE_ROW);
+      const aktText = akt ? `${akt.kontonummer}  ${akt.bezeichnung}` : '';
+      const pasText = pas ? `${pas.kontonummer}  ${pas.bezeichnung}` : '';
+      const aktHeight = aktText
+        ? doc.heightOfString(aktText, { width: textWidthAktiva })
+        : 0;
+      const pasHeight = pasText
+        ? doc.heightOfString(pasText, { width: textWidthPassiva })
+        : 0;
+      const rowHeight = Math.max(aktHeight, pasHeight, LINE_HEIGHT_ROW);
+
+      // Seitenumbruch, wenn die Zeile (inkl. Puffer) nicht mehr passt.
+      if (doc.y + rowHeight + 6 > pageBottom) {
+        doc.addPage();
+        doc.fontSize(PDF_LAYOUT.font.size);
+        // Spaltenkopf auf der Folgeseite wiederholen, damit AKTIVA/PASSIVA
+        // auch dort eindeutig zugeordnet bleiben.
+        drawColumnHeader();
+      }
+
       const y = doc.y;
       // Zebra-Striping
       if (i % 2 === 0) {
@@ -306,48 +354,44 @@ export async function renderBilanzPdf(
             startX - 4,
             y - 2,
             doc.page.width - PDF_LAYOUT.margins.left - PDF_LAYOUT.margins.right + 8,
-            14,
+            rowHeight + 4,
           )
           .fill(PDF_LAYOUT.colors.zebra)
           .restore();
       }
-      const akt = aktiva[i];
-      const pas = passiva[i];
 
-      doc.fontSize(9).fillColor(PDF_LAYOUT.colors.primary);
+      doc.fontSize(FONT_SIZE_ROW).fillColor(PDF_LAYOUT.colors.primary);
       if (akt) {
         const betrag = Number(akt.betragAktuell);
         aktivaSumme += betrag;
-        doc.text(
-          `${akt.kontonummer}  ${akt.bezeichnung}`,
-          startX,
-          y,
-          { width: colWidthAktiva - 80, align: 'left', lineBreak: false, ellipsis: true, height: 11 },
-        );
+        doc.text(aktText, startX, y, {
+          width: textWidthAktiva,
+          align: 'left',
+          lineBreak: true,
+        });
         doc.text(
           formatBetrag(betrag),
           startX + colWidthAktiva - 80,
           y,
-          { width: 80, align: 'right', lineBreak: false, ellipsis: true, height: 11 },
+          { width: 80, align: 'right', lineBreak: false, height: 11 },
         );
       }
       if (pas) {
         const betrag = Number(pas.betragAktuell);
         passivaSumme += betrag;
-        doc.text(
-          `${pas.kontonummer}  ${pas.bezeichnung}`,
-          startX + colWidthAktiva + 20,
-          y,
-          { width: colWidthPassiva - 80, align: 'left', lineBreak: false, ellipsis: true, height: 11 },
-        );
+        doc.text(pasText, startX + colWidthAktiva + 20, y, {
+          width: textWidthPassiva,
+          align: 'left',
+          lineBreak: true,
+        });
         doc.text(
           formatBetrag(betrag),
           startX + colWidthAktiva + 20 + colWidthPassiva - 80,
           y,
-          { width: 80, align: 'right', lineBreak: false, ellipsis: true, height: 11 },
+          { width: 80, align: 'right', lineBreak: false, height: 11 },
         );
       }
-      doc.y = y + 14;
+      doc.y = y + rowHeight + 3;
     }
 
     doc.moveDown(0.5);

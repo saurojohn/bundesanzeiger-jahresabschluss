@@ -13,6 +13,22 @@ import { type AuditActionLiteral } from '../constants/audit-actions';
 import { AuditService } from '../services/audit.service';
 
 const AUDITABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/**
+ * Feldnamen, deren WERT nie in den Audit-Trail wandern darf — unabhaengig
+ * davon, ob ein Controller sie zurueckgibt.
+ */
+const SENSITIVE_FIELD_NAMES: ReadonlySet<string> = new Set([
+  'password', 'passwort', 'newpassword', 'oldpassword', 'currentpassword',
+  'plaintextsecret', 'secret', 'clientsecret', 'apikey', 'token',
+  'accesstoken', 'refreshtoken', 'idtoken', 'authorization',
+  'privatekey', 'secretkey', 'p12', 'keyhash', 'hash', 'signature',
+  'totp', 'totpsecret', 'totpcode', 'backupcode', 'pin', 'cookie', 'setcookie',
+  'sessionid', 'csrf', 'samanagement',
+]);
+
+/** Maximale Laenge eines einzelnen Textfeldes im Audit-Log. */
+const MAX_FIELD_LENGTH = 2_000;
+
 const AUDIT_SKIP_PATHS = ['/api/auth/login', '/api/auth/refresh', '/api/auth/logout'];
 
 /**
@@ -24,6 +40,8 @@ const AUDIT_SKIP_PATHS = ['/api/auth/login', '/api/auth/refresh', '/api/auth/log
  */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
+  private static readonly SENSITIVE_FIELDS = SENSITIVE_FIELD_NAMES;
+  private static readonly MAX_FIELD_LENGTH = MAX_FIELD_LENGTH;
   private readonly logger = new Logger(AuditInterceptor.name);
 
   constructor(private readonly auditService: AuditService) {}
@@ -143,14 +161,50 @@ export class AuditInterceptor implements NestInterceptor {
     return null;
   }
 
+  /**
+   * Redigiert Secrets aus einem beliebigen Wert, BEVOR er ins Audit-Log geht.
+   *
+   * Warum (2026-10-01): Der Interceptor schrieb originally den kompletten
+   * Response-Body. Heute kommt z. B. ein `plaintextSecret` aus
+   * `POST /api/api-keys` nicht im Audit an — belegt wurde das, WARUM ist
+   * aber nirgends dokumentiert. Eine Sicherheit, die man nicht erklären kann,
+   * ist keine Sicherheit: die naechste Aenderung an einem Controller DANN
+   * genuegt.
+   *
+   * Deshalb wird hier explizit redigiert statt sich darauf zu verlassen, dass
+   * ein DTO-Feld gerade fehlt. Tiefe und Feldnamen werden unabhaengig vom
+   * Response-Shape angewendet.
+   */
   private safeJson(value: unknown): unknown {
     if (value === undefined || value === null) return null;
     try {
-      return JSON.parse(JSON.stringify(value)) as unknown;
+      return this.redact(JSON.parse(JSON.stringify(value)) as unknown, 0);
     } catch (err) {
       this.logger.warn(`Audit-Sanitize fehlgeschlagen: ${(err as Error).message}`);
       return null;
     }
+  }
+
+  private redact(value: unknown, depth: number): unknown {
+    if (depth > 8) return '[max-depth]';
+    if (Array.isArray(value)) {
+      return value.slice(0, 200).map((v) => this.redact(v, depth + 1));
+    }
+    if (value === null || typeof value !== 'object') return value;
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      if (AuditInterceptor.SENSITIVE_FIELDS.has(key.toLowerCase())) {
+        out[key] = '[redigiert]';
+        continue;
+      }
+      // Grosse Binaer-/Textfelder (PDF-Base64 o. ae.) sprengen das Audit-Log.
+      if (typeof v === 'string' && v.length > AuditInterceptor.MAX_FIELD_LENGTH) {
+        out[key] = v.slice(0, AuditInterceptor.MAX_FIELD_LENGTH) + ` [… (${v.length} Zeichen)]`;
+        continue;
+      }
+      out[key] = this.redact(v, depth + 1);
+    }
+    return out;
   }
 
   /**

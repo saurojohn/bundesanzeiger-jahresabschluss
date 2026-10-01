@@ -47,7 +47,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 | **Produktions-Abhängigkeiten** | ❌ Stripe live, qeS-Zertifikate, BAnz-Portal-Zugang — alles ungetestet |
 | **Kontobezeichnungen SKR04** | ⚠️ projektintern, nicht gegen die offizielle DATEV-Liste abgeglichen |
 | **PDF-Tabellenausschrieb** | ⚠️ `bezeichnung` wird per `ellipsis` gekürzt („Selbst geschaffene…") — für die Pflichtveröffentlichung zu kurz |
-| **Steuernummer im E-Bilanz-Formular** | ✅ behoben (2026-10-01). Bis dahin schrieb der XBRL-Generator die **Handelsregisternummer** in `genInfo.companyInfo.taxNumber` und erfindete sonst `MANDANT-<id>` — beides eine falsche Angabe an das Finanzamt. Jetzt existiert `Mandant.steuernummer` (nullable, Migration `2026_10_01_add_mandant_steuernummer`); fehlt sie, bricht der Export mit 400 ab, statt sie zu ersetzen. Ein Mandanten-Erfassungsformular im Frontend steht noch aus — die Felder sind über die API pflegbar und die i18n-Labels liegen vor. |
+| **Steuernummer im E-Bilanz-Formular** | ✅ behoben (2026-10-01). Bis dahin schrieb der XBRL-Generator die **Handelsregisternummer** in `genInfo.companyInfo.taxNumber` und erfindete sonst `MANDANT-<id>` — beides eine falsche Angabe an das Finanzamt. Jetzt existiert `Mandant.steuernummer` (nullable, Migration `2026_10_01_add_mandant_steuernummer`); fehlt sie, bricht der Export mit 400 ab, statt sie zu ersetzen. Ein Mandanten-Erfassungsformular im Frontend existiert seit 2026-10-01 unter `/mandant` (Firmendaten inkl. Steuernummer, Sitz, Geschäftsführung, Veröffentlichungskanal). |
 
 ### CI
 

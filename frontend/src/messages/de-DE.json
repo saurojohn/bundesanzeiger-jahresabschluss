@@ -79,7 +79,8 @@
     "settings": "Einstellungen",
     "help": "Hilfe",
     "branding": "Branding",
-    "apiKeys": "API-Schlüssel"
+    "apiKeys": "API-Schlüssel",
+    "subscription": "Subscription"
   },
   "dashboard": {
     "title": "Übersicht",
@@ -102,6 +103,48 @@
     "subtitle": "Verwaltung aller Mandanten Ihrer Kanzlei",
     "listTitle": "Mandantenliste",
     "newMandant": "Neuen Mandanten anlegen",
+    "subtitleForm": "Pflichtfelder sind mit * gekennzeichnet. Die Steuernummer des Finanzamts wird für die E-Bilanz benötigt.",
+    "existingTitle": "Bestehende Mandanten",
+    "noneYet": "Noch keine Mandanten angelegt.",
+    "createTitle": "Neuen Mandanten anlegen",
+    "createSubtitle": "Pflichtfelder sind mit * gekennzeichnet. Die Steuernummer des Finanzamts wird für die E-Bilanz benötigt und kann nicht aus der Handelsregisternummer abgeleitet werden.",
+    "createSuccess": "Mandant wurde angelegt.",
+    "confirmDelete": "Möchten Sie „{name}\" wirklich löschen? Zugehörige Bilanzen, GuV und Anhänge werden ebenfalls entfernt.",
+    "steuernummerMissing": "fehlt",
+    "steuernummerMissingHint": "Ohne Steuernummer schlägt der E-Bilanz-Export fehl.",
+    "create": "Mandant anlegen",
+    "saving": "Wird angelegt…",
+    "addManager": "Weiteren Geschäftsführer hinzufügen",
+    "section": {
+      "company": "Firmendaten",
+      "address": "Sitz der Gesellschaft",
+      "managers": "Geschäftsführung"
+    },
+    "table": {
+      "company": "Firma",
+      "handelsregister": "Handelsregister",
+      "steuernummer": "Steuernummer",
+      "size": "Größenklasse"
+    },
+    "field": {
+      "firmenname": "Firmenname *",
+      "rechtsform": "Rechtsform",
+      "handelsregister": "Handelsregister-Nr.",
+      "steuernummer": "Steuernummer (Finanzamt)",
+      "steuernummerHint": "Pflicht für die E-Bilanz, z. B. 12/345/67890.",
+      "ustId": "USt-IdNr.",
+      "strasse": "Straße und Hausnummer *",
+      "plz": "Postleitzahl *",
+      "ort": "Ort *",
+      "land": "Land (ISO-Code) *",
+      "managerName": "Name *",
+      "managerBirth": "Geburtsdatum",
+      "managerShare": "Anteil in %",
+      "groessenklasse": "Größenklasse (§ 267 HGB)",
+      "publishChannel": "Veröffentlichungskanal",
+      "publishChannelHint": "Legt fest, in welchem Format der Jahresabschluss veröffentlicht wird.",
+      "gruendungsdatum": "Gründungsdatum"
+    },
     "fields": {
       "firmenname": "Firmenname",
       "rechtsform": "Rechtsform",

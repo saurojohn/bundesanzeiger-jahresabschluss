@@ -27,6 +27,14 @@ type NavItem = {
 
 const NAV_ITEMS: ReadonlyArray<NavItem> = [
   { href: '/dashboard', key: 'dashboard' },
+  {
+    // Der i18n-Key heißt historisch "mandanten" (Mehrzahl) — deshalb hier
+    // key: 'mandanten', nicht den Pfad 'mandant'. Sonst rendert die Nav
+    // "navigation.mandant" und next-intl meldet MISSING_MESSAGE.
+    href: '/mandant',
+    key: 'mandanten',
+    visibleFor: ['KANZLEI_ADMIN', 'STEUERBERATER', 'SYSTEM_ADMIN'],
+  },
   { href: '/bilanz', key: 'bilanz' },
   { href: '/guv', key: 'guv' },
   { href: '/anhang', key: 'anhang' },

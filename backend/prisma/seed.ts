@@ -90,6 +90,7 @@ async function main(): Promise<void> {
       firmenname: MANDANT_DEMO,
       rechtsform: 'GmbH',
       handelsregister: 'HRB 123456',
+      steuernummer: '12/345/67890',
       ustId: 'DE111222333',
       adresse: {
         strasse: 'Demostrasse 12',
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
       firmenname: MANDANT_BEISPIEL,
       rechtsform: 'GmbH',
       handelsregister: 'HRB 234567',
+      steuernummer: '12/345/67891',
       ustId: 'DE222333444',
       adresse: {
         strasse: 'Beispielweg 7',
@@ -141,6 +143,7 @@ async function main(): Promise<void> {
       firmenname: MANDANT_TEST_AG,
       rechtsform: 'AG',
       handelsregister: 'HRB 345678',
+      steuernummer: '12/345/67892',
       ustId: 'DE333444555',
       adresse: {
         strasse: 'Testallee 99',

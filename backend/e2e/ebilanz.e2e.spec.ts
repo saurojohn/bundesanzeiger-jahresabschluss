@@ -320,6 +320,78 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     const body = (await res.json()) as GenerateEbilanzResponse;
     const xml = Buffer.from(body.xbrlBase64, 'base64').toString('utf-8');
     expect(xml).toContain('genInfo.companyInfo.taxNumber');
+
+    // Der Wert MUSS die echte Steuernummer des Mandanten sein.
+    //
+    // Bis 2026-10-01 stand hier nur `toContain('taxNumber')` — das prüft nur,
+    // dass das Feld überhaupt vorkommt. Der Generator schrieb aber die
+    // Handelsregisternummer hinein ("HRB 123456") und erfindete sonst
+    // "MANDANT-<id>". Der Test war damit grün, während im Formular eine
+    // falsche Angabe an das Finanzamt stand.
+    //
+    // Die Stammdaten kommen aus dem Mandanten-Endpoint, nicht aus dem Login:
+    // `/api/auth/login` liefert nur `{id, firmenname, rolle}`.
+    const mandantDetail = (await (
+      await fetch(`${BASE}/api/mandant/${mandant.id}`, { headers })
+    ).json()) as { steuernummer?: string | null; handelsregister?: string | null };
+    const taxNumber = mandantDetail.steuernummer;
+    expect(taxNumber, 'Mandant muss eine Steuernummer haben').toBeTruthy();
+    expect(xml).toContain(`>${taxNumber}<`);
+
+    // Der Wert im taxNumber-Element darf nicht die Handelsregisternummer sein.
+    // Wichtig: NUR den Inhalt dieses Elements prüfen — die HRB-Nummer gehört
+    // korrekt in `commercialRegister`, das folgt im XML direkt danach.
+    const taxValue = /<genInfo\.companyInfo\.taxNumber[^>]*>([^<]*)</.exec(xml)?.[1];
+    expect(taxValue, 'taxNumber-Element muss einen Wert haben').toBeTruthy();
+    expect(taxValue).toBe(taxNumber);
+    expect(taxValue).not.toContain(mandantDetail.handelsregister ?? '___nicht_gesetzt___');
+
+    // Gegenprobe: die Handelsregisternummer steht (korrekt) separat.
+    // Achtung: `toContain` sucht Literaltext — für "beliebige Attribute
+    // zwischen Name und Wert" braucht es `toMatch`.
+    if (mandantDetail.handelsregister) {
+      expect(xml).toMatch(
+        new RegExp(
+          `<genInfo\\.companyInfo\\.commercialRegister[^>]*>${mandantDetail.handelsregister}<`,
+        ),
+      );
+    }
+  });
+
+  /**
+   * Ohne Steuernummer bricht die Generierung ab, statt eine zu erfinden.
+   */
+  it('POST /api/ebilanz/generate ohne Steuernummer → 400, keine erfundene Nummer', async () => {
+    const loginRes = await loginAs('admin@kanzlei.de', 'Admin123!');
+    const headers = await authHeaders(loginRes.accessToken);
+    const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Demo GmbH');
+    if (!mandant) throw new Error('Demo GmbH nicht gefunden');
+    const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
+
+    // Steuernummer leeren
+    const cleared = await fetch(`${BASE}/api/mandant/${mandant.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ steuernummer: '' }),
+    });
+    expect(cleared.ok, 'PATCH mandant mit steuernummer').toBe(true);
+
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ bilanzId, guvId, anhangId }),
+    });
+    const body = (await res.json()) as { message?: string; code?: string };
+    expect(res.status).toBe(400);
+    expect(body.message ?? '').toMatch(/Steuernummer/i);
+
+    // Für die folgenden Tests wiederherstellen
+    const restored = await fetch(`${BASE}/api/mandant/${mandant.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ steuernummer: '12/345/67890' }),
+    });
+    expect(restored.ok, 'PATCH mandant restore').toBe(true);
   });
 
   // ===========================================================================

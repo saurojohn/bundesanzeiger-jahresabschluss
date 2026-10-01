@@ -457,7 +457,13 @@ export class XbrlGeneratorService {
    *   └── Facts (genInfo.*, bs.*, pl.*, genInfo.notes.*)
    */
   private buildXbrlXml(args: {
-    mandant: { id: string; firmenname: string; rechtsform: string; handelsregister: string | null };
+    mandant: {
+      id: string;
+      firmenname: string;
+      rechtsform: string;
+      handelsregister: string | null;
+      steuernummer?: string | null;
+    };
     bilanz: { geschaeftsjahr: number };
     bilanzMappings: Array<{
       source: { seite: 'AKTIVA' | 'PASSIVA'; kontonummer: string; bezeichnung: string; betragAktuell: number };
@@ -547,10 +553,27 @@ export class XbrlGeneratorService {
       HGB_KT_V6_GENINFO.find((c) => c.code === 'genInfo.companyInfo.legalForm')!,
       this.escapeXml(args.mandant.rechtsform),
     );
-    // Steuernummer (Mandant-Feld fehlt im Schema — default: handelsregister-Nr als Fallback)
+    // Steuernummer des Finanzamts (genInfo.companyInfo.taxNumber).
+    //
+    // Bis 2026-10-01 stand hier:
+    //   `args.mandant.handelsregister ?? \`MANDANT-${id.slice(0, 8)}\``
+    // Das war doppelt falsch: die Handelsregisternummer ("HRB 123456") ist
+    // KEINE Steuernummer, und der Fallback "MANDANT-<id>" ist frei erfunden.
+    // Beides landete als taxNumber im Formular gegenüber dem Finanzamt.
+    //
+    // Jetzt: nur die echte Steuernummer. Fehlt sie, bricht die Generierung ab —
+    // ein fehlendes Pflichtfeld wird gemeldet, nicht ausgefüllt.
+    if (!args.mandant.steuernummer || args.mandant.steuernummer.trim() === '') {
+      throw new BadRequestException(
+        `Steuernummer für "${args.mandant.firmenname}" fehlt. ` +
+          'Sie ist Pflicht im E-Bilanz-Formular (genInfo.companyInfo.taxNumber) und ' +
+          'kann nicht aus der Handelsregisternummer abgeleitet werden. ' +
+          'Bitte im Mandanten-Stammblatt nachtragen.',
+      );
+    }
     writeGenInfo(
       HGB_KT_V6_GENINFO.find((c) => c.code === 'genInfo.companyInfo.taxNumber')!,
-      this.escapeXml(args.mandant.handelsregister ?? `MANDANT-${args.mandant.id.slice(0, 8)}`),
+      this.escapeXml(args.mandant.steuernummer.trim()),
     );
     if (args.mandant.handelsregister) {
       writeGenInfo(

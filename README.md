@@ -20,7 +20,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 |---|---|---|
 | Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
 | Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
-| Backend-E2E-Suite | ✅ | **256 / 256 grün** (20 Test-Dateien, davon 15 für den RFC-3161-Token-Parser), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
+| Backend-E2E-Suite | ✅ | **257 / 257 grün** (20 Test-Dateien; 15 für den RFC-3161-Token-Parser, 2 für die Steuernummer im E-Bilanz), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
 | **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
 | **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
 | Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |
@@ -47,6 +47,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 | **Produktions-Abhängigkeiten** | ❌ Stripe live, qeS-Zertifikate, BAnz-Portal-Zugang — alles ungetestet |
 | **Kontobezeichnungen SKR04** | ⚠️ projektintern, nicht gegen die offizielle DATEV-Liste abgeglichen |
 | **PDF-Tabellenausschrieb** | ⚠️ `bezeichnung` wird per `ellipsis` gekürzt („Selbst geschaffene…") — für die Pflichtveröffentlichung zu kurz |
+| **Steuernummer im E-Bilanz-Formular** | ✅ behoben (2026-10-01). Bis dahin schrieb der XBRL-Generator die **Handelsregisternummer** in `genInfo.companyInfo.taxNumber` und erfindete sonst `MANDANT-<id>` — beides eine falsche Angabe an das Finanzamt. Jetzt existiert `Mandant.steuernummer` (nullable, Migration `2026_10_01_add_mandant_steuernummer`); fehlt sie, bricht der Export mit 400 ab, statt sie zu ersetzen. Ein Mandanten-Erfassungsformular im Frontend steht noch aus — die Felder sind über die API pflegbar und die i18n-Labels liegen vor. |
 
 ### CI
 

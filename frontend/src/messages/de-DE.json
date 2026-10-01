@@ -106,6 +106,8 @@
       "firmenname": "Firmenname",
       "rechtsform": "Rechtsform",
       "handelsregister": "Handelsregister-Nr.",
+      "steuernummer": "Steuernummer (Finanzamt)",
+      "steuernummerHint": "Pflicht für die E-Bilanz, z. B. 12/345/67890. Kann nicht aus der Handelsregisternummer abgeleitet werden.",
       "ustId": "USt-IdNr.",
       "strasse": "Straße und Hausnummer",
       "plz": "Postleitzahl",

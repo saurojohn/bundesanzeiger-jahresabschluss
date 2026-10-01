@@ -86,6 +86,18 @@ export class CreateMandantDto {
   @Length(0, 50, { message: 'handelsregister max 50 Zeichen' })
   handelsregister?: string;
 
+  /**
+   * Steuernummer des Finanzamts, z. B. "12/345/67890".
+   *
+   * Pflicht für die E-Bilanz (genInfo.companyInfo.taxNumber). Sie kann NICHT
+   * aus der Handelsregisternummer abgeleitet werden und wird beim Export
+   * auch nicht ersetzt — fehlt sie, bricht die Generierung ab.
+   */
+  @IsOptional()
+  @IsString()
+  @Length(0, 50, { message: 'steuernummer max 50 Zeichen' })
+  steuernummer?: string;
+
   @IsOptional()
   @IsString()
   @Length(0, 20, { message: 'ustId max 20 Zeichen' })

@@ -38,6 +38,14 @@ export class UpdateMandantDto {
   @IsOptional() @IsString() @Length(0, 50)
   handelsregister?: string;
 
+  /**
+   * Steuernummer des Finanzamts, z. B. "12/345/67890". Pflicht für die
+   * E-Bilanz — fehlt sie, bricht der XBRL-Export ab, statt eine Nummer zu
+   * erfinden oder die Handelsregisternummer zu verwenden.
+   */
+  @IsOptional() @IsString() @Length(0, 50)
+  steuernummer?: string;
+
   @IsOptional() @IsString() @Length(0, 20)
   ustId?: string;
 

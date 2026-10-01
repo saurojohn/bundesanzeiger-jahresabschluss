@@ -90,6 +90,14 @@ model Mandant {
   rechtsform         String // "GmbH" | "GmbH & Co. KG" | "AG" | ...
   handelsregister    String? // "HRB 123456"
   ustId              String? // USt-IdNr.
+  /// Finanzamt-Steuernummer, z.B. "12/345/67890" (HGB-KT genInfo.companyInfo.taxNumber).
+  ///
+  /// Bis 2026-10-01 existierte dieses Feld nicht; der E-Bilanz-Generator hat
+  /// stattdessen die Handelsregisternummer in `taxNumber` geschrieben und
+  /// sonst `MANDANT-<id>` erfunden. Beides ist eine falsche Angabe im
+  /// E-Bilanz-Formular. Nullable, weil die Angabe bei Neuanlage nachgepflegt
+  /// werden muss — ein erzwungener Wert würde bestehende Mandanten blockieren.
+  steuernummer       String?
   adresse            Json // {strasse, plz, ort, land}
   geschaeftsfuehrer  Json // [{name, geburtsdatum, anteilProzent}]
   gruendungsdatum    DateTime?

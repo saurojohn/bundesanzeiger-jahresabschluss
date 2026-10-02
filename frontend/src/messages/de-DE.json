@@ -19,7 +19,8 @@
     "logout": "Abmelden",
     "logoutConfirm": "Möchten Sie sich wirklich abmelden?",
     "language": "Sprache",
-    "german": "Deutsch"
+    "german": "Deutsch",
+    "close": "Schließen"
   },
   "auth": {
     "login": {
@@ -855,7 +856,8 @@
     "actions": {
       "create": "+ Neuen Webhook",
       "test": "Test-Webhook senden",
-      "delete": "Löschen"
+      "delete": "Löschen",
+      "copyToken": "Token kopieren"
     },
     "table": {
       "url": "URL",
@@ -902,7 +904,8 @@
       "responseCode": "HTTP {code}",
       "scheduledAt": "Geplant",
       "completedAt": "Abgeschlossen",
-      "nextRetryAt": "Nächster Retry"
+      "nextRetryAt": "Nächster Retry",
+      "testSent": "Test-Webhook gesendet"
     },
     "errors": {
       "invalidUrl": "Bitte geben Sie eine gültige HTTP/HTTPS-URL ein."

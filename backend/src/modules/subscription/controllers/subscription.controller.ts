@@ -50,11 +50,36 @@ export class SubscriptionController {
 
   /**
    * Public Pricing-Page — liefert alle Tier-Configs.
+   *
+   * `features` ist intern ein `ReadonlySet`, und `Set` ist in JSON nicht
+   * serialisierbar: `JSON.stringify(new Set(['a']))` ergibt `{}`. Bis
+   * 2026-10-03 kam deshalb `features: {}` an den Client — die Pricing-Seite
+   * zeigte keine einzige Feature-Zeile, ohne dass ein Fehler auftrat.
+   * Hier wird deshalb explizit auf ein Array abgebildet.
    */
   @Get('tiers')
   @HttpCode(HttpStatus.OK)
-  getTiers(): { tiers: ReturnType<FeatureFlagService['getAllTierConfigs']> } {
-    return { tiers: this.featureFlags.getAllTierConfigs() };
+  getTiers(): {
+    tiers: Array<{
+      tier: string;
+      displayName: string;
+      description: string;
+      pricePerMonthEur: number;
+      maxMandanten: number;
+      features: string[];
+    }>;
+  } {
+    return {
+      tiers: this.featureFlags.getAllTierConfigs().map((t) => ({
+        tier: t.tier,
+        displayName: t.displayName,
+        description: t.description,
+        pricePerMonthEur: t.pricePerMonthEur,
+        // `Number.POSITIVE_INFINITY` ist in JSON ebenfalls `null`.
+        maxMandanten: Number.isFinite(t.maxMandanten) ? t.maxMandanten : -1,
+        features: Array.from(t.features),
+      })),
+    };
   }
 
   @Get(':kanzleiId')

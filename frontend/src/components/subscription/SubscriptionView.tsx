@@ -80,12 +80,24 @@ export function SubscriptionView() {
         // `firstKanzlei` per `const` INNERHALB des if-Blocks deklariert und
         // weiter unten ausserhalb gelesen (ReferenceError). Fehlerhafte
         // Aufrufe landeten ausserdem unter /api/api/... (doppeltes Praefix).
-        const me = await apiFetch<{ mandanten: { kanzleiId: string }[] }>('/auth/me');
+        // Kein `Response`, sondern der geparste Body — und der Token muss
+        // explizit mitgegeben werden. `apiFetch` liest ihn NICHT aus
+        // localStorage; ohne `accessToken` antworten alle nachfolgenden
+        // Routen mit 401 (globaler JwtAuthGuard). Das betraf auch
+        // `/auth/me` und `/subscription/tiers` hier.
+        const token = getAccessToken();
+        if (!token) return;
+
+        const me = await apiFetch<{ mandanten: { kanzleiId: string }[] }>('/auth/me', {
+          accessToken: token,
+        });
         const firstKanzlei = me.mandanten[0]?.kanzleiId;
         if (firstKanzlei) setKanzleiId(firstKanzlei);
 
         // Tiers
-        const data = await apiFetch<TierListResponse>('/subscription/tiers');
+        const data = await apiFetch<TierListResponse>('/subscription/tiers', {
+          accessToken: token,
+        });
         // Backend liefert Sets als Plain-Objects → in echte Sets konvertieren
         const normalized = data.tiers.map((t) => ({
           ...t,
@@ -96,7 +108,9 @@ export function SubscriptionView() {
         // Subscription (falls kanzleiId schon da)
         if (firstKanzlei) {
           setSubscription(
-            await apiFetch<SubscriptionResponse>(`/subscription/${firstKanzlei}`),
+            await apiFetch<SubscriptionResponse>(`/subscription/${firstKanzlei}`, {
+              accessToken: token,
+            }),
           );
         }
       } catch (err) {
@@ -111,8 +125,12 @@ export function SubscriptionView() {
   // Reload subscription (nach Upgrade/Cancel)
   const reloadSubscription = useCallback(async () => {
     if (!kanzleiId) return;
+    const token = getAccessToken();
+    if (!token) return;
     setSubscription(
-      await apiFetch<SubscriptionResponse>(`/subscription/${kanzleiId}`),
+      await apiFetch<SubscriptionResponse>(`/subscription/${kanzleiId}`, {
+        accessToken: token,
+      }),
     );
   }, [kanzleiId]);
 

@@ -180,11 +180,48 @@ export class AuditIntegrityService {
    * Wichtig: gleiche Felder + gleiche Reihenfolge = gleicher Hash.
    * Wir sortieren die JSON-Keys rekursiv.
    */
+  /**
+   * Serialisiert einen Audit-Eintrag deterministisch für den Hash.
+   *
+   * Zwei Regeln, beide erforderlich (Befund 2026-10-02):
+   *
+   * 1. `entryHash` und `prevHash` werden NICHT mitserialisiert. Beim Schreiben
+   *    ist `entryHash` im gelesenen Datensatz noch `null`, beim Verifizieren
+   *    ist er gefüllt — beide Seiten haben damit *nie* denselben Byte-Strom
+   *    gesehen und die Chain konnte prinzipiell nicht verifizieren.
+   *
+   * 2. Die Schlüssel werden rekursiv sortiert. Prisma liefert die Felder in
+   *    Schema-Reihenfolge, aber das ist keine Zusage: eine Spaltenreihenfolge
+   *    in der DB, ein Prisma-Update oder ein zusätzliches `select` kann die
+   *    Reihenfolge ändern. Ohne Sortierung wäre der Hash nicht reproduzierbar.
+   *
+   * Zeitstempel werden als ISO-8601 serialisiert, damit `Date` und der
+   * bereits in der DB liegende String denselben Hash ergeben.
+   */
   private serializeForHashing(entry: unknown): string {
-    return JSON.stringify(entry, (_key, value) => {
-      if (value instanceof Date) return value.toISOString();
-      if (value === null) return null;
-      return value;
-    });
+    return JSON.stringify(this.canonicalizeForHash(entry));
+  }
+
+  /**
+   * Baut aus einem Prisma-Eintrag die kanonische Form für den Hash:
+   * `entryHash`/`prevHash` entfernt, Schlüssel rekursiv sortiert,
+   * `Date` → ISO-String.
+   */
+  private canonicalizeForHash(value: unknown): unknown {
+    if (value instanceof Date) return value.toISOString();
+    if (Array.isArray(value)) {
+      return value.map((item) => this.canonicalizeForHash(item));
+    }
+    if (value !== null && typeof value === 'object') {
+      const source = value as Record<string, unknown>;
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(source).sort()) {
+        // Die Hash-Felder selbst gehören nicht in den Hash.
+        if (key === 'entryHash' || key === 'prevHash') continue;
+        result[key] = this.canonicalizeForHash(source[key]);
+      }
+      return result;
+    }
+    return value;
   }
 }

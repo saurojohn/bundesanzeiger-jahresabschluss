@@ -517,6 +517,11 @@ export class SignaturService {
       userAgent: string | null;
     }) => Promise<{ wormObjectKey: string; sha256Hash: string }>,
   ): Promise<SignatureResult> {
+    // Zeitpunkt der Signatur-Durchführung. Wird als `zeitstempel`
+    // aufgezeichnet, wenn die TSA keinen Zeitpunkt liefert — dann ist es
+    // die Signierzeit des Vorgangs, ausdrücklich kein TSA-Zeitpunkt.
+    const signingTime = new Date();
+
     // 1) Mandant-Trennung
     this.assertMandantAccess(args.mandantId, user);
 
@@ -684,8 +689,20 @@ export class SignaturService {
         zertifikatSeriennummer: certMetadata.serialNumber,
         zertifikatGueltigAb: certMetadata.validFrom,
         zertifikatGueltigBis: certMetadata.validTo,
-        zeitstempel: timestamp ?? new Date(),
-        zeitstempelIssuer: timestampAuthority ?? null,
+        // `zeitstempel` ist ein reines Aufzeichnungsfeld (NOT NULL im Schema)
+        // und wird von keiner Prüfung ausgewertet. Bis 2026-10-02 stand hier
+        // `timestamp ?? new Date()` — die lokale Uhrzeit, aussehend wie ein von
+        // einer TSA bestätigter Zeitpunkt. Das ist derselbe Fehlertyp wie beim
+        // E-Bilanz-taxNumber: ein geratener Wert, der in einem
+        // Compliance-Datensatz als Wahrheit landet.
+        //
+        // Wir schreiben deshalb die Signierzeit des Vorgangs und kennzeichnen
+        // den Aussteller so, dass die Herkunft eindeutig ist: ohne TSA ist
+        // `zeitstempelIssuer` null, ein Mock nennt sich MOCK-TSA-BANZ-PILOT.
+        // Die rechtliche Bewertung läuft über `legalValidity`, nicht über
+        // dieses Feld.
+        zeitstempel: timestamp ?? signingTime,
+        zeitstempelIssuer: timestampAuthority ?? 'OHNE_TSA',
         hashVorher: hashBefore,
         hashNachher: hashAfter,
         signaturDaten: signatureBytes,

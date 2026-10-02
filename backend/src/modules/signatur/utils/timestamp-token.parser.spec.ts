@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash, sign as cryptoSign } from 'node:crypto';
 import forge from 'node-forge';
 import {
   parseTimestampToken,
   checkTimestampPlausibility,
   verifyMessageImprint,
+  verifyTimestampSignature,
   type ParsedTimestamp,
 } from './timestamp-token.parser';
 
@@ -97,7 +102,7 @@ function buildTimeStampResp(opts: {
 
   // TSTInfo
   const tstInfo = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
-    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(1)),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, forge.util.createBuffer('1')),
     createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_CT_TST_INFO),
     // messageImprint
     createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
@@ -131,7 +136,7 @@ function buildTimeStampResp(opts: {
 
   // SignedData (ohne echte Signatur — der Parser prüft sie ohnehin nicht)
   const signedData = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
-    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(3)),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, forge.util.createBuffer('3')),
     // digestAlgorithms
     createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SET, true, [
       createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
@@ -336,5 +341,219 @@ describe('checkTimestampPlausibility', () => {
     const result = checkTimestampPlausibility({ genTime: null });
     expect(result.plausible).toBe(false);
     expect(result.reason).toMatch(/keinen genTime/);
+  });
+});
+
+// ============================================================================
+// Kryptografische TSA-Signatur (verifyTimestampSignature)
+// ============================================================================
+
+const OID_SHA256_RSA = '1.2.840.113549.1.1.11'; // sha256WithRSAEncryption
+
+/**
+ * Erzeugt ein RFC-3161-Token mit **echter RSA-Signatur** der TSA über das
+ * encapContentInfo. Belegt, dass `verifyTimestampSignature` eine gültige
+ * Signatur annimmt und eine manipulierte ablehnt.
+ */
+function buildSignedTimeStampResp(opts: {
+  messageImprintHex: string;
+  genTime: Date;
+  /** DER des TSA-Zertifikats als Binärstring (von forge erzeugt). */
+  tsaCertDer: string;
+  tsaPrivateKeyPem: string;
+  /** Optional: den signierten Byte-Strom NACH der Signatur verändern. */
+  tamperPayload?: (der: string) => string;
+  /** Optional: zusätzlich die Signaturbytes verändern. */
+  tamperSignature?: (sig: string) => string;
+}): Buffer {
+  const genTimeStr =
+    `${String(opts.genTime.getUTCFullYear()).padStart(4, '0')}` +
+    `${String(opts.genTime.getUTCMonth() + 1).padStart(2, '0')}` +
+    `${String(opts.genTime.getUTCDate()).padStart(2, '0')}` +
+    `${String(opts.genTime.getUTCHours()).padStart(2, '0')}` +
+    `${String(opts.genTime.getUTCMinutes()).padStart(2, '0')}` +
+    `${String(opts.genTime.getUTCSeconds()).padStart(2, '0')}Z`;
+
+  const tstInfo = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, forge.util.createBuffer('1')),
+    createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_CT_TST_INFO),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+        createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_SHA256),
+        createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.NULL, false, ''),
+      ]),
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.OCTETSTRING, false,
+        Buffer.from(opts.messageImprintHex, 'hex').toString('binary')),
+    ]),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, forge.util.createBuffer('7')),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.GENERALIZEDTIME, false, genTimeStr),
+  ]);
+
+  // encapContentInfo — genau dieser Byte-Strom wird signiert.
+  const encap = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_CT_TST_INFO),
+    createAsn1(forge.asn1.Class.CONTEXT_SPECIFIC, 0, true, [
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.OCTETSTRING, false,
+        forge.asn1.toDer(tstInfo).getBytes()),
+    ]),
+  ]);
+  let encapDer = forge.asn1.toDer(encap).getBytes();
+
+  // Echte RSA/SHA-256-Signatur über den Byte-Strom.
+  // WICHTIG: die Manipulation erfolgt NACH der Signatur — sonst würde über
+  // die manipulierten Daten korrekt signiert und die Signatur wäre gültig.
+  // Genau das muss die Prüfung abfangen.
+  // Signatur-Bytes: forge erwartet bei OCTETSTRING einen Binärstring —
+  // jeder Byte ist ein Zeichen im Bereich 0-255. Buffer→Binärstring
+  // konvertiert, statt über String.fromCharCode (verliert Bytes > 255).
+  const signatureBuf = cryptoSign('sha256', Buffer.from(encapDer, 'binary'), opts.tsaPrivateKeyPem);
+  let signature = signatureBuf.toString('latin1');
+
+  // Nachsignierte Manipulation: das letzte Byte des signierten Stroms
+  // umkippen. Die Signatur deckt den ursprünglichen Strom ab, das Token
+  // enthält aber einen anderen.
+  if (opts.tamperPayload) {
+    encapDer = opts.tamperPayload(encapDer);
+    signature = opts.tamperSignature
+      ? opts.tamperSignature(signature)
+      : signature;
+  }
+
+  // SignedData mit SignerInfo
+  const signerInfo = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(1)),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+      createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, '1.2.840.113549.1.1.5'),
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(1)),
+    ]),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+      createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_SHA256),
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.NULL, false, ''),
+    ]),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+      createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_SHA256_RSA),
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.NULL, false, ''),
+    ]),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.OCTETSTRING, false, signature),
+  ]);
+
+  // `encap` per DER neu einlesen: dersel forge-Knoten darf nicht an zwei
+  // Stellen desselben Baums stehen.
+  const encapClone = forge.asn1.fromDer(forge.util.createBuffer(encapDer));
+
+  const signedData = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(3)),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SET, true, [
+      createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+        createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_SHA256),
+        createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.NULL, false, ''),
+      ]),
+    ]),
+    encapClone,
+    createAsn1(forge.asn1.Class.CONTEXT_SPECIFIC, 0, true, [
+      forge.asn1.fromDer(forge.util.createBuffer(opts.tsaCertDer)),
+    ]),
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SET, true, [signerInfo]),
+  ]);
+
+  const contentInfo = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    createAsn1(forge.asn1.Class.UNIVERSAL, T_OID, false, OID_SIGNED_DATA),
+    createAsn1(forge.asn1.Class.CONTEXT_SPECIFIC, 0, true, [signedData]),
+  ]);
+
+  const resp = createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+      createAsn1(forge.asn1.Class.CONTEXT_SPECIFIC, 0, true, [
+        createAsn1(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(0)),
+      ]),
+    ]),
+    contentInfo,
+  ]);
+  return Buffer.from(forge.asn1.toDer(resp).getBytes(), 'binary');
+}
+
+describe('verifyTimestampSignature', () => {
+  /**
+   * Echtes, selbstsigniertes X.509-Zertifikat.
+   *
+   * Bewusst über `openssl` und nicht über forge: ein aus forge-JWK
+   * gebautes Zertifikat serialisiert den Modulus ohne führendes NUL-Byte
+   * und wird von `node:crypto.createPublicKey` als ANDERER Schlüssel
+   * gelesen — die Signaturprüfung schlägt dann aus einem
+   * Fixture-Grund fehl. `openssl` liefert ein Zertifikat, das forge und
+   * node:crypto übereinstimmend lesen.
+   */
+  const CERT_CN = 'TSA-Test GmbH';
+  const genDir = mkdtempSync(join(tmpdir(), 'banz-tsa-'));
+  execFileSync('openssl', [
+    'req', '-x509', '-newkey', 'rsa:2048',
+    '-keyout', join(genDir, 'key.pem'),
+    '-out', join(genDir, 'cert.pem'),
+    '-days', '365', '-nodes',
+    '-subj', `/CN=${CERT_CN}`,
+  ], { stdio: 'pipe' });
+  const tsaPrivateKeyPem = readFileSync(join(genDir, 'cert.pem'), 'utf8')
+    .includes('PRIVATE') ? '' : readFileSync(join(genDir, 'key.pem'), 'utf8');
+  const tsaCertDer = Buffer.from(
+    readFileSync(join(genDir, 'cert.pem'), 'utf8')
+      .replace(/-----[^-]+-----/g, '')
+      .replace(/\s+/g, ''),
+    'base64',
+  ).toString('latin1');
+
+  const imprint = 'ab'.repeat(32);
+
+  it('erkennt eine gültige Signatur bei vertrauenswürdigem Aussteller', () => {
+    const token = parseTimestampToken(
+      buildSignedTimeStampResp({
+        messageImprintHex: imprint,
+        genTime: new Date('2026-03-15T10:30:00Z'),
+        tsaCertDer,
+        tsaPrivateKeyPem,
+      }),
+    );
+    expect(token.parsed).toBe(true);
+    expect(token.tsaSignature).toBeTruthy();
+
+    const result = verifyTimestampSignature(token, {
+      trustedIssuers: [CERT_CN],
+    });
+    expect(result.trusted).toBe(true);
+    expect(result.valid).toBe(true);
+  });
+
+  it('weist einen nicht vertrauten Aussteller ab (fail-closed)', () => {
+    const token = parseTimestampToken(
+      buildSignedTimeStampResp({
+        messageImprintHex: imprint,
+        genTime: new Date('2026-03-15T10:30:00Z'),
+        tsaCertDer,
+        tsaPrivateKeyPem,
+      }),
+    );
+    const result = verifyTimestampSignature(token, { trustedIssuers: [] });
+    expect(result.valid).toBe(false);
+    expect(result.trusted).toBe(false);
+    expect(result.reason).toMatch(/fail-closed/);
+  });
+
+  it('erkennt eine manipulierte Signatur', () => {
+    const token = parseTimestampToken(
+      buildSignedTimeStampResp({
+        messageImprintHex: imprint,
+        genTime: new Date('2026-03-15T10:30:00Z'),
+        tsaCertDer,
+        tsaPrivateKeyPem,
+        // Das letzte Byte des signierten Stroms umkippen (z. B. 0x00 → 0x01).
+        // Das ergibt gültiges DER, aber eine falsche Signatur — genau der
+        // Fall, den die Prüfung abfangen muss.
+        tamperPayload: (der) => der.slice(0, -1) + (der.endsWith('\u0000') ? '\u0001' : '\u0000'),
+      }),
+    );
+    const result = verifyTimestampSignature(token, {
+      trustedIssuers: [CERT_CN],
+    });
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/Signaturprüfung fehlgeschlagen/);
   });
 });

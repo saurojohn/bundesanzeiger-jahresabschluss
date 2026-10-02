@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import crypto, { createHash } from 'node:crypto';
 import forge from 'node-forge';
 
 /**
@@ -49,6 +49,14 @@ export interface ParsedTimestamp {
   parsed: boolean;
   /** Grund bei `parsed === false`. */
   reason?: string;
+  /** Rohes DER des TSA-Zertifikats (für die Signaturprüfung). */
+  tsaCertificateDer?: string | null;
+  /** Signaturbytes aus dem SignerInfo. */
+  tsaSignature?: string | null;
+  /** OID des Signaturalgorithmus (1.2.840.113549.1.1.10 = RSASSA-PSS, 1.2.840.113549.1.1.11 = sha256WithRSA, 1.2.840.10045.4.3.2 = ecdsa-with-SHA256). */
+  tsaSignatureOid?: string | null;
+  /** Zu verifizierender Byte-Strom: DER von signedAttrs (als SET) oder encapContentInfo. */
+  signedPayloadDer?: string | null;
 }
 
 /** ASN.1 OIDs, die für die Prüfung eine Rolle spielen. */
@@ -187,6 +195,7 @@ export function parseTimestampToken(tokenBytes: Buffer): ParsedTimestamp {
   let tsaCommonName: string | null = null;
   let tsaNotBefore: Date | null = null;
   let tsaNotAfter: Date | null = null;
+  let tsaCertificateDer: string | null = null;
   for (const child of signedDataChildren) {
     // certificates ist [0] IMPLICIT → forge: tagClass CONTEXT_SPECIFIC, type 0.
     // Die übrigen Felder (version, digestAlgorithms, …) sind UNIVERSAL.
@@ -198,10 +207,78 @@ export function parseTimestampToken(tokenBytes: Buffer): ParsedTimestamp {
         tsaCommonName = certInfo.cn;
         tsaNotBefore = certInfo.notBefore;
         tsaNotAfter = certInfo.notAfter;
+        // Rohes DER des Zertifikats für die Signaturprüfung (Public Key).
+        tsaCertificateDer = forge.asn1
+          .toDer(first as unknown as forge.asn1.Asn1)
+          .getBytes();
       }
       break;
     }
   }
+
+  // Signatur: SignedData.signatures SET OF SignerInfo
+  //   SignerInfo ::= SEQUENCE {
+  //     version INTEGER, sid IssuerAndSerialNumber,
+  //     digestAlgorithm AlgorithmIdentifier,
+  //     signedAttrs [0] IMPLICIT SET OF Attribute OPTIONAL,
+  //     signatureAlgorithm AlgorithmIdentifier,
+  //     signature OCTET STRING,
+  //     unsignedAttrs [1] IMPLICIT OPTIONAL
+  //   }
+  //
+  // Ohne `signedAttrs` (RFC 3161 schreibt sie vor) wird direkt über
+  // encapContentInfo signiert. In beiden Fällen ist der zu verifizierende
+  // Byte-Strom das DER von `encapContentInfo` — bei `signedAttrs` das DER
+  // dieses Attribut-Sets mit umgestelltem Tag (SET statt [0]).
+  //
+  // SignedData enthält ZWEI UNIVERSAL-SETs: `digestAlgorithms` (Index 1)
+  // und `signerInfos` (letztes Element). Der erste Treffer ist daher nicht
+  // der gesuchte — wir nehmen das LETZTE Element.
+  const setElements = signedDataChildren.filter(
+    (c) => node(c)?.tagClass === UNIVERSAL && node(c)?.type === SET,
+  );
+  const signerInfos = setElements[setElements.length - 1];
+  const signerInfo = node(children(signerInfos)[0]);
+  let tsaSignature: string | null = null;
+  let tsaSignatureOid: string | null = null;
+  let signedAttrsDer: string | null = null;
+  if (signerInfo) {
+    const siChildren = children(signerInfo);
+    // Felder vor `signature`: version, sid, digestAlgorithm,
+    // [signedAttrs], signatureAlgorithm — danach folgt `signature`.
+    const sigIndex = siChildren.findIndex(
+      (n) => node(n)?.tagClass === UNIVERSAL && node(n)?.type === OCTET_STRING,
+    );
+    if (sigIndex > 0) {
+      tsaSignature = (siChildren[sigIndex]?.value as string | undefined) ?? null;
+      // signatureAlgorithm ist das Element direkt vor `signature`.
+      // AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters OPTIONAL }
+      // `algNode` IST bereits diese SEQUENCE; der OID ist deren erstes Kind.
+      // (Ein zusätzlicher `algChildren[0]`-Sprung landete im NULL-Parameter.)
+      const algNode = siChildren[sigIndex - 1];
+      const algSeqChildren = children(node(algNode));
+      const oidValue = algSeqChildren[0]?.value;
+      tsaSignatureOid = typeof oidValue === 'string' ? oidValue : null;
+      // signedAttrs [0] IMPLICIT zwischen digestAlgorithm und
+      // signatureAlgorithm. Für die Verifikation brauchen wir das
+      // umgestellte SET-Tag.
+      const attrsNode = siChildren.find(
+        (n) => node(n)?.tagClass === CONTEXT_SPECIFIC && node(n)?.type === 0,
+      );
+      if (attrsNode) {
+        // [0] IMPLICIT → SET (0x31) statt [0] (0xA0). Bei forge lässt sich
+        // der Tag nicht direkt ändern; wir bauen den Knoten neu.
+        const attrsChildren = children(attrsNode) as unknown as forge.asn1.Asn1[];
+        const asSet = forge.asn1.create(forge.asn1.Class.UNIVERSAL, SET, true, attrsChildren);
+        signedAttrsDer = forge.asn1.toDer(asSet).getBytes();
+      }
+    }
+  }
+
+  // Zu verifizierender Byte-Strom.
+  const signedPayloadDer: string | null =
+    signedAttrsDer ??
+    forge.asn1.toDer(encap as unknown as forge.asn1.Asn1).getBytes();
 
   return {
     genTime,
@@ -211,6 +288,10 @@ export function parseTimestampToken(tokenBytes: Buffer): ParsedTimestamp {
     tsaCommonName,
     tsaNotAfter,
     tsaNotBefore,
+    tsaCertificateDer,
+    tsaSignature,
+    tsaSignatureOid,
+    signedPayloadDer,
     parsed: true,
     ...(typeof hashAlgOid === 'string' && !KNOWN_HASH_OIDS.has(hashAlgOid)
       ? { reason: `Ungewöhnlicher Hash-Algorithmus ${hashAlgOid}` }
@@ -268,6 +349,124 @@ export function verifyMessageImprint(
  * manipuliertes Token) oder älter als das Dokument selbst ist (der Zeitstempel
  * muss NACH der Signatur liegen).
  */
+/**
+ * Verifiziert die kryptografische Signatur der TSA über das Token.
+ *
+ * Ablauf:
+ *   1. Öffentlichen Schlüssel aus dem eingebetteten TSA-Zertifikat lesen.
+ *   2. Prüfen, ob der Aussteller als vertrauenswürdig konfiguriert ist
+ *      (`SIGNATURE_TRUSTED_ISSUERS`, analog zum Signaturzertifikat).
+ *   3. RSA-Verifikation über `signedPayloadDer` mit `tsaSignature`.
+ *
+ * WICHTIG — Reichweite der Aussage:
+ *   „gültig" bedeutet: **dieser Token wurde mit dem Schlüssel dieses
+ *   Zertifikats signiert, und der Aussteller ist als vertrauenswürdig
+ *   konfiguriert.** Es bedeutet NICHT, dass der Aussteller selbst
+ *   qualifiziert ist — das ist Sache der EU-Trusted-List bzw. des
+ *   Trust-Service-Providers. Ohne konfigurierte Trust-Liste bleibt das
+ *   Ergebnis `trusted: false`, auch wenn die Rechnung stimmt.
+ */
+export function verifyTimestampSignature(
+  token: ParsedTimestamp,
+  options: {
+    /** CNs der Aussteller, denen vertraut wird (leer = fail-closed). */
+    trustedIssuers: readonly string[];
+    /** Selbstsignierte Zertifikate zulassen (nur Test/Pilot). */
+    allowSelfSigned?: boolean;
+  },
+): { valid: boolean; trusted: boolean; reason?: string; algorithm?: string } {
+  if (!token.parsed) {
+    return { valid: false, trusted: false, reason: token.reason ?? 'Token nicht lesbar' };
+  }
+  if (!token.tsaCertificateDer) {
+    return { valid: false, trusted: false, reason: 'Token enthält kein TSA-Zertifikat' };
+  }
+  if (!token.tsaSignature || !token.signedPayloadDer) {
+    return {
+      valid: false,
+      trusted: false,
+      reason: 'Token enthält keine auswertbare Signatur',
+    };
+  }
+  if (!token.tsaCommonName) {
+    return { valid: false, trusted: false, reason: 'CN des TSA-Zertifikats nicht lesbar' };
+  }
+
+  // 1. Vertrauen — fail-closed, wenn nichts konfiguriert ist.
+  const trusted = options.trustedIssuers.includes(token.tsaCommonName);
+  if (!trusted && !options.allowSelfSigned) {
+    return {
+      valid: false,
+      trusted: false,
+      reason:
+        `TSA-Aussteller "${token.tsaCommonName}" ist nicht in ` +
+        'SIGNATURE_TRUSTED_ISSUERS enthalten (fail-closed).',
+    };
+  }
+
+  // 2. Signaturalgorithmus. Nur RSA/SHA-256 wird geprüft; alles andere
+  //    wird ausgewiesen, nicht stillschweigend durchgewunken.
+  const oid = token.tsaSignatureOid;
+  const digestByOid: Record<string, string> = {
+    '1.2.840.113549.1.1.11': 'sha256', // sha256WithRSAEncryption
+    '1.2.840.113549.1.1.5': 'sha1', //   sha1WithRSAEncryption
+  };
+  const digest = oid ? digestByOid[oid] : undefined;
+  if (!digest) {
+    return {
+      valid: false,
+      trusted,
+      algorithm: oid ?? 'unbekannt',
+      reason:
+        `Signaturalgorithmus ${oid ?? 'unbekannt'} wird nicht unterstützt. ` +
+        'Unterstützt: 1.2.840.113549.1.1.11 (sha256WithRSA), ' +
+        '1.2.840.113549.1.1.5 (sha1WithRSA). ' +
+        'ECDSA (1.2.840.10045.4.3.2) ist offen.',
+    };
+  }
+
+  // 3. Zertifikat (DER) → PEM → KeyObject.
+  //
+  //    Wichtig: `node-forge` bietet weder `rsa.sign` noch `rsa.verify` —
+  //    die Verifikation läuft deshalb über `node:crypto`, das Projekt hat
+  //    es ohnehin schon als Dependency.
+  let publicKey: crypto.KeyObject;
+  try {
+    const b64 = Buffer.from(token.tsaCertificateDer, 'binary').toString('base64');
+    const pem =
+      `-----BEGIN CERTIFICATE-----\n${b64.match(/.{1,64}/g)?.join('\n') ?? b64}\n` +
+      '-----END CERTIFICATE-----\n';
+    publicKey = crypto.createPublicKey(pem);
+  } catch (err) {
+    return {
+      valid: false,
+      trusted,
+      reason: `TSA-Zertifikat nicht lesbar: ${(err as Error).message}`,
+    };
+  }
+
+  // 4. Verifikation über den signierten Byte-Strom.
+  try {
+    const payload = Buffer.from(token.signedPayloadDer, 'binary');
+    const signature = Buffer.from(token.tsaSignature, 'binary');
+    const ok = crypto.verify(digest, payload, publicKey, signature);
+    return {
+      valid: ok,
+      trusted,
+      algorithm: oid ?? 'unbekannt',
+      ...(ok
+        ? {}
+        : { reason: 'Signaturprüfung fehlgeschlagen — die Signatur passt nicht zum Token' }),
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      trusted,
+      reason: `Signaturprüfung nicht durchführbar: ${(err as Error).message}`,
+    };
+  }
+}
+
 export function checkTimestampPlausibility(args: {
   genTime: Date | null;
   signedAt?: Date | null;
@@ -332,6 +531,10 @@ type Asn1Node = {
 const SEQUENCE = 16;
 /** forge.asn1.Type.INTEGER */
 const INTEGER = 2;
+/** forge.asn1.Type.OCTETSTRING */
+const OCTET_STRING = 4;
+/** forge.asn1.Type.SET */
+const SET = 17;
 
 /**
  * Sucht den ersten Nachfahren (inklusive sich selbst) mit gegebener

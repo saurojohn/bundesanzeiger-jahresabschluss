@@ -56,6 +56,29 @@ davon hielten nicht. Seit `90c9cba` ist die Suite ausführbar und
 reproduzierbar (265/265 grün) — künftige Durchgänge sollten ausschließlich
 auf ausführbaren Belegen beruhen.
 
+### Nachtrag 2026-10-02: Kryptografische TSA-Signaturprüfung ergänzt
+
+`legalValidity` erreichte zuvor nie `VOLLSTAENDIG`, weil die Signatur der
+Zeitstempel-Autorität nie geprüft wurde. `verifyTimestampSignature` prüft
+jetzt:
+
+1. `messageImprint` gegen den SHA-256 über die `/ByteRange`-Bereiche des
+   signierten PDF (beweist: genau dieses Dokument wurde zeitgestempelt)
+2. `genTime` gegen Jetzt, Signaturzeitpunkt und die Gültigkeit des
+   TSA-Zertifikats
+3. die RSA/SHA-256-Signatur der TSA über den `encapContentInfo`-Byte-Strom,
+   verifiziert mit dem Public Key aus dem im Token eingebetteten Zertifikat
+4. die Zugehörigkeit des Ausstellers zu `SIGNATURE_TRUSTED_ISSUERS`
+
+Ohne konfigurierte Trust-Liste greift fail-closed: `trusted: false` und
+damit `legalValidity: 'OHNE_ZEITSTEMPEL'`. Der Name des Ausstellers im
+Zertifikat zu lesen ist **kein** Nachweis, dass dieser Aussteller
+qualifiziert ist — das ist Sache der EU-Trusted-List bzw. des
+Trust-Service-Providers und bleibt offen (siehe Verifikationsstand).
+
+`node-forge` bietet weder `rsa.sign` noch `rsa.verify`; die Verifikation
+läuft deshalb über `node:crypto`, das ohnehin Dependency ist.
+
 **Weiterhin ungeklärt** (nicht durch Tests entscheidbar, siehe
 `README.md` → Verifikationsstand): Zertifikatskette / EU Trusted List /
 OCSP, kryptografische Prüfung der TSA-Signatur, SKR03/SKR04-Roundtrip,

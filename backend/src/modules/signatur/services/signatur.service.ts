@@ -19,6 +19,7 @@ import { checkCertificateRevocation } from '../utils/crl-checker';
 import {
   parseTimestampToken,
   checkTimestampPlausibility,
+  verifyTimestampSignature,
   type ParsedTimestamp,
 } from '../utils/timestamp-token.parser';
 import { AuditService } from '../../audit/services/audit.service';
@@ -428,26 +429,24 @@ export class SignaturService {
     //      Produktivbetrieb ein Token vorliegt.
     //
     // Heute: strukturelle Prüfung des RFC-3161-Tokens (messageImprint gegen
-    // den signierten Dokumentinhalt, genTime-Plausibilität). Die kryptografische
-    // Prüfung der TSA-Signatur bleibt offen und wird weiterhin über
-    // `legalValidity` ausgewiesen — ein strukturell gültiges Token ohne
-    // geprüfte Signatur ist kein Nachweis des Ausstellers.
+    // den signierten Dokumentinhalt, genTime-Plausibilität) UND kryptografische
+    // Prüfung der TSA-Signatur über den im Token eingebetteten
+    // Zertifikatsschlüssel. Die Prüfung ist fail-closed: ohne konfigurierten
+    // `SIGNATURE_TRUSTED_ISSUERS` wird der Aussteller nicht als vertrauenswürdig
+    // anerkannt, und `legalValidity` erreicht dann `OHNE_ZEITSTEMPEL`.
     const timestampCheck = this.checkTimestamp(args.signedPdfBytes, args.timestampTokenBytes);
-    const timestampValid = timestampCheck.valid;
-    if (!timestampValid) {
+    const timestampValid = timestampCheck.valid && timestampCheck.signatureVerified;
+    if (!timestampCheck.valid) {
       warnings.push(
         `Zeitstempel: ${timestampCheck.reason ?? 'nicht verwertbar'}. ` +
-          (timestampCheck.signatureVerified
-            ? 'Die TSA-Signatur des Tokens ist nicht verifiziert — für eine ' +
-              'Pflichtveröffentlichung ist ein vertrauenswürdiger TSA-Nachweis erforderlich.'
-            : 'Ohne gültigen Zeitstempel ist die Signatur rechtlich NICHT ' +
-              'ausreichend für eine Pflichtveröffentlichung.'),
+          'Ohne gültigen Zeitstempel ist die Signatur rechtlich NICHT ' +
+          'ausreichend für eine Pflichtveröffentlichung.',
       );
     } else if (!timestampCheck.signatureVerified) {
       warnings.push(
-        'Zeitstempel strukturell gültig (messageImprint stimmt, Zeitpunkt plausibel), ' +
-          'aber die TSA-Signatur wurde nicht kryptografisch verifiziert — ' +
-          'siehe legalValidity.',
+        `Zeitstempel strukturell gültig, aber die TSA-Signatur nicht verifiziert: ` +
+          `${timestampCheck.signatureReason ?? 'unbekannt'}. Für eine Pflichtveröffentlichung ` +
+          'ist ein nachweisbar vertrauenswürdiger TSA erforderlich.',
       );
     }
 
@@ -983,7 +982,12 @@ export class SignaturService {
   private checkTimestamp(
     signedPdfBytes: Buffer,
     timestampTokenBytes?: Buffer,
-  ): { valid: boolean; reason?: string; signatureVerified: false } {
+  ): {
+    valid: boolean;
+    reason?: string;
+    signatureVerified: boolean;
+    signatureReason?: string;
+  } {
     if (!timestampTokenBytes || timestampTokenBytes.length === 0) {
       return {
         valid: false,
@@ -1033,7 +1037,22 @@ export class SignaturService {
       return { valid: false, reason: plausibility.reason, signatureVerified: false };
     }
 
-    return { valid: true, signatureVerified: false };
+    // 4. Kryptografische Prüfung der TSA-Signatur (fail-closed).
+    //
+    //    Bis 2026-10-02 war `signatureVerified` konstant `false` — die
+    //    Signatur der TSA wurde nie geprüft, wodurch `legalValidity`
+    //    nie `VOLLSTAENDIG` erreichen konnte. Die Prüfung läuft über
+    //    `node:crypto` (`node-forge` bietet weder `rsa.sign` noch
+    //    `rsa.verify`).
+    const sig = verifyTimestampSignature(parsed, {
+      trustedIssuers: this.trustedIssuers,
+      allowSelfSigned: this.allowSelfSignedCertificates,
+    });
+    return {
+      valid: true,
+      signatureVerified: sig.valid,
+      ...(sig.valid ? {} : { signatureReason: sig.reason }),
+    };
   }
 
   /**

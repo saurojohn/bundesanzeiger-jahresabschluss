@@ -19,7 +19,7 @@
 | Redis (Sessions/Cache) | Hetzner CX31 Volume | AOF-Persistence + täglich Snapshot | 7 Tage | 24h | 1h |
 | MinIO (WORM-Object-Storage) | Hetzner Volume | Cross-Region-Replikation (geplant Sprint 5+) | 10 Jahre (COMPLIANCE-Mode) | 24h | 2h |
 | Audit-Log | PostgreSQL Tabelle + S3-WORM | Append-only, keine separate Backup nötig | 10 Jahre | 0 | 0 |
-| Application-Code | GitHub (Tag-m4-production-ready) | Git ist Backup | unbegrenzt | 0 | 5min (git clone) |
+| Application-Code | GitHub (Tag `m4-production-ready` = Code-Stand, kein Abstandsnachweis) | Git ist Backup | unbegrenzt | 0 | 5min (git clone) |
 | Secrets | Hetzner Cloud-Secrets + Vault | 3-2-1 Backup-Strategie | unbegrenzt | 0 | 30min |
 
 **RPO** = Recovery Point Objective (maximaler Datenverlust)

@@ -31,7 +31,7 @@
 | **M4 Sprint 4** | 🟡 implementiert, nicht abgenommen | Hamburger-Menu, Card-Layout für Listen auf Mobile, Tap-Target ≥44px, PWA (manifest + Service-Worker). **Keine Frontend-E2E-Tests vorhanden** (siehe README → Verifikationsstand). |
 | **M4 Sprint 5** | 🟡 teilweise, nicht abgenommen | Audit-Trail-Hash-Chain (SHA-256), WORM-Retention-Audit-Script, Disaster-Recovery-Plan, GoBD-Audit-Report. Der enthaltene „Audit" ist eine **Selbstprüfung (Mavis + User) und damit kein IDW-PS-880-Nachweis**. |
 | **M4 Production-Release** | ⏳ offen | Subscription-Production, Mobile-Nachweis, externes IDW-PS-880-Audit, Release-Tag |
-| **M4 Sprint 3–5 Tag** | ✅ vorhanden | `m4-production-ready` liegt auf `origin` (Repository `github.com/saurojohn/bundesanzeiger-jahresabschluss`). Der Tag markiert den Code-Stand — er ist **keine** Abnahme-Freigabe, siehe Verifikationsstand in `README.md`. |
+| **M4 Sprint 3–5 Tag** | 🟡 vorhanden, ohne Abnahme | `m4-production-ready` liegt auf `origin` und wurde am 2026-10-02 auf den damaligen HEAD (`1dd74a7`) verschoben. Der Tag ist **keine** Abnahme-Freigabe: der externe IDW-PS-880-Audit steht aus, ebenso Deployment und Live-Abhängigkeiten. |
 
 ---
 
@@ -191,7 +191,7 @@ ALTER TABLE kanzlei
   + monatlicher Restore-Test-Plan + Eskalations-Pfad.
 - ✅ GoBD-Audit-Report (`docs/GOBD-AUDIT-REPORT.md`) mit Compliance-Matrix
   gegen § 146-147 AO, § 257 HGB, GoBD 2019 — 9 von 11 Anforderungen voll erfüllt.
-- ✅ Tag `m4-production-ready` vorbereitet (Phase D-Commit).
+- 🟡 Tag `m4-production-ready` gesetzt, **aber ohne Abnahme** — am 2026-10-02 von `95dd932` auf den damaligen HEAD verschoben. Der ursprüngliche Tag stand 30 Commits zurück und enthielt u. a. CVE-2025-66478 (RCE), die falsche `taxNumber` im E-Bilanz und stillen PDF-Datenverlust. Details in der Tag-Annotation und in `docs/GOBD-AUDIT-REPORT.md` § 1.1.
 
 **Akzeptanzkriterien erfüllt**:
 - ✅ Audit-Trail-Integrität (Hash-Chain) implementiert + verifizierbar

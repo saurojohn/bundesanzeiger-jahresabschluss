@@ -7,10 +7,59 @@
 > **Status**: Internes Audit vor externem Audit.
 > **Nächster Schritt**: Beauftragung eines externen GoBD-Auditors
 > (z.B. TÜV, IDW-zertifizierte Wirtschaftsprüfer).
+>
+> ⚠️ **Zur Aussagekraft dieses Berichts**
+>
+> Erster Audit-Durchgang: 2026-09-25 gegen den Stand `95dd932`
+> (Tag `m4-production-ready`).
+>
+> **Nachtrag 2026-10-02:** Zwischen dem ersten Durchgang und diesem
+> Nachtrag wurden 30 Commits mit Befundbehebungen hinzugekommen, darunter
+> ein RCE (CVE-2025-66478), eine falsche Angabe an das Finanzamt und
+> stiller Datenverlust im PDF. Einzelne ✅-Aussagen der Erstfassung waren
+> für den geprüften Stand **nicht haltbar** — die Mandantentrennung
+> beispielsweise funktionierte auf mehreren Routen nicht (MandantGuard
+> las `req.query` nicht), und die Audit-Hash-Chain speicherte nie einen
+> Hash. Details in Abschnitt 1.1.
+>
+> Dieser Bericht ist damit **kein Nachweis für den aktuellen Stand**, solange
+> der externe Audit nicht durchgeführt wurde. Er beschreibt die
+> Compliance-Zielsetzung und den jeweils belegten Teilstand.
 
-**Audit-Datum**: 2026-09-25
+**Audit-Datum**: 2026-09-25, Nachtrag 2026-10-02
 **Auditor (intern)**: DevOps + Compliance-Team
-**System-Version**: M4 Sprint 0+1+2+3+4+5 (Tag: `m4-production-ready`)
+**System-Version (Erstdurchgang)**: M4 Sprint 0+1+2+3+4+5, Commit `95dd932`
+**Selbstprüfung ist kein Normnachweis** (siehe TODO-8.3)
+
+---
+
+## 1.1 Nachtrag: Aussagen der Erstfassung, die nicht hielten
+
+Der erste Durchgang vom 2026-09-25 wurde gegen `95dd932` geführt. Die
+Folge-Commits haben mehrere ✅-Aussagen widerlegt. Sie sind hier festgehalten,
+damit der externe Auditor nicht auf überholten Zusicherungen aufbaut.
+
+| Erstfassungsaid | Befund | Wirkung | Stand heute |
+|---|---|---|---|
+| „Mandant-Trennung ✅ (MandantGuard)" | Der Guard las `req.query` nicht — alle Mandantenlisten antworteten für jede Rolle außer `SYSTEM_ADMIN` mit 403. Die WP-Mandantenprüfung lief auf 8 von 10 Routen nie. | Zusicherung nicht haltbar | behoben (`ee49d5c`) |
+| „Audit-Hash-Chain für Manipulations-Erkennung" | `prisma.auditLog.update()` wurde mit **leerem `data`-Objekt** aufgerufen. Die Kette speicherte nie einen Hash; `verifyIntegrity()` meldete dauerhaft `PARTIAL`. | Zusicherung nicht haltbar | behoben (`cceb57e`) |
+| „Audit-Trail" | Der `AuditInterceptor` war nie im Modul registriert — die Trail-Erzeugung lief nicht. | Zusicherung nicht haltbar | behoben (`5ef89f9`) |
+| „PDF-Erzeugung ✅" | Kontobezeichnungen wurden per `ellipsis` abgeschnitten; die Tabelle hatte **keinen Seitenumbruch** und lief bei vielen Konten über den unteren Rand. Stiller Datenverlust in der Pflichtveröffentlichung. | unentdeckt | behoben (`6165e0f`) |
+| „E-Bilanz-XBRL-Export ✅" | Der Generator schrieb die **Handelsregisternummer** in `genInfo.companyInfo.taxNumber` und erfindete sonst `MANDANT-<id>`. Falsche Angabe gegenüber dem Finanzamt. | unentdeckt | behoben (`180bd61`) |
+| „qeS-Signatur" (implizit rechtswirksam) | Zeitstempel waren geraten: Zeitpunkt = lokale Uhr, Aussteller = URL-Hostname, Seriennummer = Hash der Antwortbytes. Die Token-Bytes wurden verworfen. | unentdeckt | behoben (`b66a4e6`) |
+| — | `next@15.0.3` — CVE-2025-66478, CVSS 10.0, unauthentifizierte RCE, aktiv ausgenutzt. Zusätzlich `react@19.0.0-rc` (Release-Candidate) und `next-intl@3.25.1` (Open Redirect). | unentdeckt | behoben (`7e98a33`) |
+| — | SSRF über IPv6 im Webhook-Guard umgehbar; Antwort interner Dienste über `/deliveries` auslesbar. | unentdeckt | behoben (`d0b8a26`) |
+
+**Konsequenz für die Methodik**: Ein Audit-Durchgang ohne ausführbaren
+Testlauf belegt wenig. Die Erstfassung enthielt neun ✅-Aussagen; vier
+davon hielten nicht. Seit `90c9cba` ist die Suite ausführbar und
+reproduzierbar (265/265 grün) — künftige Durchgänge sollten ausschließlich
+auf ausführbaren Belegen beruhen.
+
+**Weiterhin ungeklärt** (nicht durch Tests entscheidbar, siehe
+`README.md` → Verifikationsstand): Zertifikatskette / EU Trusted List /
+OCSP, kryptografische Prüfung der TSA-Signatur, SKR03/SKR04-Roundtrip,
+offizielle DATEV-Kontobezeichnungen.
 
 ---
 

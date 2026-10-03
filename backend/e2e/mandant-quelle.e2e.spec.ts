@@ -44,6 +44,10 @@ interface ListResponse<T> {
   geschaeftsjahr: number;
   status: string;
   positionen?: T[];
+  /** Serverseitig berechnete Salden (Listenansicht, Bugfix 2026-10-03). */
+  aktivaSumme?: number;
+  passivaSumme?: number;
+  hinweise?: string | null;
 }
 
 describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
@@ -297,6 +301,64 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
       body: JSON.stringify({ hinweise: 'x' }),
     });
     expect(res.status).toBe(403);
+  });
+
+  // ===========================================================================
+  // 6b. Listenansicht: Salden bzw. Abschnittsanzahl MÜSSEN mitgeliefert werden.
+  //
+  // Bugfix 2026-10-03: Beide Listen liefern die Felder NICHT, aus denen die
+  // Oberfläche ihre Anzeige berechnet — `BilanzSummary.positionen` und
+  // `Anhang.abschnitte` standen im Frontend-Typ als Pflicht. Das crashte die
+  // Fachseiten zur Laufzeit. Der Vertrag wird hier festgenagelt: die Listen
+  // liefern die Summen, NICHT die Rohdaten.
+  // ===========================================================================
+  it('GET /api/bilanz liefert aktivaSumme/passivaSumme ohne positionen', async () => {
+    const bilanz = await createBilanz(2089);
+    const res = await fetch(`${BASE}/api/bilanz?mandantId=${mandantId}`, {
+      headers: headerOnly(),
+    });
+    expect(res.status).toBe(200);
+    const liste = (await res.json()) as ListResponse<unknown>[];
+    const eintrag = liste.find((b) => b.id === bilanz.id);
+    expect(eintrag, 'die eben angelegte Bilanz muss in der Liste stehen').toBeTruthy();
+
+    // Die Anzeige braucht die Summen …
+    expect(typeof eintrag?.aktivaSumme, 'aktivaSumme muss in der Liste stehen').toBe('number');
+    expect(typeof eintrag?.passivaSumme, 'passivaSumme muss in der Liste stehen').toBe('number');
+    // … und darf die Rohpositionen nicht übertragen.
+    expect(
+      eintrag as unknown as { positionen?: unknown },
+      'die Liste darf die Positionen nicht mitliefern',
+    ).not.toHaveProperty('positionen');
+
+    // Gegenprobe: die Listen-Summe muss der positionsbasierten Validierung
+    // entsprechen, sonst zeigt die Liste etwas anderes als die Fachdatei.
+    const validierung = await (
+      await fetch(`${BASE}/api/bilanz/${bilanz.id}/validate`, {
+        method: 'POST',
+        headers: headerOnly(),
+        body: JSON.stringify({}),
+      })
+    ).json() as { aktivaSumme: number; passivaSumme: number };
+    expect(eintrag?.aktivaSumme).toBe(validierung.aktivaSumme);
+    expect(eintrag?.passivaSumme).toBe(validierung.passivaSumme);
+  });
+
+  it('GET /api/anhang liefert _count.abschnitte ohne abschnitte', async () => {
+    const anhang = await createAnhang(2089);
+    const res = await fetch(`${BASE}/api/anhang?mandantId=${mandantId}`, {
+      headers: headerOnly(),
+    });
+    expect(res.status).toBe(200);
+    const liste = (await res.json()) as Array<{
+      id: string;
+      _count?: { abschnitte: number };
+      abschnitte?: unknown;
+    }>;
+    const eintrag = liste.find((a) => a.id === anhang.id);
+    expect(eintrag, 'der eben angelegte Anhang muss in der Liste stehen').toBeTruthy();
+    expect(typeof eintrag?._count?.abschnitte, 'die Abschnittsanzahl muss mitkommen').toBe('number');
+    expect(eintrag, 'die Liste darf die Abschnittsinhalte nicht mitliefern').not.toHaveProperty('abschnitte');
   });
 
   // ===========================================================================

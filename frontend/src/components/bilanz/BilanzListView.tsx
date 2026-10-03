@@ -9,24 +9,23 @@ import { ExportActions } from '@/components/exports/ExportActions';
 import { DatevImportDialog } from '@/components/datev-import/DatevImportDialog';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
-type BilanzPosition = {
-  id?: string;
-  kontonummer: string;
-  bezeichnung: string;
-  seite: 'AKTIVA' | 'PASSIVA';
-  betragVorjahr: number | null;
-  betragAktuell: number;
-  reihenfolge: number;
-};
-
 type BilanzSummary = {
   id: string;
   geschaeftsjahr: number;
   status: 'DRAFT' | 'VALIDATED' | 'ARCHIVED';
   hinweise: string | null;
-  positionen: BilanzPosition[];
   updatedAt: string;
   wormObjectKey: string | null;
+  /**
+   * Salden-Summen kommen serverseitig mit. Die Liste liefert die Positionen
+   * bewusst NICHT mit (eine Bilanz hat 20+ Positionen) — `positionen` stand
+   * hier trotzdem als Pflichtfeld, und `b.positionen.filter(...)` crashte die
+   * komplette Bilanz-Fachseite mit "TypeError: Cannot read properties of
+   * undefined (reading 'filter')", sobald der Mandant eine Bilanz hatte.
+   * Bugfix 2026-10-03.
+   */
+  aktivaSumme: number;
+  passivaSumme: number;
 };
 
 type BilanzListResponse =
@@ -146,12 +145,10 @@ export function BilanzListView() {
   }
 
   function summarize(b: BilanzSummary) {
-    const aktiva = b.positionen
-      .filter((p) => p.seite === 'AKTIVA')
-      .reduce((s, p) => s + (p.betragAktuell || 0), 0);
-    const passiva = b.positionen
-      .filter((p) => p.seite === 'PASSIVA')
-      .reduce((s, p) => s + (p.betragAktuell || 0), 0);
+    // Summen kommen aus der Listen-Antwort (siehe BilanzSummary), nicht aus
+    // den Positionen — die stehen dort bewusst nicht drin.
+    const aktiva = b.aktivaSumme ?? 0;
+    const passiva = b.passivaSumme ?? 0;
     return {
       aktivaSumme: aktiva,
       passivaSumme: passiva,

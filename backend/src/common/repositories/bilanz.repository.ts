@@ -15,6 +15,24 @@ export type BilanzEntity = Prisma.BilanzGetPayload<{
 
 export type BilanzWithoutPositionen = Prisma.BilanzGetPayload<Record<string, never>>;
 
+/**
+ * Listenansicht einer Bilanz: alle Skalarfelder plus die Salden-Summen je
+ * Seite. Die Positionen selbst werden NICHT mitgeliefert (eine Bilanz hat 20+
+ * Positionen, eine Liste 20 Bilanzen).
+ *
+ * Bugfix 2026-10-03: Die Oberfläche berechnete die Summen in der Liste aus
+ * `bilanz.positionen` — die Listen-Antwort liefert dieses Feld nicht
+ * (`BilanzWithoutPositionen`). Der Zugriff crashte die komplette
+ * Bilanz-Fachseite mit "TypeError: Cannot read properties of undefined
+ * (reading 'filter')" — und zwar bei jedem Mandanten, der überhaupt eine
+ * Bilanz hat. Die GuV-Liste löst das bereits über ein serverseitiges
+ * Feld (`ergebnis`); die Bilanz-Liste bekommt dasselbe Prinzip.
+ */
+export type BilanzListEntry = BilanzWithoutPositionen & {
+  aktivaSumme: number;
+  passivaSumme: number;
+};
+
 export interface BilanzPositionInput {
   seite: 'AKTIVA' | 'PASSIVA';
   kontonummer: string;
@@ -80,7 +98,7 @@ export class BilanzRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<
-    Array<BilanzWithoutPositionen & { wormObjectKey: string | null }>
+    Array<BilanzListEntry & { wormObjectKey: string | null }>
   > {
     const bilanzen = await this.findByMandantAndJahr(mandantId, jahr);
     if (bilanzen.length === 0) return [];
@@ -95,10 +113,50 @@ export class BilanzRepository {
     for (const w of wormObjects) {
       if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
     }
+    const salden = await this.saldenProBilanz(bilanzen.map((b) => b.id));
     return bilanzen.map((b) => ({
       ...b,
+      ...(salden.get(b.id) ?? this.leereSalden()),
       wormObjectKey: map.get(b.id) ?? null,
     }));
+  }
+
+  /** Neutralwert für Bilanzen ohne Positionen. */
+  private leereSalden(): { aktivaSumme: number; passivaSumme: number } {
+    return { aktivaSumme: 0, passivaSumme: 0 };
+  }
+
+  /**
+   * Salden-Summen je Bilanz, gruppiert in EINER Query (`groupBy` über
+   * bilanzId + seite) — kein N+1 und keine übertragenen Positionen.
+   *
+   * Summiert wird `betragAktuell`, nicht `betragVorjahr`: die Listen-Anzeige
+   * vergleicht die aktuellen Werte, genau wie `computeValidation`.
+   */
+  private async saldenProBilanz(
+    bilanzIds: string[],
+  ): Promise<Map<string, { aktivaSumme: number; passivaSumme: number }>> {
+    if (bilanzIds.length === 0) return new Map();
+    const gruppen = await this.prismaService.bilanzPosition.groupBy({
+      by: ['bilanzId', 'seite'],
+      where: { bilanzId: { in: bilanzIds } },
+      _sum: { betragAktuell: true },
+    });
+    const map = new Map<string, { aktivaSumme: number; passivaSumme: number }>();
+    for (const id of bilanzIds) map.set(id, this.leereSalden());
+    for (const g of gruppen) {
+      const eintrag = map.get(g.bilanzId);
+      if (!eintrag) continue;
+      const summe = Number(g._sum.betragAktuell ?? 0);
+      if (g.seite === 'AKTIVA') eintrag.aktivaSumme += summe;
+      else if (g.seite === 'PASSIVA') eintrag.passivaSumme += summe;
+    }
+    for (const v of map.values()) {
+      // Auf 2 Nachkommastellen runden, sonst zeigt die Liste 1000.0000000001.
+      v.aktivaSumme = Number(v.aktivaSumme.toFixed(2));
+      v.passivaSumme = Number(v.passivaSumme.toFixed(2));
+    }
+    return map;
   }
 
   /**
@@ -115,7 +173,7 @@ export class BilanzRepository {
     pageSize: number;
     jahr?: number;
   }): Promise<
-    Array<BilanzWithoutPositionen & { wormObjectKey: string | null }>
+    Array<BilanzListEntry & { wormObjectKey: string | null }>
   > {
     const where: Prisma.BilanzWhereInput = {
       mandantId: args.mandantId,
@@ -149,8 +207,10 @@ export class BilanzRepository {
     for (const w of wormObjects) {
       if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
     }
+    const salden = await this.saldenProBilanz(bilanzen.map((b) => b.id));
     return bilanzen.map((b) => ({
       ...b,
+      ...(salden.get(b.id) ?? this.leereSalden()),
       wormObjectKey: map.get(b.id) ?? null,
     }));
   }

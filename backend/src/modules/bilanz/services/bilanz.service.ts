@@ -9,7 +9,7 @@ import { Prisma } from '@prisma/client';
 import {
   BilanzRepository,
   type BilanzEntity,
-  type BilanzWithoutPositionen,
+  type BilanzListEntry,
 } from '../../../common/repositories/bilanz.repository';
 import { PaginationService } from '../../../common/services/pagination.service';
 import {
@@ -29,7 +29,12 @@ import {
   CreateBilanzResponse,
 } from '../dto/bilanz-validierung.dto';
 
-export type BilanzSummaryWithWorm = BilanzWithoutPositionen & {
+/**
+ * Listenansicht: Skalarfelder, Salden-Summen (aktivaSumme/passivaSumme) und
+ * der WORM-ObjectKey. Die Positionen sind NICHT enthalten — die Liste zeigt
+ * nur die Summen.
+ */
+export type BilanzSummaryWithWorm = BilanzListEntry & {
   wormObjectKey: string | null;
 };
 

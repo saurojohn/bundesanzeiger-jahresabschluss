@@ -340,3 +340,73 @@ test.describe('Speichern bestehender Datensätze', () => {
     });
   }
 });
+
+/**
+ * Fachseiten mit Bestand — der Test, dessen Fehlen drei Crashes durchgelassen hat.
+ *
+ * Befund 2026-10-03: Die Smoke-Tests öffneten jede Fachseite, prüften aber nur
+ * "rendert auf Deutsch". Der Vorauswahl-Mandant nach dem Login hat im Seed
+ * keine Datensätze — eine leere Liste rendert problemlos. Die Abstürze traten
+ * ausschließlich bei Mandanten MIT Bestand auf:
+ *
+ *   - Anhang-Liste: `a.abschnitte.length` → TypeError (Liste liefert keine)
+ *   - Bilanz-Liste: `b.positionen.filter(...)` → TypeError (Liste liefert
+ *     keine Positionen)
+ *   - GuV-/Anhang-/Bilanz-Liste: React #300 beim Öffnen (Hook hinter Return)
+ *
+ * "Rendert" und "rendert mit Daten" sind verschiedene Zusicherungen. Dieser
+ * Test sichert die zweite.
+ */
+test.describe('Fachseiten mit Bestand', () => {
+  test.beforeEach(async ({ page }) => {
+    await assertBackendLoginWorks();
+    await login(page);
+    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
+  });
+
+  for (const [seite, apiPfad, erwartet] of [
+    ['bilanz', '/api/bilanz?mandantId=', /Bilanz/i],
+    ['guv', '/api/guv?mandantId=', /GuV/i],
+    ['anhang', '/api/anhang?mandantId=', /Anhang/i],
+  ] as const) {
+    test(`${seite}: Mandant mit Bestand rendert ohne Absturz`, async ({ page }) => {
+      const pageErrors: string[] = [];
+      page.on('pageerror', (e) => pageErrors.push(String(e).slice(0, 200)));
+
+      // Mandanten mit Bestand wählen. localStorage ist der schnellste Weg —
+      // der Switcher löst window.location.reload() aus und macht Locators stale.
+      const mandant = await page.evaluate(async (pfad: string) => {
+        const token = localStorage.getItem('accessToken');
+        if (!token) return null;
+        const liste = (await (await fetch('/api/mandant', {
+          headers: { Authorization: `Bearer ${token}` },
+        })).json()) as Array<{ id: string }>;
+        for (const m of liste) {
+          const r = await fetch(pfad + m.id, {
+            headers: { Authorization: `Bearer ${token}`, 'x-mandant-id': m.id },
+          });
+          if (!r.ok) continue;
+          const body = (await r.json()) as unknown[];
+          if (Array.isArray(body) && body.length > 0) return m.id;
+        }
+        return null;
+      }, apiPfad);
+      expect(mandant, `${seite}: Seed muss einen Mandanten mit Bestand enthalten`).toBeTruthy();
+      await page.evaluate((m) => localStorage.setItem('activeMandantId', m), mandant as string);
+
+      const resp = await page.goto(`/${LOCALE}/${seite}`);
+      expect(resp, `${seite}: Seite muss antworten`).toBeTruthy();
+      await page.waitForTimeout(2500);
+
+      // Next.js blendet den Fehler als "Application error: a client-side
+      // exception has occurred" aus — genau das war der Absturz.
+      const body = await page.locator('body').innerText();
+      expect(
+        body,
+        `${seite}: Client-seitiger Absturz (pageerror: ${pageErrors.join(' | ')})`,
+      ).not.toContain('Application error');
+      expect(pageErrors, `${seite}: keine pageerror`).toHaveLength(0);
+      await expect(page.locator('body')).toContainText(erwartet);
+    });
+  }
+});

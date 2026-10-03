@@ -20,9 +20,9 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 |---|---|---|
 | Backend baut und startet | ✅ | `npm run typecheck` 0 Fehler (**über den Gesamtbaum**: `src` + `e2e` + `prisma/seed.ts` + Tools), `npm run lint` 0 Meldungen, `Nest application successfully started` |
 | Datenbank-Schema ist erzeugbar | ✅ | `prisma migrate deploy` auf frischer DB: 27 Tabellen, 84 Indizes, 0 Drift |
-| Backend-E2E-Suite | ✅ | **279 / 279 Backend + 11 / 11 Playwright** (26 Backend-Dateien; 4 für die Tier-Serialisierung, 7 für die Audit-Hash-Chain (Serialisierung + Rekursion), 18 für den RFC-3161-Parser inkl. Kryptografie, 2 für die Steuernummer im E-Bilanz, 4 für das PDF-Layout, 4 für die Kontenrahmen-Konsistenz), über zwei aufeinanderfolgende Läufe identisch (reproduzierbar). Lokal reproduziert am 2026-10-01 gegen eine frische Postgres-Instanz. |
+| Backend-E2E-Suite | ✅ | **304 / 304 Backend + 13 / 13 Playwright** (27 Backend-Dateien; 4 für die Tier-Serialisierung, 7 für die Audit-Hash-Chain (Serialisierung + Rekursion), 18 für den RFC-3161-Parser inkl. Kryptografie, 2 für die Steuernummer im E-Bilanz, 4 für das PDF-Layout, 4 für die Kontenrahmen-Konsistenz, 13 für die mandantId-Auflösung, 12 e2e für Header/Query/Body als mandantId-Quelle), reproduziert am 2026-10-03 gegen Postgres auf Port 55432. |
 | **Frontend** baut | ✅ | `npm run build` erfolgreich, 14 Seiten (Stand: `@types/react` auf existierende Version korrigiert — `19.0.0-rc.1` existiert auf npm nicht) |
-| **Frontend-E2E** | ✅ | **10 / 10 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) |
+| **Frontend-E2E** | ✅ | **13 / 13 Playwright-Tests grün** gegen den Production-Build (`frontend/playwright.config.ts`, `frontend/e2e/smoke.spec.ts`) — deckt u. a. das Speichern bestehender GuV-/Anhangsätze über die echte Oberfläche ab |
 | Mandantentrennung / Auth | ✅ | Cross-Mandant-Zugriffe 403, `/api/*` ohne Token 401, e2e-abgedeckt |
 | DATEV-Export (CSV) | ✅ | Formatkonformität + verlustfreier Round-Trip über den eigenen Import-Parser |
 | PDF-Erzeugung + WORM-Archiv | ✅ | PDF mit Text-Layer, SHA-256, Object-Lock mit 10-Jahres-Retention |

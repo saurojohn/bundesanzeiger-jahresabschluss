@@ -44,5 +44,10 @@ export class CreateAnhangDto {
   @ArrayMinSize(0)
   @ValidateNested({ each: true })
   @Type(() => AnhangAbschnittDto)
-  abschnitte?: AnhangAbschnittDto[];
+  // Pflicht, auch ohne `@IsOptional()`: die Validierung laesst das Feld zu.
+  // Das `?` stand hier vorher ohne Deckung im DTO-Typ — der Compiler liess
+  // Aufrufer glauben, das Feld sei optional, der Request scheiterte dann mit
+  // 400 "abschnitte must be an array". (UpdateAnhangDto hat `@IsOptional()`,
+  // dort ist das `?` berechtigt.)
+  abschnitte!: AnhangAbschnittDto[];
 }

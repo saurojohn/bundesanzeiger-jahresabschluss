@@ -159,6 +159,12 @@ export function BilanzListView() {
     };
   }
 
+  // MUSS vor jedem fruehen `return` stehen (Rules of Hooks).
+  // Bugfix 2026-10-03: stand hinter dem `if (editingId) return <Form />`
+  // und loeste beim Oeffnen eines bestehenden Datensatzes React-Fehler #300
+  // aus — die komplette Fachseite crashte ("Application error: a
+  // client-side exception has occurred"), nicht nur das Formular.
+  const paginationLabels = usePaginationLabels('bilanz', { count: total, shown: bilanzen.length, total });
   if (creatingNew) {
     return (
       <BilanzForm
@@ -184,7 +190,6 @@ export function BilanzListView() {
     );
   }
 
-  const paginationLabels = usePaginationLabels('bilanz', { count: total, shown: bilanzen.length, total });
 
   return (
     <div>

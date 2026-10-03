@@ -12,6 +12,16 @@ export type AnhangEntity = Prisma.AnhangGetPayload<{
 
 export type AnhangWithoutAbschnitte = Prisma.AnhangGetPayload<Record<string, never>>;
 
+/**
+ * Listenansicht eines Anhangs: alle Skalarfelder plus die Anzahl der
+ * Abschnitte (`_count.abschnitte`). Die Abschnittsinhalte werden bewusst NICHT
+ * mitgeliefert — die Liste zeigt nur "N Abschnitte", und ein Mandant mit 50
+ * Anhängen soll nicht 50 vollständige Anhänge übertragen müssen.
+ */
+export type AnhangListEntry = Prisma.AnhangGetPayload<{
+  include: { _count: { select: { abschnitte: true } } };
+}>;
+
 export interface AnhangAbschnittInput {
   titel: string;
   inhalt: string;
@@ -47,16 +57,34 @@ export class AnhangRepository {
 
   static readonly entityName = 'Anhang';
 
+  /**
+   * Listenansicht: Datensätze OHNE die Abschnittsinhalte, aber MIT der
+   * Anzahl der Abschnitte.
+   *
+   * Bugfix 2026-10-03: Die Liste lieferte die Abschnitte gar nicht
+   * (`AnhangWithoutAbschnitte`), das Frontend griff aber auf
+   * `anhang.abschnitte.length` zu und crashte die komplette Fachseite mit
+   * "TypeError: Cannot read properties of undefined (reading 'length')" —
+   * sobald der Mandant überhaupt einen Anhang hatte. Prisma liefert
+   * `_count` ohne zusätzliche Abfrage (eine Aggregat-Query pro Liste), und
+   * die Oberfläche braucht für "3 Abschnitte" nur die Zahl, nicht die
+   * kompletten Inhalte.
+   */
+  static readonly LIST_INCLUDE = {
+    _count: { select: { abschnitte: true } },
+  } as const;
+
   async findByMandantAndJahr(
     mandantId: string,
     jahr?: number,
-  ): Promise<AnhangWithoutAbschnitte[]> {
+  ): Promise<AnhangListEntry[]> {
     return this.prismaService.anhang.findMany({
       where: {
         mandantId,
         ...(typeof jahr === 'number' ? { geschaeftsjahr: jahr } : {}),
       },
       orderBy: { geschaeftsjahr: 'desc' },
+      include: { ...AnhangRepository.LIST_INCLUDE },
     });
   }
 
@@ -69,7 +97,7 @@ export class AnhangRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<
-    Array<AnhangWithoutAbschnitte & { wormObjectKey: string | null }>
+    Array<AnhangListEntry & { wormObjectKey: string | null }>
   > {
     const anhaenge = await this.findByMandantAndJahr(mandantId, jahr);
     if (anhaenge.length === 0) return [];
@@ -102,7 +130,7 @@ export class AnhangRepository {
     pageSize: number;
     jahr?: number;
   }): Promise<
-    Array<AnhangWithoutAbschnitte & { wormObjectKey: string | null }>
+    Array<AnhangListEntry & { wormObjectKey: string | null }>
   > {
     const where: Prisma.AnhangWhereInput = {
       mandantId: args.mandantId,
@@ -121,6 +149,8 @@ export class AnhangRepository {
       where,
       orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       take: args.pageSize + 1,
+      // Wie findByMandantAndJahr: AbschnittsANZAHL mitliefern, Inhalte nicht.
+      include: { ...AnhangRepository.LIST_INCLUDE },
     });
 
     if (anhaenge.length === 0) return [];

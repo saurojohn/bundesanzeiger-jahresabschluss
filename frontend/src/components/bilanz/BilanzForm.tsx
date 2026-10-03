@@ -196,10 +196,16 @@ export function BilanzForm({
         })),
       };
       if (bilanzId) {
+        // PATCH nimmt NUR die veraenderbaren Felder — `mandantId` und
+        // `geschaeftsjahr` sind laut UpdateBilanzDto unveraenderlich und
+        // werden sonst mit HTTP 400 abgelehnt (forbidNonWhitelisted).
         await apiFetch(`/bilanz/${bilanzId}`, {
           method: 'PATCH',
           accessToken: token,
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            hinweise: payload.hinweise,
+            positionen: payload.positionen,
+          }),
         });
         setSavedBilanzId(bilanzId);
       } else {

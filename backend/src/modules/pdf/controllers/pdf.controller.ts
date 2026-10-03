@@ -5,7 +5,6 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  Query,
   Req,
   Res,
   UseGuards,
@@ -17,7 +16,9 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { MandantGuard } from '../../auth/guards/mandant.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
+import { MandantId } from '../../auth/decorators/mandant-id.decorator';
 import { RequireMandant } from '../../auth/decorators/require-mandant.decorator';
+import { requireMandantId } from '../../auth/utils/resolve-mandant-id';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { PdfService } from '../services/pdf.service';
@@ -84,7 +85,7 @@ export class PdfController {
   @UseGuards(MandantGuard)
   async downloadBilanz(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
@@ -139,7 +140,7 @@ export class PdfController {
   @UseGuards(MandantGuard)
   async downloadGuV(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
@@ -194,7 +195,7 @@ export class PdfController {
   @UseGuards(MandantGuard)
   async downloadAnhang(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
@@ -249,7 +250,7 @@ export class PdfController {
   @UseGuards(MandantGuard)
   async downloadAbschluss(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
@@ -280,16 +281,6 @@ export class PdfController {
   }
 
   private extractMandantFromRequest(req: Request): string {
-    const fromQuery = req.query['mandantId'];
-    if (typeof fromQuery === 'string' && fromQuery.length > 0) {
-      return fromQuery;
-    }
-    const fromHeader = req.headers['x-mandant-id'];
-    if (typeof fromHeader === 'string' && fromHeader.length > 0) {
-      return fromHeader;
-    }
-    throw new Error(
-      'mandantId erforderlich (Body, Query oder Header x-mandant-id)',
-    );
+    return requireMandantId(req);
   }
 }

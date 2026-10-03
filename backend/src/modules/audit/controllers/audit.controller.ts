@@ -6,6 +6,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { MandantIdOptional } from '../../auth/decorators/mandant-id.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -36,7 +37,7 @@ export class AuditController {
   @Get()
   async list(
     @CurrentUser() user: AuthUser,
-    @Query('mandantId') mandantId?: string,
+    @MandantIdOptional() mandantId?: string,
     @Query('entityType') entityType?: string,
     @Query('action') action?: string,
     @Query('from') from?: string,

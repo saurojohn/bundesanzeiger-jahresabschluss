@@ -18,7 +18,9 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { MandantGuard } from '../../auth/guards/mandant.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
+import { MandantId } from '../../auth/decorators/mandant-id.decorator';
 import { RequireMandant } from '../../auth/decorators/require-mandant.decorator';
+import { requireMandantId } from '../../auth/utils/resolve-mandant-id';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { GuVService } from '../services/guv.service';
@@ -57,7 +59,7 @@ export class GuVController {
   @RequireMandant()
   @UseGuards(MandantGuard)
   findAll(
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @Query('geschaeftsjahr') geschaeftsjahr: string | undefined,
     @Query('cursor') cursor: string | undefined,
     @Query('pageSize', pageSizePipe) pageSize: number | undefined,
@@ -87,7 +89,7 @@ export class GuVController {
   @UseGuards(MandantGuard)
   findOne(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
   ) {
     return this.guvService.findOne(id, mandantId, user);
@@ -124,12 +126,7 @@ export class GuVController {
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
-    const mandantId =
-      (req.query['mandantId'] as string | undefined) ??
-      (typeof req.body?.mandantId === 'string' ? req.body.mandantId : undefined);
-    if (!mandantId) {
-      throw new Error('mandantId erforderlich (Query oder Body)');
-    }
+    const mandantId = requireMandantId(req);
     return this.guvService.update(id, mandantId, dto, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
@@ -148,7 +145,7 @@ export class GuVController {
   @UseGuards(MandantGuard)
   validate(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
   ): Promise<GuVValidierungDto> {
     return this.guvService.validate(id, mandantId, user);
@@ -164,7 +161,7 @@ export class GuVController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async delete(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {

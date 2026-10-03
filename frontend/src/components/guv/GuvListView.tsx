@@ -141,6 +141,12 @@ export function GuvListView() {
     setNextCursor(data.nextCursor);
   }
 
+  // MUSS vor jedem fruehen `return` stehen (Rules of Hooks).
+  // Bugfix 2026-10-03: stand hinter dem `if (editingId) return <Form />`
+  // und loeste beim Oeffnen eines bestehenden Datensatzes React-Fehler #300
+  // aus — die komplette Fachseite crashte ("Application error: a
+  // client-side exception has occurred"), nicht nur das Formular.
+  const paginationLabels = usePaginationLabels('guv', { count: total, shown: guvs.length, total });
   if (creatingNew || editingId) {
     return (
       <GuvForm
@@ -158,7 +164,6 @@ export function GuvListView() {
     );
   }
 
-  const paginationLabels = usePaginationLabels('guv', { count: total, shown: guvs.length, total });
 
   return (
     <div>
@@ -429,10 +434,18 @@ function GuvForm({
         })),
       };
       if (guvId) {
+        // PATCH nimmt NUR die veraenderbaren Felder. `mandantId` und
+        // `geschaeftsjahr` sind laut UpdateGuVDo unveraenderlich und werden
+        // vom Backend mit `forbidNonWhitelisted` abgelehnt — das ergab HTTP
+        // 400 "property mandantId should not exist" und damit ein
+        // unmoegliches Speichern bestehender Saetze in der Oberflaeche.
         await apiFetch(`/guv/${guvId}`, {
           method: 'PATCH',
           accessToken: token,
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            verfahren,
+            positionen: payload.positionen,
+          }),
         });
       } else {
         await apiFetch('/guv', {

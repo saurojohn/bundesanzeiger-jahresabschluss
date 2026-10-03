@@ -7,7 +7,6 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +15,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { MandantGuard } from '../../auth/guards/mandant.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
+import { MandantId } from '../../auth/decorators/mandant-id.decorator';
 import { RequireMandant } from '../../auth/decorators/require-mandant.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
@@ -58,7 +58,7 @@ export class EbilanzController {
   @HttpCode(HttpStatus.OK)
   async generate(
     @Body() dto: GenerateEbilanzDto,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<GenerateEbilanzResponse> {
@@ -107,7 +107,7 @@ export class EbilanzController {
     @Param('bilanzId', new ParseUUIDPipe({ version: '4' })) bilanzId: string,
     @Param('guvId', new ParseUUIDPipe({ version: '4' })) guvId: string,
     @Param('anhangId', new ParseUUIDPipe({ version: '4' })) anhangId: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
   ): Promise<MappingPreviewResponse> {
     return this.generatorService.previewMapping({

@@ -9,7 +9,7 @@ import { Prisma } from '@prisma/client';
 import {
   AnhangRepository,
   type AnhangEntity,
-  type AnhangWithoutAbschnitte,
+  type AnhangListEntry,
 } from '../../../common/repositories/anhang.repository';
 import { PaginationService } from '../../../common/services/pagination.service';
 import {
@@ -24,7 +24,12 @@ import {
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
 
-export type AnhangSummaryWithWorm = AnhangWithoutAbschnitte & {
+/**
+ * Listenansicht: alle Skalarfelder, die Anzahl der Abschnitte (`_count`) und
+ * der WORM-ObjectKey. Die Abschnittsinhalte sind bewusst NICHT enthalten —
+ * die Liste zeigt nur "N Abschnitte".
+ */
+export type AnhangSummaryWithWorm = AnhangListEntry & {
   wormObjectKey: string | null;
 };
 

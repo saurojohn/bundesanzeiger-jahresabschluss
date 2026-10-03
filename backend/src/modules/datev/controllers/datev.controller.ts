@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { MandantGuard } from '../../auth/guards/mandant.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
+import { MandantId } from '../../auth/decorators/mandant-id.decorator';
 import { RequireMandant } from '../../auth/decorators/require-mandant.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
@@ -61,7 +62,7 @@ export class DatevController {
   @HttpCode(HttpStatus.OK)
   async generateBuchungsstapel(
     @Body() dto: GenerateDatevDto,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<GenerateDatevResponse> {
@@ -112,7 +113,7 @@ export class DatevController {
   @Roles('STEUERBERATER', 'WIRTSCHAFTSPRUEFER', 'KANZLEI_ADMIN')
   async preview(
     @Param('guvId', new ParseUUIDPipe({ version: '4' })) guvId: string,
-    @Query('mandantId') mandantId: string,
+    @MandantId() mandantId: string,
     @Query('skrPlan') skrPlan: 'SKR03' | 'SKR04' | undefined,
     @CurrentUser() user: AuthUser,
   ): Promise<DatevMappingPreviewResponse> {

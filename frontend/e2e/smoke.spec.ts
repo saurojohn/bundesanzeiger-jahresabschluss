@@ -196,3 +196,147 @@ test.describe('Fachseiten (mit Session)', () => {
     ).toHaveLength(0);
   });
 });
+
+/**
+ * Speichern eines BESTEHENDEN Datensatzes in der Oberfläche.
+ *
+ * Befund 2026-10-03: `GuvListView`/`AnhangListView`/`BilanzForm` schicken beim
+ * Speichern eines bestehenden Satzes `mandantId` weder in die Query noch in
+ * den Body — nur der `x-mandant-id`-Header von `apiFetch`. Die Controller
+ * lasen aber nur Query/Body, warfen einen nackten `Error` und antworteten mit
+ * HTTP 500. In der Oberfläche hieß das: Formular auf, "Speichern" geklickt,
+ * rotes Fehlerband, Datenstand verloren.
+ *
+ * Der Test klickt den Weg, den ein Anwender geht: Liste → "Bearbeiten" →
+ * "Speichern". Geprüft wird die tatsächliche Netzwerkkette (PATCH-Statuscode),
+ * nicht ein Zustand im Frontend.
+ */
+test.describe('Speichern bestehender Datensätze', () => {
+  test.beforeEach(async ({ page }) => {
+    await assertBackendLoginWorks();
+    await login(page);
+    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
+  });
+
+  /**
+   * Sorgt dafür, dass die Liste mindestens einen Datensatz zeigt.
+   *
+   * Der Vorauswahl-Mandant nach dem Login kommt aus `/api/mandant`; im Seed
+   * hat er Bestand, das ist aber nicht garantiert (die Mandantenliste ist nach
+   * firmenname sortiert). Deshalb wird bei leerer Liste ueber den
+   * Mandanten-Switcher auf einen Mandanten mit Bestand gewechselt — der Weg,
+   * den ein Anwender geht.
+   *
+   * Hinweis: `<option>`-Elemente haben fuer Playwright keine sichtbare Box,
+   * `toBeVisible()` gilt nur fuer das `<select>` selbst.
+   */
+  async function listeMitBestandOeffnen(
+    page: Page,
+    seite: string,
+    apiPfad: string,
+  ): Promise<void> {
+    await page.goto(`/${LOCALE}/${seite}`);
+    await page.waitForTimeout(2000);
+    const bearbeiten = page.getByRole('button', { name: 'Bearbeiten' });
+    if ((await bearbeiten.count()) > 0) return;
+
+    await page.goto(`/${LOCALE}/dashboard`);
+    await page.waitForTimeout(1500);
+    const switcher = page.locator('#mandant-switcher');
+    await expect(switcher, 'der Mandanten-Switcher muss sichtbar sein').toBeVisible();
+
+    // Wichtig: ALLE Kandidaten in einem einzigen page.evaluate pruefen. Ein
+    // selectOption loest window.location.reload() aus und macht den Locator
+    // stale — ein Loop ueber Locators bricht dann mitten im Lauf ab.
+    const kandidat = await page.evaluate(async (pfad: string) => {
+      const token = localStorage.getItem('accessToken');
+      const select = document.querySelector('#mandant-switcher') as HTMLSelectElement | null;
+      if (!token || !select) return null;
+      for (const option of Array.from(select.options)) {
+        const mid = option.value;
+        if (!mid) continue;
+        const r = await fetch(pfad, {
+          headers: { Authorization: `Bearer ${token}`, 'x-mandant-id': mid },
+        });
+        if (!r.ok) continue;
+        const body = (await r.json()) as unknown[];
+        if (Array.isArray(body) && body.length > 0) return mid;
+      }
+      return null;
+    }, apiPfad);
+
+    if (!kandidat) {
+      throw new Error(
+        `${seite}: kein Mandant mit Bestand gefunden (${apiPfad}) — Seed-Daten prüfen`,
+      );
+    }
+
+    await page.selectOption('#mandant-switcher', kandidat);
+    // handleChange ruft window.location.reload() — auf das Neuladen warten.
+    await page.waitForLoadState('load');
+    await page.goto(`/${LOCALE}/${seite}`);
+    await page.waitForTimeout(2000);
+    if ((await bearbeiten.count()) > 0) return;
+    throw new Error(
+      `${seite}: nach dem Mandantenwechsel weiterhin keine Datensätze in der Liste`,
+    );
+  }
+
+  for (const [seite, bearbeiten, pfad, listePfad] of [
+    ['guv', 'Bearbeiten', '/api/guv/', '/api/guv?mandantId='],
+    ['anhang', 'Bearbeiten', '/api/anhang/', '/api/anhang?mandantId='],
+  ] as const) {
+    test(`${seite}: bestehenden Datensatz speichern → kein 5xx`, async ({ page }) => {
+      await listeMitBestandOeffnen(page, seite, listePfad);
+
+      // Ohne Datensatz lässt sich der Pfad nicht gehen — der Test würde
+      // stillschweigend nichts prüfen. Also sichtbar scheitern.
+      const bearbeitenButtons = page.getByRole('button', { name: bearbeiten });
+      await expect(
+        bearbeitenButtons.first(),
+        `${seite}: es muss mindestens einen bestehenden Datensatz zum Bearbeiten geben`,
+      ).toBeVisible();
+
+      await bearbeitenButtons.first().click();
+      await expect(
+        page.getByRole('heading', { name: /bearbeiten/i }),
+        `${seite}: das Formular muss sich öffnen`,
+      ).toBeVisible();
+
+      // PATCH-Statuscode mitschreiben. `waitForResponse` VOR dem Klick
+      // registrieren — der React-onClick feuert synchron (AGENTS.md §12).
+      const antworten: Array<{ url: string; status: number }> = [];
+      const warteAufPatch = page.waitForResponse(
+        (r) =>
+          r.request().method() === 'PATCH' && r.url().includes(pfad),
+        { timeout: 20_000 },
+      );
+      await page.getByRole('button', { name: /^Speichern$/ }).click();
+      const patch = await warteAufPatch;
+      antworten.push({ url: patch.url(), status: patch.status() });
+
+      expect(
+        patch.status(),
+        `PATCH ${patch.url()} muss 2xx liefern, war ${patch.status()}`,
+      ).toBeGreaterThanOrEqual(200);
+      expect(
+        patch.status(),
+        `PATCH ${patch.url()} darf kein 500 sein`,
+      ).toBeLessThan(500);
+
+      // Und die Oberflaeche darf keinen Fehler anzeigen. Geprueft wird der
+      // TEXT, nicht die Anzahl der Elemente: `role="alert"` wird auch als
+      // leere Live-Region fuer Screenreader gerendert (Text = '').
+      await page.waitForTimeout(1500);
+      const fehlerTexte = (await page
+        .locator('.bg-red-50, [role="alert"]')
+        .allInnerTexts())
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      expect(
+        fehlerTexte,
+        `${seite}: nach dem Speichern darf kein Fehlertext stehen`,
+      ).toHaveLength(0);
+    });
+  }
+});

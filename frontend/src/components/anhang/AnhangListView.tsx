@@ -21,8 +21,20 @@ type Anhang = {
   bilanzierungsMethoden: string | null;
   bewertungsMethoden: string | null;
   sonstigePflichtangaben: string | null;
-  abschnitte: AnhangAbschnitt[];
   wormObjectKey: string | null;
+  /**
+   * Listenansicht liefert NUR die Anzahl der Abschnitte (`_count`), nicht die
+   * Inhalte — ein Mandant mit 50 Anhängen soll nicht 50 vollständige Anhänge
+   * übertragen müssen. Die Inhalte kommen erst beim Öffnen (`GET /anhang/:id`).
+   *
+   * Bugfix 2026-10-03: Das Feld `abschnitte` stand hier als Pflicht, obwohl
+   * die Liste es nie lieferte. `a.abschnitte.length` crashte die komplette
+   * Fachseite mit "TypeError: Cannot read properties of undefined" — der
+   * Anhang-Bereich war unbenutzbar, sobald der Mandant einen Anhang hatte.
+   */
+  _count?: { abschnitte: number };
+  /** Nur in der Detailansicht (`GET /anhang/:id`) vorhanden. */
+  abschnitte?: AnhangAbschnitt[];
 };
 
 type AnhangListResponse =
@@ -126,6 +138,12 @@ export function AnhangListView() {
     setNextCursor(data.nextCursor);
   }
 
+  // MUSS vor jedem fruehen `return` stehen (Rules of Hooks).
+  // Bugfix 2026-10-03: stand hinter dem `if (editingId) return <Form />`
+  // und loeste beim Oeffnen eines bestehenden Datensatzes React-Fehler #300
+  // aus — die komplette Fachseite crashte ("Application error: a
+  // client-side exception has occurred"), nicht nur das Formular.
+  const paginationLabels = usePaginationLabels('anhang', { count: total, shown: anhaenge.length, total });
   if (creatingNew || editingId) {
     return (
       <AnhangForm
@@ -143,7 +161,6 @@ export function AnhangListView() {
     );
   }
 
-  const paginationLabels = usePaginationLabels('anhang', { count: total, shown: anhaenge.length, total });
 
   return (
     <div>
@@ -181,8 +198,8 @@ export function AnhangListView() {
                   {t('anhang.geschaeftsjahr')}: {a.geschaeftsjahr}
                 </div>
                 <div className="text-xs text-slate-500">
-                  {a.abschnitte.length}{' '}
-                  {a.abschnitte.length === 1 ? 'Abschnitt' : 'Abschnitte'} · Status:{' '}
+                  {a._count?.abschnitte ?? 0}{' '}
+                  {(a._count?.abschnitte ?? 0) === 1 ? 'Abschnitt' : 'Abschnitte'} · Status:{' '}
                   {t(`bilanz.status.${a.status}`)}
                 </div>
               </div>
@@ -256,8 +273,8 @@ function AnhangForm({
       });
       setGeschaeftsjahr(data.geschaeftsjahr);
       setAbschnitte(
-        data.abschnitte.length > 0
-          ? data.abschnitte
+        (data.abschnitte?.length ?? 0) > 0
+          ? (data.abschnitte ?? [])
           : STANDARD_TITEL.map((key, idx) => ({
               titel: t(`anhang.standardAbschnitte.${key}`),
               inhalt: '',
@@ -286,10 +303,15 @@ function AnhangForm({
         })),
       };
       if (anhangId) {
+        // PATCH nimmt NUR die veraenderbaren Felder — `mandantId` und
+        // `geschaeftsjahr` sind laut UpdateAnhangDto unveraenderlich und
+        // werden sonst mit HTTP 400 abgelehnt (forbidNonWhitelisted).
         await apiFetch(`/anhang/${anhangId}`, {
           method: 'PATCH',
           accessToken: token,
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            abschnitte: payload.abschnitte,
+          }),
         });
       } else {
         await apiFetch('/anhang', {

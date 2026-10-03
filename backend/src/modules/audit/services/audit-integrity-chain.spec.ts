@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createHash } from 'node:crypto';
 import { AuditIntegrityService } from './audit-integrity.service';
 
 /**

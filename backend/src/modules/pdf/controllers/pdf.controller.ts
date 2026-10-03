@@ -64,11 +64,15 @@ export class PdfController {
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
   generateBilanz(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() body: { mandantId?: string },
+    @Body() body: { mandantId?: string } | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<PdfGenerationResponse> {
-    const mandantId = body.mandantId ?? this.extractMandantFromRequest(req);
+    // `body` ist bei POST ohne Rumpf undefined (Express liefert dann kein
+    // Objekt) — `body.mandantId` wäre ein TypeError und ergäbe 500 statt
+    // einer verwertbaren Meldung. Der optionale Zugriff greift in vier
+    // Generate-Endpunkten.
+    const mandantId = body?.mandantId ?? this.extractMandantFromRequest(req);
     return this.pdfService.generateBilanzPdf(id, mandantId, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
@@ -115,11 +119,15 @@ export class PdfController {
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
   generateGuV(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() body: { mandantId?: string },
+    @Body() body: { mandantId?: string } | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<PdfGenerationResponse> {
-    const mandantId = body.mandantId ?? this.extractMandantFromRequest(req);
+    // `body` ist bei POST ohne Rumpf undefined (Express liefert dann kein
+    // Objekt) — `body.mandantId` wäre ein TypeError und ergäbe 500 statt
+    // einer verwertbaren Meldung. Der optionale Zugriff greift in vier
+    // Generate-Endpunkten.
+    const mandantId = body?.mandantId ?? this.extractMandantFromRequest(req);
     return this.pdfService.generateGuVPdf(id, mandantId, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
@@ -166,11 +174,15 @@ export class PdfController {
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
   generateAnhang(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() body: { mandantId?: string },
+    @Body() body: { mandantId?: string } | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<PdfGenerationResponse> {
-    const mandantId = body.mandantId ?? this.extractMandantFromRequest(req);
+    // `body` ist bei POST ohne Rumpf undefined (Express liefert dann kein
+    // Objekt) — `body.mandantId` wäre ein TypeError und ergäbe 500 statt
+    // einer verwertbaren Meldung. Der optionale Zugriff greift in vier
+    // Generate-Endpunkten.
+    const mandantId = body?.mandantId ?? this.extractMandantFromRequest(req);
     return this.pdfService.generateAnhangPdf(id, mandantId, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
@@ -217,11 +229,15 @@ export class PdfController {
   @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
   generateAbschluss(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() body: { mandantId?: string },
+    @Body() body: { mandantId?: string } | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<PdfGenerationResponse> {
-    const mandantId = body.mandantId ?? this.extractMandantFromRequest(req);
+    // `body` ist bei POST ohne Rumpf undefined (Express liefert dann kein
+    // Objekt) — `body.mandantId` wäre ein TypeError und ergäbe 500 statt
+    // einer verwertbaren Meldung. Der optionale Zugriff greift in vier
+    // Generate-Endpunkten.
+    const mandantId = body?.mandantId ?? this.extractMandantFromRequest(req);
     return this.pdfService.generateAbschlussPdf(id, mandantId, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),

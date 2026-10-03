@@ -29,7 +29,7 @@ export class DnsController {
   @HttpCode(HttpStatus.OK)
   async startVerification(
     @Param('kanzleiId', new ParseUUIDPipe()) kanzleiId: string,
-    @Body() body: { customDomain: string },
+    @Body() body: { customDomain: string } | undefined,
     @Req() req: Request,
   ): Promise<{
     verificationToken: string;
@@ -40,7 +40,7 @@ export class DnsController {
   }> {
     return this.verification.startVerification(
       kanzleiId,
-      body.customDomain,
+      body?.customDomain ?? '',
       req.user as AuthUser,
       { ip: req.ip, userAgent: req.headers['user-agent'] as string | undefined },
     );

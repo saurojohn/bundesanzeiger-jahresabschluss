@@ -77,12 +77,12 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @CurrentUser() user: AuthUser,
-    @Body() body: { refreshToken?: string },
+    @Body() body: { refreshToken?: string } | undefined,
   ): Promise<void> {
     let sessionId: string | undefined;
-    if (body.refreshToken) {
+    if (body?.refreshToken) {
       const refreshTokenHash = createHash('sha256')
-        .update(body.refreshToken)
+        .update(body.refreshToken as string)
         .digest('hex');
       const session = await this.prisma.userSession.findUnique({
         where: { refreshTokenHash },

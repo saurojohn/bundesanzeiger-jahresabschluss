@@ -164,12 +164,12 @@ export class WPController {
   @Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER', 'KANZLEI_ADMIN')
   async runPruefung(
     @Param('bilanzId', new ParseUUIDPipe({ version: '4' })) bilanzId: string,
-    @Body() body: { guvId?: string },
+    @Body() body: { guvId?: string } | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<BilanzPruefungsResultDto[]> {
     const results = await this.idwPruefungService.runPruefung(
-      { bilanzId, guvId: body.guvId },
+      { bilanzId, guvId: body?.guvId },
       user,
       { ip: req.ip ?? null, userAgent: this.userAgent(req) },
     );

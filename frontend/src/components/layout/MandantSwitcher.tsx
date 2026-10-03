@@ -24,7 +24,15 @@ export function MandantSwitcher({
     if (stored && userMandanten.some((m) => m.id === stored)) {
       setActiveId(stored);
     } else if (userMandanten.length > 0) {
-      setActiveId(userMandanten[0].id);
+      // Auch der Vorauswahl-Wert muss persistiert werden. Bis 2026-10-03
+      // wurde hier nur der React-State gesetzt, localStorage blieb leer —
+      // damit fehlte `apiFetch` der aktive Mandant und jeder Aufruf ohne
+      // explizites `mandantId` (Detailansicht, Löschen, Speichern) lief in
+      // 403 "mandantId erforderlich". Geschrieben wurde nur beim manuellen
+      // Wechseln über das Dropdown.
+      const initial = userMandanten[0].id;
+      setActiveId(initial);
+      localStorage.setItem('activeMandantId', initial);
     }
   }, [userMandanten]);
 

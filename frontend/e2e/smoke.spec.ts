@@ -147,4 +147,52 @@ test.describe('Fachseiten (mit Session)', () => {
     );
     expect(apiCalls.length, 'Dashboard muss Backend-Aufrufe machen').toBeGreaterThan(0);
   });
+
+  test('Mandanten-Kontext wird mitgesendet (kein 403 "mandantId erforderlich")', async ({ page }) => {
+    // Befund 2026-10-03, zwei gestaffelte Ursachen:
+    //
+    // (a) `MandantSwitcher` setzte den Vorauswahl-Mandanten nur im
+    //     React-State, nicht in localStorage. Geschrieben wurde nur beim
+    //     manuellen Wechseln über das Dropdown.
+    // (b) `apiFetch` hat den `x-mandant-id`-Header nie aus localStorage
+    //     gesetzt — obwohl `MandantGuard` ihn an Position 2 der
+    //     Auflösungsreihenfolge auswertet.
+    //
+    // Folge: 16 Aufrufe in fünf Komponenten (Bilanz/GuV/Anhang-Detail,
+    // Mutation, WP) liefen in 403 "mandantId erforderlich". Löschen,
+    // Speichern und Laden der Detailansicht waren im UI nicht möglich.
+    await page.goto(`/${LOCALE}/dashboard`);
+    await page.waitForTimeout(2000);
+
+    // Der aktive Mandant muss nach dem ersten Laden persistiert sein —
+    // sonst ist jeder Folgeaufruf ohne explizites mandantId ein 403.
+    const mandant = await page.evaluate(() =>
+      localStorage.getItem('activeMandantId'),
+    );
+    expect(mandant, 'activeMandantId muss nach dem Login gesetzt sein').toBeTruthy();
+
+    // Und mit diesem Header muss ein mandantgebundener Aufruf 200 liefern.
+    const status = await page.evaluate(async () => {
+      const token = localStorage.getItem('accessToken');
+      const mid = localStorage.getItem('activeMandantId');
+      if (!token || !mid) return 'voraussetzung-fehlt';
+      const r = await fetch('/api/mandant', {
+        headers: { Authorization: `Bearer ${token}`, 'x-mandant-id': mid },
+      });
+      return String(r.status);
+    });
+    expect(status, 'Aufruf mit x-mandant-id muss 200 liefern').toBe('200');
+
+    // Die Bilanzliste darf keinen 403er erzeugen.
+    const codes: number[] = [];
+    page.on('response', (r) => {
+      if (r.url().includes('/api/')) codes.push(r.status());
+    });
+    await page.goto(`/${LOCALE}/bilanz`);
+    await page.waitForTimeout(2500);
+    expect(
+      codes.filter((c) => c === 403),
+      'Die Bilanzliste darf keinen 403 erzeugen',
+    ).toHaveLength(0);
+  });
 });

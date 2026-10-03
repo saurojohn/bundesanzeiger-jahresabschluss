@@ -21,6 +21,21 @@ export async function apiFetch<T = unknown>(
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
+  // Mandant-Kontext zentral mitgeben.
+  //
+  // `MandantGuard` löst den aktiven Mandanten über params → header →
+  // query → body auf. Ohne einen dieser vier Wege wirft er 403
+  // "mandantId erforderlich" — und der Header wird gesetzt, wenn der
+  // Aufrufer ihn nicht selbst mitgibt. Betroffen waren 16 Aufrufe in
+  // fünf Komponenten (Bilanz/GuV/Anhang/Detail, Mutation, WP), die den
+  // aktiven Mandanten aus dem `MandantSwitcher` kannten, ihn aber nicht
+  // mitsendeten. `getActiveMandantId()` liest genau den Wert, den der
+  // Switcher in localStorage legt.
+  if (!headers.has('x-mandant-id')) {
+    const mandantId =
+      typeof window === 'undefined' ? null : localStorage.getItem('activeMandantId');
+    if (mandantId) headers.set('x-mandant-id', mandantId);
+  }
   const response = await fetch(`${BASE_API}${path}`, {
     ...init,
     headers,

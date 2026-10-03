@@ -152,8 +152,11 @@ export class AuditService {
       void this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
     }
     if (createdAuditLogId) {
+      // Über `enqueue()` serialisiert, nicht direkt aufgerufen: parallele
+      // Aufrufe lesen sonst denselben Vorgänger und die Kette verzweigt
+      // (Befund 2026-10-03, `verifyIntegrity()` meldete BROKEN).
       void this.integrityService
-        .computeHashForEntry(createdAuditLogId)
+        .enqueueWithCounting(createdAuditLogId)
         .catch((err) => {
           this.failedWrites += 1;
           this.logger.warn(
@@ -214,11 +217,7 @@ export class AuditService {
     // Hash-Chain (M4 Sprint 5) — fire-and-forget, Fehler werden intern
     // geloggt. Audit-Write-Pfad bleibt schnell.
     if (createdAuditLogId) {
-      void this.integrityService.computeHashForEntry(createdAuditLogId).catch((err) => {
-        this.logger.warn(
-          `Hash-Chain-Berechnung fehlgeschlagen: ${(err as Error).message}`,
-        );
-      });
+      this.integrityService.enqueue(createdAuditLogId);
     }
   }
 

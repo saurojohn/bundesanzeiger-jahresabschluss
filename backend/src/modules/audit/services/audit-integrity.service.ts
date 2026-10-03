@@ -38,7 +38,60 @@ export class AuditIntegrityService {
   private readonly logger = new Logger(AuditIntegrityService.name);
   private static readonly GENESIS_HASH = '0'.repeat(64);
 
+  /**
+   * Serialisiert die Hash-Berechnung.
+   *
+   * Warum (Befund 2026-10-03): `record()` ruft `computeHashForEntry()`
+   * fire-and-forget auf. Drei Audit-Einträge innerhalb von 35 ms lesen
+   * dann GLEICHZEITIG denselben Vorgänger (`createdAt < current`) — zwei
+   * davon leiten denselben `prevHash` ab, und die Kette verzweigt. Im
+   * Betrieb lieferte `verifyIntegrity()` daraufhin `BROKEN` nach zwei
+   * Einträgen, mit zwei verschiedenen Hashes an derselben Position.
+   *
+   * Statt zu rennen wird jede Berechnung hinten angereiht: der Vorgänger
+   * ist dann garantiert schon gehasht, wenn der Nachfolger ihn liest.
+   *
+   * Ein Fehler bricht die Kette nicht ab — der Eintrag bleibt ungehasht
+   * und `verifyIntegrity()` meldet für ihn `PARTIAL`.
+   */
+  private chain: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Legt einen Eintrag in die Hash-Berechnungs-Kette ein.
+   *
+   * Der Aufrufer bekommt die Auswertung nicht zurück — wie bisher
+   * fire-and-forget. Die Reihenfolge der Einträge bleibt die des
+   * Audit-Logs, nicht die des Aufrufs.
+   */
+  enqueue(auditLogId: string): void {
+    this.chain = this.chain
+      .then(() => this.computeHashForEntry(auditLogId))
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Hash-Berechnung für ${auditLogId} fehlgeschlagen: ${String(err)}`,
+        );
+      });
+  }
+
+  /**
+   * Wie `enqueue`, gibt die Auswertung aber zurück — für Aufrufstellen,
+   * die den Fehler zählen wollen.
+   */
+  enqueueWithCounting(auditLogId: string): Promise<void> {
+    const next = this.chain.then(() => this.computeHashForEntry(auditLogId));
+    // Der Fehler wird weitergereicht, die Kette darf aber nicht reißen.
+    this.chain = next.catch(() => undefined);
+    return next.then(() => undefined);
+  }
+
+  /**
+   * Nur für Tests: wartet, bis die Kette leer gelaufen ist.
+   */
+  async drain(): Promise<void> {
+    await this.chain;
+  }
 
   /**
    * Berechnet den Hash für einen NEUEN Audit-Eintrag.

@@ -45,30 +45,60 @@ export function PdfActions({
     }
   }
 
+  /**
+   * PDF ansehen: als Blob laden (mit Authorization-Header) und anzeigen.
+   *
+   * Bugfix 2026-10-04 — zwei Fehler, dieselbe Funktion:
+   *
+   * 1. `window.open(url, '_blank')` auf die geschützte Download-URL. Der
+   *    Endpunkt antwortet 401, weil `window.open` keinen
+   *    `Authorization`-Header setzen kann. Der Kommentar im Code benannte
+   *    das Problem, der Aufruf blieb trotzdem stehen: jeder Klick öffnete
+   *    zwei Tabs, der erste zeigte die 401-Seite.
+   * 2. Der verbleibende Aufruf lief NACH dem `fetch`, also nicht mehr im
+   *    Klick-Kontext — und wurde vom Popup-Blocker geschluckt. Gemessen:
+   *    0 neue Tabs, der Anwender sah gar nichts.
+   *
+   * Richtig ist: den Tab synchron im Klick öffnen (kein Popup-Block) und
+   * ihn dann auf die Blob-URL navigieren.
+   */
   function handleView() {
     setPreviewing(true);
     const token = getAccessToken();
-    if (!token) return;
+    if (!token) {
+      setPreviewing(false);
+      return;
+    }
     const mandantId = getActiveMandantId();
     const url = `/api/pdf/${entityType}/${entityId}/download?mandantId=${mandantId}`;
-    const w = window.open(url, '_blank');
-    if (!w) {
+
+    // Synchron im Klick-Handler: Popup-Blocker lassen window.open hier
+    // durch, weil es noch eine Benutzeraktion ist.
+    const fenster = window.open('', '_blank');
+    if (!fenster) {
       setError(t('pdf.downloadError'));
       setPreviewing(false);
+      return;
     }
-    // Note: opening in new tab means token must be sent as Authorization header.
-    // fetch() is required to set headers; window.open can't.
-    // Better approach: use a hidden form POST or stream download.
+    fenster.document.body.textContent = t('pdf.generating');
+
     fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((r) => r.blob())
+      .then((r) => {
+        if (!r.ok) {
+          // 401/403 als Fehler melden, statt eine Fehlerseite zu öffnen.
+          throw new Error(`HTTP ${r.status}`);
+        }
+        return r.blob();
+      })
       .then((blob) => {
         const blobUrl = URL.createObjectURL(blob);
-        window.open(blobUrl, '_blank');
+        fenster.location.href = blobUrl;
         setPreviewing(false);
       })
       .catch(() => {
+        fenster.close();
         setError(t('pdf.downloadError'));
         setPreviewing(false);
       });
@@ -81,7 +111,12 @@ export function PdfActions({
     fetch(`/api/pdf/${entityType}/${entityId}/download?mandantId=${mandantId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((r) => r.blob())
+      .then((r) => {
+        // Ohne diese Prüfung landet die 401-JSON-Antwort als "PDF" in der
+        // Datei — der Download schlägt dann still fehl.
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.blob();
+      })
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');

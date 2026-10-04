@@ -520,35 +520,97 @@ test.describe('Alle Fachseiten mit Bestand', () => {
  * VALIDATED-, APPROVED- oder ARCHIVED-Satz war damit grundsätzlich nicht
  * speicherbar, und die Oberfläche erklärte den Grund nicht.
  *
- * Im Seed standen solche Sätze (Beispiel GmbH: 1× VALIDATED,
- * Demo GmbH: 1× APPROVED), die bisher kein Test angefasst hat.
+ * Korrektur einer falschen Annahme: die VALIDATED-/APPROVED-Sätze, die ich
+ * beim Suchen in der Datenbank sah, waren KEINE Seed-Daten, sondern
+ * Rückstände früherer Testläufe gegen meine Entwicklungsdatenbank. Auf
+ * einem frisch geseedeten System (CI) existiert ausschließlich DRAFT. Die
+ * Fixture wird deshalb vom Test selbst erzeugt.
  */
 test.describe('Speichern je Status', () => {
+  /**
+   * Liefert eine Bilanz im gewünschten Status und legt sie bei Bedarf selbst
+   * an.
+   *
+   * Wichtig: der Test darf KEINEN Seed-Datensatz voraussetzen. Der erste
+   * Versuch tat das ("Seed muss eine Bilanz im Status VALIDATED enthalten")
+   * und fiel in CI fehl — die einzigen VALIDATED-/APPROVED-Sätze in meiner
+   * Entwicklungsdatenbank waren Rückstände früherer Testläufe, nicht Seed-
+   * Daten. Ein frisch geseedetes CI-System hat ausschliesslich DRAFT-Sätze.
+   *
+   * Deshalb: anlegen (als DRAFT), dann per PATCH auf den Zielstatus setzen.
+   * `status` ist in UpdateBilanzDto aenderbar, das Backend akzeptiert den
+   * Uebergang hier als Betriebssystem-Aktion.
+   */
   async function bilanzMitStatus(
     page: import('@playwright/test').Page,
-    status: 'DRAFT' | 'NICHT_DRAFT',
-  ): Promise<{ mandantId: string; geschaeftsjahr: number; gefunden: boolean }> {
-    const treffer = await page.evaluate(async (willStatus: string) => {
+    art: 'DRAFT' | 'NICHT_DRAFT',
+  ): Promise<{ mandantId: string; geschaeftsjahr: number }> {
+    const ziel = await page.evaluate(async (willNichtDraft: boolean) => {
       const token = localStorage.getItem('accessToken');
       if (!token) return null;
-      const liste = (await (await fetch('/api/mandant', {
-        headers: { Authorization: `Bearer ${token}` },
-      })).json()) as Array<{ id: string }>;
+      const header = { 'content-type': 'application/json' };
+      const auth = { ...header, Authorization: `Bearer ${token}` };
+      const liste = (await (await fetch('/api/mandant', { headers: auth })).json()) as
+        Array<{ id: string }>;
+
       for (const m of liste) {
-        const bl = (await (await fetch(`/api/bilanz?mandantId=${m.id}`, {
-          headers: { Authorization: `Bearer ${token}`, 'x-mandant-id': m.id },
-        })).json()) as Array<{ id: string; geschaeftsjahr: number; status: string }>;
-        const treffer = bl.find((b) =>
-          willStatus === 'DRAFT' ? b.status === 'DRAFT' : b.status !== 'DRAFT',
-        );
-        if (treffer) return { mandantId: m.id, geschaeftsjahr: treffer.geschaeftsjahr };
+        const mandHeader = { ...auth, 'x-mandant-id': m.id };
+        if (!willNichtDraft) {
+          // DRAFT genügt — den legt der Seed/der vorige Testlauf bereits an.
+          const bl = (await (await fetch(`/api/bilanz?mandantId=${m.id}`, {
+            headers: mandHeader,
+          })).json()) as Array<{ geschaeftsjahr: number; status: string }>;
+          const treffer = bl.find((b) => b.status === 'DRAFT');
+          if (treffer) return { mandantId: m.id, geschaeftsjahr: treffer.geschaeftsjahr };
+          continue;
+        }
+        // Freies Geschäftsjahr suchen: das Backend lehnt Dubletten je
+        // Mandant ab (Unique-Constraint). `Math.random()` war naiv — ein
+        // Retry-Lauf traf erneut auf dasselbe Jahr.
+        let jahr = 0;
+        for (let k = 2090; k < 2110; k++) {
+          const probe = await fetch(`/api/bilanz?mandantId=${m.id}&geschaeftsjahr=${k}`, {
+            headers: mandHeader,
+          });
+          const treffer = (await probe.json()) as unknown[];
+          if (Array.isArray(treffer) && treffer.length === 0) {
+            jahr = k;
+            break;
+          }
+        }
+        // Kein freies Jahr bei DIESEM Mandanten → nächsten versuchen.
+        if (jahr === 0) continue;
+        // Nicht-DRAFT selbst erzeugen: anlegen, dann Status setzen.
+        const angelegt = await fetch(`/api/bilanz?mandantId=${m.id}`, {
+          method: 'POST',
+          headers: mandHeader,
+          body: JSON.stringify({
+            mandantId: m.id,
+            geschaeftsjahr: jahr,
+            positionen: [
+              { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+              { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+            ],
+          }),
+        });
+        if (!angelegt.ok) continue;
+        // Die POST-Antwort ist gewrappt: `{ bilanz: {...}, validierung: {...} }`.
+        // Mit `.id` wurde daraus `/api/bilanz/undefined` → PATCH 400.
+        const angelegtId = ((await angelegt.json()) as { bilanz: { id: string } })
+          .bilanz.id;
+        const gesetzt = await fetch(`/api/bilanz/${angelegtId}`, {
+          method: 'PATCH',
+          headers: mandHeader,
+          body: JSON.stringify({ status: 'VALIDATED' }),
+        });
+        if (!gesetzt.ok) continue;
+        return { mandantId: m.id, geschaeftsjahr: jahr };
       }
       return null;
-    }, status);
-    if (treffer) {
-      await page.evaluate((m) => localStorage.setItem('activeMandantId', m), treffer.mandantId);
-    }
-    return { ...(treffer ?? { mandantId: '', geschaeftsjahr: 0 }), gefunden: Boolean(treffer) };
+    }, art === 'NICHT_DRAFT');
+    expect(ziel, 'Fixture konnte nicht angelegt werden').toBeTruthy();
+    await page.evaluate((m) => localStorage.setItem('activeMandantId', m), ziel!.mandantId);
+    return ziel!;
   }
 
   for (const [label, art] of [
@@ -561,7 +623,6 @@ test.describe('Speichern je Status', () => {
       await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
 
       const ziel = await bilanzMitStatus(page, art);
-      expect(ziel.gefunden, `Seed muss eine Bilanz im Status ${label} enthalten`).toBe(true);
 
       await page.goto(`/${LOCALE}/bilanz`);
       await page.waitForTimeout(2500);

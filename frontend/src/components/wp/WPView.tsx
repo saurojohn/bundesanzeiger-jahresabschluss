@@ -118,7 +118,12 @@ export function WPView() {
       const me = (await meRes.json()) as SessionUser;
       if (cancelled) return;
       setUser(me);
-      const mandantRes = await apiFetch<Mandant[]>('/mandanten', { accessToken: token });
+      // Bugfix 2026-10-04: hier stand '/mandanten' (Plural). Der Endpoint
+      // heißt '/mandant' — der 404 threw, `setLoading(false)` wurde nie
+      // erreicht und die komplette Fachseite blieb auf "Wird geladen …"
+      // hängen, mit leerem Mandanten-Picker. Gefunden durch einen Audit
+      // aller 12 Fachseiten mit echten Daten.
+      const mandantRes = await apiFetch<Mandant[]>('/mandant', { accessToken: token });
       setMandanten(mandantRes);
       const initMandant = getActiveMandantId() ?? me.mandanten[0]?.id ?? mandantRes[0]?.id ?? null;
       setActiveMandantId(initMandant);

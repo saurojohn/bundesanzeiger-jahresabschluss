@@ -410,3 +410,102 @@ test.describe('Fachseiten mit Bestand', () => {
     });
   }
 });
+
+/**
+ * ALLE Fachseiten mit dem mandantenstärksten Datenbestand.
+ *
+ * Befund 2026-10-04: `WPView` rief `/mandanten` (Plural) auf, der Endpoint
+ * heißt `/mandant`. Der 404 threw in der Ladefunktion, `setLoading(false)`
+ * wurde nie erreicht — die komplette Wirtschaftsprüfung blieb dauerhaft auf
+ * "Wird geladen …", mit leerem Mandanten-Picker. Ein Tippfehler im Pfad, und
+ * eine ganze Fachseite war lahm.
+ *
+ * Warum es durchrutschte: die Einzeltests prüften jede Seite auf "rendert
+ * auf Deutsch". "Wird geladen …" ist Deutsch und rendert. Dieser Test
+ * prüft die Vollständigkeit der Ladung: keine `pageerror` und der
+ * Ladeindikator ist verschwunden.
+ *
+ * Er nutzt den Mandanten mit dem MEISTEN Bestand — mit einem leeren
+ * Mandanten bleibt die Hälfte der Oberfläche ungeprüft (siehe
+ * "Fachseiten mit Bestand").
+ */
+test.describe('Alle Fachseiten mit Bestand', () => {
+  const SEITEN = [
+    'dashboard',
+    'bilanz',
+    'guv',
+    'anhang',
+    'jahresabschluss',
+    'konsolidierung',
+    'mandant',
+    'webhooks',
+    'branding',
+    'api-keys',
+    'audit',
+    'wp',
+    'einstellungen/subscription',
+  ] as const;
+
+  test.beforeEach(async ({ page }) => {
+    await assertBackendLoginWorks();
+    await login(page);
+    await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
+
+    // Mandant mit dem stärksten Bestand wählen. localStorage statt des
+    // Selectors: `selectOption` löst window.location.reload() aus und macht
+    // Locators stale.
+    const mandant = await page.evaluate(async () => {
+      const token = localStorage.getItem('accessToken');
+      if (!token) return null;
+      const liste = (await (await fetch('/api/mandant', {
+        headers: { Authorization: `Bearer ${token}` },
+      })).json()) as Array<{ id: string }>;
+      let best: string | null = null;
+      let bestCount = -1;
+      for (const m of liste) {
+        let count = 0;
+        for (const pfad of [
+          '/api/bilanz?mandantId=',
+          '/api/guv?mandantId=',
+          '/api/anhang?mandantId=',
+        ]) {
+          const body = (await (await fetch(pfad + m.id, {
+            headers: { Authorization: `Bearer ${token}`, 'x-mandant-id': m.id },
+          })).json()) as unknown[];
+          if (Array.isArray(body)) count += body.length;
+        }
+        if (count > bestCount) {
+          bestCount = count;
+          best = m.id;
+        }
+      }
+      return best;
+    });
+    expect(mandant, 'es muss mindestens einen Mandanten geben').toBeTruthy();
+    await page.evaluate((m) => localStorage.setItem('activeMandantId', m), mandant as string);
+  });
+
+  for (const seite of SEITEN) {
+    test(`${seite}: lädt vollständig (kein pageerror, kein Hängenbleiben)`, async ({ page }) => {
+      const pageErrors: string[] = [];
+      page.on('pageerror', (e) => pageErrors.push(String(e).slice(0, 200)));
+
+      await page.goto(`/${LOCALE}/${seite}`);
+      await page.waitForTimeout(2500);
+
+      // 1) Kein client-seitiger Absturz.
+      const body = await page.locator('body').innerText();
+      expect(body, `${seite}: Client-seitiger Absturz`).not.toContain('Application error');
+      expect(pageErrors, `${seite}: unerwartete pageerror`).toHaveLength(0);
+
+      // 2) Die Seite darf nicht im Ladezustand hängen bleiben. Genau daran
+      //    ist die WP-Seite mit dem Tippfehler gescheitert: Sie rendert
+      //    "Wird geladen …" — sauberes Deutsch, aber nie fertig.
+      const haengt = /Wird geladen|Loading\.\.\.|^\s*Lädt/i.test(body);
+      expect(
+        haengt,
+        `${seite}: hängt im Ladezustand. pageerror: ${pageErrors.join(' | ')}`,
+      ).toBe(false);
+    });
+  }
+});

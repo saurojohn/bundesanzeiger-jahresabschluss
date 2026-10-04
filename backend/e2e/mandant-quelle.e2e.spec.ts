@@ -26,6 +26,7 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 const BASE = 'http://localhost:3000';
 
@@ -54,11 +55,20 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
   let app: INestApplication;
   let accessToken: string;
   let mandantId: string;
+  let prisma: PrismaService;
+  /**
+   * Eine KANZLEI, der der Admin NICHT angehört — inkl. eigenem Mandanten.
+   * Ohne sie könnte der Cross-Tenant-Test nur eine nicht existierende
+   * UUID prüfen; der Server antwortet dann 404 statt 403 und der Test
+   * grün auch dann, wenn die Zugriffsprüfung fehlt.
+   */
+  let fremdeKanzleiId: string | null = null;
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
+    prisma = moduleRef.get(PrismaService);
 
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
@@ -83,11 +93,47 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
     const login = (await loginRes.json()) as LoginResponse;
     accessToken = login.accessToken;
     mandantId = login.user.mandanten[0].id;
+
+    // Fremde Kanzlei mit eigenem Mandanten anlegen (Test-Fixture).
+    const fremde = await prisma.kanzlei.create({
+      data: {
+        name: 'Fremde Kanzlei (Test-Fixture)',
+        rechtsform: 'Einzelkanzlei',
+        adresse: { strasse: 'Testweg 1', plz: '10999', ort: 'München', land: 'DE' },
+      },
+    });
+    fremdeKanzleiId = fremde.id;
+    await prisma.mandant.create({
+      data: {
+        kanzleiId: fremde.id,
+        firmenname: 'Fremde Mandanten GmbH',
+        rechtsform: 'GmbH',
+        adresse: { strasse: 'Testweg 1', plz: '10999', ort: 'München', land: 'DE' },
+        // Pflichtfelder ohne Default im Schema
+        geschaeftsfuehrer: [{ name: 'Test Person', geburtsdatum: '1970-01-01', anteilProzent: 100 }],
+        groessenklasse: 'Kleinstkapitalgesellschaft',
+        publishChannel: 'Bundesanzeiger',
+      },
+    });
   });
 
   afterAll(async () => {
     await app.close();
   });
+
+  /** Frischer Login für einen beliebigen Seed-User. */
+  async function loginAs(
+    email: string,
+    password: string,
+  ): Promise<LoginResponse> {
+    const res = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    expect(res.status, `Login als ${email} muss gelingen`).toBe(200);
+    return (await res.json()) as LoginResponse;
+  }
 
   /** Authorization + `x-mandant-id`, OHNE `?mandantId=` — der Weg des Frontends. */
   function headerOnly(extra: Record<string, string> = {}): Record<string, string> {
@@ -359,6 +405,73 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
     expect(eintrag, 'der eben angelegte Anhang muss in der Liste stehen').toBeTruthy();
     expect(typeof eintrag?._count?.abschnitte, 'die Abschnittsanzahl muss mitkommen').toBe('number');
     expect(eintrag, 'die Liste darf die Abschnittsinhalte nicht mitliefern').not.toHaveProperty('abschnitte');
+  });
+
+  // ===========================================================================
+  // 6c. Branding-Mutation: KANZLEI_ADMIN muss die EIGENE Kanzlei ändern
+  //     können — und ausdrücklich nicht die einer fremden.
+  //
+  // Bugfix 2026-10-04: `assertKanzleiAccess` verglich die kanzleiId mit
+  // `user.mandanten.map(m => m.id)` — das sind MANDANT-IDs. Der Vergleich
+  // konnte nie treffen, Branding war für jeden KANZLEI_ADMIN gesperrt und
+  // nur SYSTEM_ADMIN konnte noch ändern.
+  // ===========================================================================
+  it('PATCH /api/branding/:kanzleiId → KANZLEI_ADMIN darf eigene Kanzlei ändern', async () => {
+    const adminLogin = await loginAs('kanzlei-admin@kanzlei.de', 'Demo123!');
+    const adminHeader = {
+      'content-type': 'application/json',
+      authorization: `Bearer ${adminLogin.accessToken}`,
+    };
+    // kanzleiId aus einem Mandanten des Admin holen
+    const mandantListe = (await (
+      await fetch(`${BASE}/api/mandant`, { headers: adminHeader })
+    ).json()) as Array<{ id: string; kanzleiId: string }>;
+    expect(mandantListe.length, 'der Admin muss Mandanten sehen').toBeGreaterThan(0);
+    const eigeneKanzleiId = mandantListe[0].kanzleiId;
+
+    const res = await fetch(`${BASE}/api/branding/${eigeneKanzleiId}`, {
+      method: 'PATCH',
+      headers: adminHeader,
+      body: JSON.stringify({ primaryColor: '#1d4ed8', accentColor: '#7c3aed' }),
+    });
+    expect(res.status, 'eigene Kanzlei muss änderbar sein').toBe(200);
+    const branding = (await res.json()) as { primaryColor: string };
+    expect(branding.primaryColor).toBe('#1d4ed8');
+  });
+
+  it('PATCH /api/branding/:kanzleiId → fremde Kanzlei bleibt gesperrt', async () => {
+    const adminLogin = await loginAs('kanzlei-admin@kanzlei.de', 'Demo123!');
+    expect(fremdeKanzleiId, 'Fremde Kanzlei muss angelegt sein').toBeTruthy();
+    const res = await fetch(`${BASE}/api/branding/${fremdeKanzleiId}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${adminLogin.accessToken}`,
+      },
+      body: JSON.stringify({ primaryColor: '#000000' }),
+    });
+    // Die Kanzlei EXISTIERT. Ohne Zugriffsprüfung käme hier 200 — der
+    // Test prüft deshalb nicht nur den Status, sondern dass keine
+    // Änderung durchkam.
+    expect(res.status, 'fremde Kanzlei muss gesperrt bleiben').toBe(403);
+  });
+
+  it('PATCH /api/branding/:kanzleiId → STEUERBERATER bleibt gesperrt', async () => {
+    const sbLogin = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
+    const mandantListe = (await (
+      await fetch(`${BASE}/api/mandant`, {
+        headers: { authorization: `Bearer ${sbLogin.accessToken}` },
+      })
+    ).json()) as Array<{ kanzleiId: string }>;
+    const res = await fetch(`${BASE}/api/branding/${mandantListe[0].kanzleiId}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${sbLogin.accessToken}`,
+      },
+      body: JSON.stringify({ primaryColor: '#000000' }),
+    });
+    expect(res.status).toBe(403);
   });
 
   // ===========================================================================

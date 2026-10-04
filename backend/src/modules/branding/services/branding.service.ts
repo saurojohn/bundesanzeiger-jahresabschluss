@@ -139,7 +139,7 @@ export class BrandingService {
     user: AuthUser,
     context: BrandingContext,
   ): Promise<KanzleiBrandingDto> {
-    this.assertKanzleiAccess(kanzleiId, user);
+    await this.assertKanzleiAccess(kanzleiId, user);
 
     // Vorher-Snapshot für Audit
     const before = await this.kanzleiRepository.findById(kanzleiId);
@@ -212,7 +212,7 @@ export class BrandingService {
     user: AuthUser,
     context: BrandingContext,
   ): Promise<{ logoUrl: string; logoWormKey: string }> {
-    this.assertKanzleiAccess(kanzleiId, user);
+    await this.assertKanzleiAccess(kanzleiId, user);
 
     // MIME-Type-Validierung (defensiv — DTO hat es schon validiert, aber
     // wenn jemand den Service direkt aufruft, ist dies die letzte Verteidigung).
@@ -290,7 +290,7 @@ export class BrandingService {
     user: AuthUser,
     context: BrandingContext,
   ): Promise<void> {
-    this.assertKanzleiAccess(kanzleiId, user);
+    await this.assertKanzleiAccess(kanzleiId, user);
 
     const before = await this.kanzleiRepository.findById(kanzleiId);
     if (!before) throw new NotFoundException('Kanzlei nicht gefunden');
@@ -450,13 +450,24 @@ export class BrandingService {
    * RBAC-Check für Branding-Mutationen.
    * SYSTEM_ADMIN: alle Kanzleien.
    * KANZLEI_ADMIN: nur eigene Kanzlei.
+   *
+   * Bugfix 2026-10-04: `accessibleKanzleiIds` enthielt `user.mandanten.map(m
+   * => m.id)` — das sind MANDANT-IDs. Verglichen wurde damit gegen die
+   * `kanzleiId`, die nie in dieser Liste steht (Mandant-IDs und Kanzlei-IDs
+   * sind verschiedene UUIDs). Der Vergleich konnte also prinzipiell nie
+   * treffen: Branding war für JEDEN KANZLEI_ADMIN gesperrt, es blieb nur
+   * SYSTEM_ADMIN. Der eigene Kommentar zwei Zeilen darüber beschreibt den
+   * richtigen Weg ("müssen wir prüfen, ob der User einen Mandanten dieser
+   * Kanzlei hat") — genau den hat der Code nicht getan.
+   *
+   * Der Check läuft jetzt wie der Read-Pfad über einen DB-Lookup, nur mit
+   * der zusätzlichen Rollenbedingung.
    */
-  private assertKanzleiAccess(kanzleiId: string, user: AuthUser): void {
+  private async assertKanzleiAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleKanzleiIds = user.mandanten.map((m) => m.id);
-    // KANZLEI_ADMIN darf Branding der eigenen Kanzlei ändern.
-    // Da user.mandanten Mandant-IDs enthält, müssen wir prüfen, ob der
-    // User einen Mandanten dieser Kanzlei hat.
     const isKanzleiAdmin = user.mandanten.some(
       (m) => m.rolle === 'KANZLEI_ADMIN',
     );
@@ -465,10 +476,17 @@ export class BrandingService {
         'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Branding ändern',
       );
     }
-    if (!accessibleKanzleiIds.includes(kanzleiId)) {
-      throw new ForbiddenException(
-        'Kein Zugriff auf diese Kanzlei',
-      );
+    // Gleiche Auflösung wie assertKanzleiReadAccess: hat der User einen
+    // Mandanten in dieser Kanzlei?
+    const mandant = await this.prisma.mandant.findFirst({
+      where: {
+        kanzleiId,
+        id: { in: user.mandanten.map((m) => m.id) },
+      },
+      select: { id: true },
+    });
+    if (!mandant) {
+      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
     }
   }
 

@@ -33,7 +33,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 | Punkt | Status |
 |---|---|
 | **Git-Tags** (`m1-pilot-ready`, `m2-pilot-ready`, `m3-kanzlei-ready`, `m4-production-ready`) | 🟡 vorhanden, aber **kein Abnahmenachweis** — die Tags markieren den *Code-Stand* der jeweiligen Runde. `m4-production-ready` wurde am 2026-10-02 von `95dd932` auf den tatsächlichen Stand verschoben, weil der ursprüngliche Commit 30 Commits zurücklag und u. a. einen RCE enthielt; die Tag-Annotation listet die Befunde. „production-ready" im Tag-Namen ist eine historische Bezeichnung, **keine** Aussage über Produktionsreife. |
-| **Frontend-E2E-Coverage** | 🟡 10 Smoke-Tests vorhanden, aber **keine** Abdeckung der Formularstrecken (Bilanz-/GuV-Erfassung, PDF-Download, Signatur). `AGENTS.md §6` fordert 90 % für M4. |
+| **Frontend-E2E-Coverage** | 🟡 31 Tests, davon abgedeckt: alle 13 Fachseiten mit mandantenstärkstem Bestand (vollständiges Laden, kein Hängenbleiben), Speichern bestehender GuV-/Anhang-/Bilanzsätze, Speichern je Status (DRAFT + nicht-DRAFT). **Noch ohne Abdeckung**: Konsolidierung, Webhooks, Branding, Subscription und API-Keys (nur rendergeprüft), PDF-Download, Signatur. `AGENTS.md §6` fordert 90 % für M4. |
 | **`next@15.0.3` / `react@19.0.0-rc`** | ✅ behoben (2026-10-01): CVE-2025-66478 (RCE, CVSS 10.0) und die Nachfolge-Advisories CVE-2025-55183 / -55184 / -67779 sind mit **`next@15.5.27`** und **`react@19.0.8`** gepatcht. Zusätzlich `next-intl` 3.25.1 → **4.14.8** (Open Redirect + Prototype Pollution) und `outputFileTracingRoot` in `next.config.ts` gesetzt. Verifiziert mit 10/10 Playwright gegen den Production-Build. |
 | **Restliche Advisories** | 🟡 2 offen, beide nur per Next-Major löschen: `next` (moderate, DoS) und `postcss` (high, transitiv). `npm audit fix --force` will dafür **Next 16.3.8** — das ist ein eigener, getesteter Migrations-Schritt und wurde hier bewusst nicht als Nebenwirkung gemacht. |
 | **Dokumente*| ~~`docs/rollen-rbac.md`, `docs/gobd-architektur.md`, `docs/datenmodell.md`~~ | ✅ ergänzt (aus dem tatsächlichen Code abgeleitet) |
@@ -173,7 +173,7 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Qualifizierte elektronische Signatur (qeS) via P12-Token + signpdf + TSA
 - Frontend-Integration: E-Bilanz/DATEV/Signatur-UI
 - Pilot-Phase-2: 3 Kanzleien + 15 Mandanten
-- **Status**: 🟡 Backend e2e-abgedeckt; Frontend baut und hat 10 Smoke-E2E-Tests, aber keine Formular-Abdeckung.
+- **Status**: 🟡 Backend e2e-abgedeckt; Frontend baut, 31 Playwright-Tests grün (Fachseiten + Formular-Speicherpfade), aber weiterhin ohne Abdeckung für PDF-Download, Signatur und die Einstellungsformulare.
 
 ### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss 🟡
 - DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping, reverse direction) ✅
@@ -192,7 +192,7 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Subscription-Modell (Pilot/Standard/Premium via Stripe, Mock-Fallback)
 - Mobile-Responsiveness (Tablet-Layout + PWA-Modus)
 - GoBD-Zertifizierung (IDW PS 880 Vorbereitung, Hash-Chain-Audit)
-- **Status**: 🔴 **Nicht production-ready.** Kein Deployment, keine Formular-E2E-Abdeckung, kein IDW-PS-880-Audit, Signaturprüfung teilweise offen, `next@15.0.3` mit bekannter CVE. Details im Verifikationsstand.
+- **Status**: 🔴 **Nicht production-ready.** Kein durchgeführtes Deployment, kein IDW-PS-880-Audit, Signaturprüfung teilweise offen, keine E2E-Abdeckung für die Einstellungsformulare und den PDF-Download. ~~`next@15.0.3` mit bekannter CVE~~ — behoben 2026-10-01 (`next@15.5.27`). Formular-Speicherpfade sind seit 2026-10-04 e2e-abgedeckt. Details im Verifikationsstand.
 - Pilot-Phase-3 (Skalierung auf 5–8 Kanzleien): siehe [`docs/PILOT-PHASE-3-PLAN.md`](docs/PILOT-PHASE-3-PLAN.md)
 
 ## Erfolgsmetriken (Go-Live-Kriterien)

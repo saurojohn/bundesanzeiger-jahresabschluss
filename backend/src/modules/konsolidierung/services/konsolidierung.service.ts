@@ -275,6 +275,64 @@ export class KonsolidierungService {
    * Mutter- und Tochter-Positionen und wendet die Eliminations-Buchungen
    * an.
    */
+  /**
+   * Prüft VOR der ersten Schrift, dass für (mandantId, geschaeftsjahr)
+   * weder eine Bilanz noch eine GuV existiert.
+   *
+   * Beide Ziel-Sätze werden unter dem Unique-Constraint
+   * (mandantId, geschaeftsjahr) angelegt. Der Konflikt muss als 400 mit
+   * Handlungsanweisung kommen, nicht als 500 — und zwar BEIDE Prüfungen vor
+   * dem ersten Schreibvorgang, damit kein Teilzustand entsteht.
+   */
+  private async assertZieljahrFrei(
+    mandantId: string,
+    geschaeftsjahr: number,
+  ): Promise<void> {
+    const [bilanzen, guvs] = await Promise.all([
+      this.bilanzRepository.findByMandantAndJahr(mandantId, geschaeftsjahr),
+      this.guvRepository.findByMandantAndJahr(mandantId, geschaeftsjahr),
+    ]);
+
+    if (bilanzen.length > 0 || guvs.length > 0) {
+      const vorhanden: string[] = [];
+      if (bilanzen.length > 0) vorhanden.push('eine Jahresbilanz');
+      if (guvs.length > 0) vorhanden.push('eine GuV');
+      throw new BadRequestException(
+        `Für das Geschäftsjahr ${geschaeftsjahr} existiert bereits ${vorhanden.join(' und ')}. ` +
+          'Das Anlegen der Konzern-Bilanz und der Konzern-GuV würde am Unique-Constraint ' +
+          '(Mandant, Geschäftsjahr) scheitern. Bitte die vorhandenen Sätze zuerst löschen ' +
+          'oder ein anderes Geschäftsjahr wählen.',
+      );
+    }
+  }
+
+  /**
+   * Fuehrt einen Schreibvorgang aus und wandelt einen Unique-Constraint-
+   * Konflikt (Prisma P2002) in eine verstaendliche 400 um.
+   *
+   * Zweite Sicherung neben `assertZieljahrFrei`: die Vorpruefung senkt das
+   * Risiko, beseitigt es aber nicht (gleichzeitiges Anlegen). Ein
+   * durchschlagender P2002 wuerde als HTTP 500 "Internal server error"
+   * enden — ohne jede Handlungsanweisung fuer den Anwender.
+   */
+  private async kreatorSchutz<T>(aktion: () => Promise<T>): Promise<T> {
+    try {
+      return await aktion();
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          'Für dieses Geschäftsjahr wurden zwischenzeitlich bereits Sätze ' +
+            'angelegt. Bitte die vorhandenen Bilanz-/GuV-Sätze prüfen und ' +
+            'erneut versuchen.',
+        );
+      }
+      throw err;
+    }
+  }
+
   async applyKonsolidierung(
     einheitId: string,
     user: AuthUser,
@@ -287,6 +345,22 @@ export class KonsolidierungService {
         'Konsolidierung wurde bereits angewendet',
       );
     }
+
+    // Bugfix 2026-10-04: Vor jeder Schrift die Zieljahres-Sätze prüfen.
+    //
+    // `apply` legt eine Konzern-Bilanz UND eine Konzern-GuV für
+    // (mutterMandantId, geschaeftsjahr) an — beide unterliegen einem
+    // Unique-Constraint. Existiert für das Jahr bereits ein Satz, warf
+    // Prisma P2002 und der Aufrufer bekam HTTP 500 "Internal server
+    // error". Das ist nicht der Randfall, sondern der Normalfall: die
+    // Mutter hat für jedes Wirtschaftsjahr eine Jahresbilanz.
+    //
+    // Ohne Vorprüfung entsteht zusätzlich ein TEILZUSTAND: Existiert keine
+    // Bilanz, aber eine GuV, wird die Konzern-Bilanz angelegt und die
+    // GuV-Anlage scheitert. Danach steht eine Konzern-Bilanz ohne
+    // Konzern-GuV da, der Status bleibt DRAFT — und jeder Versuch,
+    // erneut anzuwenden, scheitert nun an der Bilanz.
+    await this.assertZieljahrFrei(einheit.mutterMandantId, einheit.geschaeftsjahr);
 
     // 1. Aktuelle Buchungen laden (oder neu berechnen, falls DRAFT).
     let buchungen = einheit.buchungen;
@@ -327,7 +401,8 @@ export class KonsolidierungService {
     this.applyEliminationsToGuv(konsGuvPositionen, buchungen);
 
     // 5. Konzern-Bilanz anlegen (mandantId = mutterMandantId).
-    const konzernBilanz = await this.bilanzRepository.createWithPositionen({
+    const konzernBilanz = await this.kreatorSchutz(() =>
+      this.bilanzRepository.createWithPositionen({
       mandantId: einheit.mutterMandantId,
       geschaeftsjahr: einheit.geschaeftsjahr,
       status: 'VALIDATED',
@@ -342,12 +417,14 @@ export class KonsolidierungService {
         reihenfolge: idx + 1,
         bemerkung: p.bemerkung ?? null,
       })),
-    });
+    }),
+    );
 
     // 6. Jahresergebnis aus konsolidierter GuV berechnen.
     const jahresergebnis = this.computeGuvErgebnis(konsGuvPositionen);
 
-    const konzernGuv = await this.guvRepository.createWithPositionen({
+    const konzernGuv = await this.kreatorSchutz(() =>
+      this.guvRepository.createWithPositionen({
       mandantId: einheit.mutterMandantId,
       geschaeftsjahr: einheit.geschaeftsjahr,
       verfahren: 'GKV',
@@ -364,7 +441,8 @@ export class KonsolidierungService {
         reihenfolge: idx + 1,
         bemerkung: p.bemerkung ?? null,
       })),
-    });
+    }),
+    );
 
     // 7. Salden berechnen + Status auf COMPLETED.
     const salden = await this.calculateKonzernSalden(einheitId, user);

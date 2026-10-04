@@ -348,6 +348,14 @@ function GuvForm({
     new Date().getFullYear(),
   );
   const [verfahren, setVerfahren] = useState<'GKV' | 'UKV'>('GKV');
+  /**
+   * Status des geladenen Satzes. Das Backend laesst Positionsaenderungen
+   * nur im DRAFT zu (`GuVService.update`, sonst HTTP 400). Das Formular
+   * sandte `positionen` aber immer mit — ein VALIDATED-Satz war damit
+   * grundsaetzlich nicht speicherbar. Bugfix 2026-10-04.
+   */
+  const [status, setStatus] = useState<'DRAFT' | 'VALIDATED' | 'ARCHIVED'>('DRAFT');
+  const positionenSperre = guvId !== undefined && status !== 'DRAFT';
   const [positionen, setPositionen] = useState<GuvPosition[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -367,6 +375,7 @@ function GuvForm({
         setGeschaeftsjahr(data.geschaeftsjahr);
         setVerfahren(data.verfahren);
         setPositionen(data.positionen);
+        setStatus(data.status);
         const schemaData = await apiFetch<typeof schema>(
           `/guv/schema?verfahren=${data.verfahren}`,
           { accessToken: token },
@@ -444,7 +453,9 @@ function GuvForm({
           accessToken: token,
           body: JSON.stringify({
             verfahren,
-            positionen: payload.positionen,
+            // Positionen nur im DRAFT — sonst lehnt das Backend den
+            // gesamten PATCH mit 400 ab.
+            ...(positionenSperre ? {} : { positionen: payload.positionen }),
           }),
         });
       } else {
@@ -493,6 +504,14 @@ function GuvForm({
             {t('guv.actions.save')}
           </button>
         </div>
+        {positionenSperre && (
+          <p
+            className="mt-2 text-xs text-amber-700"
+            data-testid="guv-positionen-gesperrt"
+          >
+            {t('guv.positionenGesperrt')}
+          </p>
+        )}
       </div>
 
       <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">

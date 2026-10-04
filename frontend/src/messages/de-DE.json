@@ -225,7 +225,8 @@
       "DRAFT": "Entwurf",
       "VALIDATED": "Geprüft",
       "ARCHIVED": "Archiviert"
-    }
+    },
+    "positionenGesperrt": "Positionen sind nach der Validierung gesperrt. Nur Hinweise können noch geändert werden."
   },
   "guv": {
     "title": "Gewinn- und Verlustrechnung",
@@ -261,7 +262,8 @@
       "create": "GuV anlegen",
       "save": "Speichern",
       "delete": "GuV löschen"
-    }
+    },
+    "positionenGesperrt": "Positionen sind nach der Validierung gesperrt. Nur Hinweise können noch geändert werden."
   },
   "anhang": {
     "title": "Anhang",
@@ -301,7 +303,8 @@
       "addAbschnitt": "Abschnitt hinzufügen",
       "deleteAbschnitt": "Abschnitt entfernen",
       "delete": "Anhang löschen"
-    }
+    },
+    "abschnitteGesperrt": "Abschnitte sind nach der Validierung gesperrt. Nur Hinweise können noch geändert werden."
   },
   "pdf": {
     "generate": "PDF erzeugen",

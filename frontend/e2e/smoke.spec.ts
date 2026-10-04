@@ -509,3 +509,93 @@ test.describe('Alle Fachseiten mit Bestand', () => {
     });
   }
 });
+
+/**
+ * Speichern je Status — der nicht-DRAFT-Fall war unmöglich.
+ *
+ * Befund 2026-10-04: Das Backend lässt Positions-/Abschnittsänderungen
+ * ausschließlich im DRAFT zu (`BilanzService.update` u. a., sonst HTTP 400
+ * "Positionen können nur in DRAFT-Phase geändert werden"). Die drei
+ * Formulare sandten `positionen`/`abschnitte` aber IMMER mit — jeder
+ * VALIDATED-, APPROVED- oder ARCHIVED-Satz war damit grundsätzlich nicht
+ * speicherbar, und die Oberfläche erklärte den Grund nicht.
+ *
+ * Im Seed standen solche Sätze (Beispiel GmbH: 1× VALIDATED,
+ * Demo GmbH: 1× APPROVED), die bisher kein Test angefasst hat.
+ */
+test.describe('Speichern je Status', () => {
+  async function bilanzMitStatus(
+    page: import('@playwright/test').Page,
+    status: 'DRAFT' | 'NICHT_DRAFT',
+  ): Promise<{ mandantId: string; geschaeftsjahr: number; gefunden: boolean }> {
+    const treffer = await page.evaluate(async (willStatus: string) => {
+      const token = localStorage.getItem('accessToken');
+      if (!token) return null;
+      const liste = (await (await fetch('/api/mandant', {
+        headers: { Authorization: `Bearer ${token}` },
+      })).json()) as Array<{ id: string }>;
+      for (const m of liste) {
+        const bl = (await (await fetch(`/api/bilanz?mandantId=${m.id}`, {
+          headers: { Authorization: `Bearer ${token}`, 'x-mandant-id': m.id },
+        })).json()) as Array<{ id: string; geschaeftsjahr: number; status: string }>;
+        const treffer = bl.find((b) =>
+          willStatus === 'DRAFT' ? b.status === 'DRAFT' : b.status !== 'DRAFT',
+        );
+        if (treffer) return { mandantId: m.id, geschaeftsjahr: treffer.geschaeftsjahr };
+      }
+      return null;
+    }, status);
+    if (treffer) {
+      await page.evaluate((m) => localStorage.setItem('activeMandantId', m), treffer.mandantId);
+    }
+    return { ...(treffer ?? { mandantId: '', geschaeftsjahr: 0 }), gefunden: Boolean(treffer) };
+  }
+
+  for (const [label, art] of [
+    ['DRAFT', 'DRAFT'],
+    ['VALIDATED/ARCHIVED', 'NICHT_DRAFT'],
+  ] as const) {
+    test(`Bilanz im Status ${label} speichern → 2xx`, async ({ page }) => {
+      await assertBackendLoginWorks();
+      await login(page);
+      await page.waitForURL(`**/${LOCALE}/dashboard`, { timeout: 30_000 });
+
+      const ziel = await bilanzMitStatus(page, art);
+      expect(ziel.gefunden, `Seed muss eine Bilanz im Status ${label} enthalten`).toBe(true);
+
+      await page.goto(`/${LOCALE}/bilanz`);
+      await page.waitForTimeout(2500);
+
+      // Gezielt die Zeile des gewaehlten Satzes oeffnen.
+      const zeile = page.locator('tr', { hasText: String(ziel.geschaeftsjahr) }).first();
+      await zeile.getByRole('button', { name: 'Bearbeiten' }).click();
+      await page.waitForTimeout(2000);
+
+      const gesperrt = await page.getByTestId('bilanz-positionen-gesperrt').count();
+      if (art === 'DRAFT') {
+        expect(gesperrt, 'im DRAFT darf kein Sperrhinweis stehen').toBe(0);
+      } else {
+        expect(gesperrt, 'außerhalb des DRAFT muss der Sperrhinweis stehen').toBeGreaterThan(0);
+      }
+
+      const patch = page.waitForResponse(
+        (r) => r.request().method() === 'PATCH' && r.url().includes('/api/bilanz'),
+        { timeout: 20_000 },
+      );
+      await page.getByRole('button', { name: /^Speichern$/ }).click();
+      const antwort = await patch;
+
+      expect(
+        antwort.status(),
+        `PATCH muss 2xx liefern, war ${antwort.status()} — auch ausserhalb des DRAFT`,
+      ).toBeGreaterThanOrEqual(200);
+      expect(antwort.status(), 'kein 4xx/5xx').toBeLessThan(400);
+
+      await page.waitForTimeout(1500);
+      const fehlerTexte = (await page.locator('.bg-red-50').allInnerTexts())
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      expect(fehlerTexte, 'nach dem Speichern darf kein Fehlerband stehen').toHaveLength(0);
+    });
+  }
+});

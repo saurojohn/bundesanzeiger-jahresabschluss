@@ -58,6 +58,18 @@ export function BilanzForm({
 }) {
   const t = useTranslations();
   const [schema, setSchema] = useState<HgbSchema | null>(null);
+  /**
+   * Status des geladenen Satzes. Das Backend laesst Positionsaenderungen
+   * ausschliesslich im DRAFT zu (`BilanzService.update`), sonst HTTP 400
+   * "Positionen koennen nur in DRAFT-Phase geaendert werden". Das Formular
+   * sendete `positionen` aber immer mit — ein VALIDATED- oder ARCHIVED-Satz
+   * war damit grundsaetzlich nicht speicherbar, ohne dass die Oberflaeche
+   * den Grund erklaert haette. Bugfix 2026-10-04.
+   */
+  const [status, setStatus] = useState<'DRAFT' | 'VALIDATED' | 'ARCHIVED'>(
+    'DRAFT',
+  );
+  const positionenSperre = bilanzId !== undefined && status !== 'DRAFT';
   const [geschaeftsjahr, setGeschaeftsjahr] = useState<number>(
     new Date().getFullYear(),
   );
@@ -95,6 +107,7 @@ export function BilanzForm({
         setGeschaeftsjahr(data.geschaeftsjahr);
         setHinweise(data.hinweise ?? '');
         setPositionen(data.positionen);
+        setStatus(data.status);
 
         // Zugehörige GuV + Anhang für gleiches GJ finden
         const mandantId = getActiveMandantId();
@@ -204,7 +217,10 @@ export function BilanzForm({
           accessToken: token,
           body: JSON.stringify({
             hinweise: payload.hinweise,
-            positionen: payload.positionen,
+            // Positionen nur im DRAFT — sonst lehnt das Backend den
+            // gesamten PATCH mit 400 ab, auch wenn nur `hinweise`
+            // geaendert wurden.
+            ...(positionenSperre ? {} : { positionen: payload.positionen }),
           }),
         });
         setSavedBilanzId(bilanzId);
@@ -276,6 +292,14 @@ export function BilanzForm({
           >
             {t('bilanz.actions.save')}
           </button>
+          {positionenSperre && (
+            <p
+              className="text-xs text-amber-700"
+              data-testid="bilanz-positionen-gesperrt"
+            >
+              {t('bilanz.positionenGesperrt')}
+            </p>
+          )}
         </div>
       </div>
 
@@ -354,12 +378,14 @@ export function BilanzForm({
       {/* Side-by-side Aktiva / Passiva */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <PositionColumn
+          disabled={positionenSperre}
           title="Aktiva"
           seite="AKTIVA"
           positionen={positionen}
           onChange={updatePosition}
         />
         <PositionColumn
+          disabled={positionenSperre}
           title="Passiva"
           seite="PASSIVA"
           positionen={positionen}
@@ -400,11 +426,15 @@ function PositionColumn({
   seite,
   positionen,
   onChange,
+  disabled = false,
 }: {
   title: string;
   seite: 'AKTIVA' | 'PASSIVA';
   positionen: BilanzPosition[];
   onChange: (idx: number, patch: Partial<BilanzPosition>) => void;
+  /** true, wenn der Datensatz nicht im DRAFT ist — Positionen sind dann
+   *  gesperrt (Backend lehnt die Änderung mit 400 ab). */
+  disabled?: boolean;
 }) {
   const t = useTranslations();
   const filtered = positionen.map((p, idx) => ({ p, idx })).filter((x) => x.p.seite === seite);
@@ -443,6 +473,7 @@ function PositionColumn({
                   <input
                     type="number"
                     step="0.01"
+                    disabled={disabled}
                     value={p.betragVorjahr ?? ''}
                     onChange={(e) =>
                       onChange(idx, {
@@ -458,6 +489,7 @@ function PositionColumn({
                   <input
                     type="number"
                     step="0.01"
+                    disabled={disabled}
                     value={p.betragAktuell || ''}
                     onChange={(e) =>
                       onChange(idx, {

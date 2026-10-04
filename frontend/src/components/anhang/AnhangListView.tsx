@@ -250,6 +250,15 @@ function AnhangForm({
   const [geschaeftsjahr, setGeschaeftsjahr] = useState<number>(
     new Date().getFullYear(),
   );
+  /**
+   * Status des geladenen Anhangs. Das Backend laesst Abschnittsaenderungen
+   * nur im DRAFT zu (`AnhangService.update`, sonst HTTP 400 "Abschnitte
+   * koennen nur in DRAFT-Phase geaendert werden"). Das Formular sandte
+   * `abschnitte` aber immer mit — ein VALIDATED-Anhang war damit
+   * grundsaetzlich nicht speicherbar. Bugfix 2026-10-04.
+   */
+  const [status, setStatus] = useState<'DRAFT' | 'VALIDATED' | 'ARCHIVED'>('DRAFT');
+  const abschnitteSperre = anhangId !== undefined && status !== 'DRAFT';
   const [abschnitte, setAbschnitte] = useState<AnhangAbschnitt[]>(
     STANDARD_TITEL.map((key, idx) => ({
       titel: t(`anhang.standardAbschnitte.${key}`),
@@ -272,6 +281,7 @@ function AnhangForm({
         accessToken: token,
       });
       setGeschaeftsjahr(data.geschaeftsjahr);
+      setStatus(data.status);
       setAbschnitte(
         (data.abschnitte?.length ?? 0) > 0
           ? (data.abschnitte ?? [])
@@ -310,7 +320,9 @@ function AnhangForm({
           method: 'PATCH',
           accessToken: token,
           body: JSON.stringify({
-            abschnitte: payload.abschnitte,
+            // Abschnitte nur im DRAFT — sonst lehnt das Backend den
+            // gesamten PATCH mit 400 ab.
+            ...(abschnitteSperre ? {} : { abschnitte: payload.abschnitte }),
           }),
         });
       } else {
@@ -368,6 +380,14 @@ function AnhangForm({
             {t('anhang.actions.save')}
           </button>
         </div>
+        {abschnitteSperre && (
+          <p
+            className="mt-2 text-xs text-amber-700"
+            data-testid="anhang-abschnitte-gesperrt"
+          >
+            {t('anhang.abschnitteGesperrt')}
+          </p>
+        )}
       </div>
 
       <div className="mb-4">
@@ -413,6 +433,7 @@ function AnhangForm({
             </div>
             <textarea
               rows={4}
+              disabled={abschnitteSperre}
               value={a.inhalt}
               onChange={(e) => updateAbschnitt(idx, { inhalt: e.target.value })}
               placeholder={t('anhang.placeholders.allgemeineAngaben')}

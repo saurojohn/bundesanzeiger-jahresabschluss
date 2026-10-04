@@ -165,8 +165,14 @@ export function SubscriptionView() {
         if (data.providerName === 'mock') {
           // Mock-Mode: Direkt-Aktivierung statt Redirect
           const mockSession = new URL(data.url).searchParams.get('mock_session') ?? '';
+          // Pfad OHNE '/api'-Praefix: `apiFetch` setzt `BASE_API = '/api'`
+          // selbst voran. Mit Prefix ging der Aufruf an
+          // `/api/api/subscription/...` und endete mit 404
+          // ("Cannot POST /api/api/subscription/…"). Betroffen war genau
+          // der Mock-Pfad — also der Dev-/Pilot-Betrieb, in dem der
+          // Provider ohne STRIPE_SECRET_KEY auf 'mock' steht.
           const activateRes = await apiFetch(
-            `/api/subscription/${kanzleiId}/mock-activate`,
+            `/subscription/${kanzleiId}/mock-activate`,
             {
               method: 'POST',
               headers: {

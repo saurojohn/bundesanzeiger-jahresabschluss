@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { PdfActions } from '@/components/pdf/PdfActions';
+import { ExportActions } from '@/components/exports/ExportActions';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type AnhangAbschnitt = {
@@ -208,6 +209,15 @@ export function AnhangListView() {
                 entityId={a.id}
                 wormObjectKey={a.wormObjectKey}
                 onGenerated={() => void loadList()}
+              />
+              {/* Bugfix 2026-10-05: Der Anhang war über die Oberfläche nicht
+                  signierbar — `POST /signatur/sign-anhang` existierte, ohne
+                  dass die Schaltfläche irgendwo erreichbar war. */}
+              <ExportActions
+                entityType="anhang"
+                entityId={a.id}
+                anhangId={a.id}
+                canSign
               />
               <button
                 type="button"

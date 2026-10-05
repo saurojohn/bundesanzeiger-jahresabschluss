@@ -174,6 +174,11 @@ export function ExportActions({
           guvId={guvId}
           anhangId={anhangId}
           jahresabschlussId={entityType === 'abschluss' ? entityId : undefined}
+          // Das Signaturziel explizit mitgeben (Bugfix 2026-10-05): sonst
+          // waehlt der Dialog per Prioritaet und wuerde im Bilanz-Formular —
+          // wo guvId/anhangId fuer den DATEV-Export mitgegeben werden — die
+          // GuV signieren statt der Bilanz, die der Anwender vor sich hat.
+          signTarget={entityType}
           onClose={() => setSignOpen(false)}
         />
       )}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { PdfActions } from '@/components/pdf/PdfActions';
+import { ExportActions } from '@/components/exports/ExportActions';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type GuvPosition = {
@@ -295,6 +296,17 @@ export function GuvListView() {
                       entityId={g.id}
                       wormObjectKey={g.wormObjectKey}
                       onGenerated={() => void loadList()}
+                    />
+                    {/* Bugfix 2026-10-05: Die GuV war über die Oberfläche
+                        nicht signierbar — `POST /signatur/sign-guv` existiert
+                        im Backend, hatte aber keinen Bedienweg. Bei einem
+                        Jahresabschluss gehört die GuV genauso zur Signatur
+                        wie die Bilanz. */}
+                    <ExportActions
+                      entityType="guv"
+                      entityId={g.id}
+                      guvId={g.id}
+                      canSign
                     />
                   </td>
                   <td className="px-4 py-3 text-right">

@@ -491,7 +491,20 @@ test.describe('Alle Fachseiten mit Bestand', () => {
       page.on('pageerror', (e) => pageErrors.push(String(e).slice(0, 200)));
 
       await page.goto(`/${LOCALE}/${seite}`);
-      await page.waitForTimeout(2500);
+
+      // Auf den Ladeindikator warten statt eine feste Zeit zu schlafen.
+      // Die 2,5 s aus der ersten Fassung waren unter Last des vollen
+      // Laufs (53 Tests, ein Browser) nicht immer ausreichend — der Test
+      // schlug dann fehl, obwohl die Seite in Ordnung war. Ein Flake, der
+      // als Produktionsfehler aussieht, ist selbst ein Defekt an der
+      // Testsuite.
+      await page
+        .locator('text=/Wird geladen|Loading\.\.\./i')
+        .first()
+        .waitFor({ state: 'detached', timeout: 15_000 })
+        .catch(() => {
+          // Bleibt der Indikator stehen, greift die Assertion weiter unten.
+        });
 
       // 1) Kein client-seitiger Absturz.
       const body = await page.locator('body').innerText();

@@ -28,12 +28,27 @@ export function P12UploadDialog({
   guvId,
   anhangId,
   jahresabschlussId,
+  signTarget,
   onClose,
 }: {
   bilanzId?: string;
   guvId?: string;
   anhangId?: string;
   jahresabschlussId?: string;
+  /**
+   * Worauf die Signatur angewendet werden soll.
+   *
+   * Bugfix 2026-10-05: Das Ziel wurde aus einer Prioritaetskette abgeleitet
+   * (abschluss → anhang → guv → bilanz). `BilanzForm` uebergibt neben der
+   * Bilanz auch `guvId` und `anhangId` — fuer den DATEV-Export. Ein Klick auf
+   * "PDF signieren" haette damit die **GuV** signiert, waehrend der Anwender
+   * die Bilanz vor sich hat. Bei einer Signatur nach § 126 AO ist das kein
+   * Anzeigefehler, sondern ein falsch signiertes Dokument.
+   *
+   * Der Aufrufer (`ExportActions`) weiss, welcher EntityType gerade
+   * angezeigt wird, und gibt ihn deshalb explizit mit.
+   */
+  signTarget?: 'bilanz' | 'guv' | 'anhang' | 'abschluss';
   onClose: () => void;
 }) {
   const t = useTranslations();
@@ -108,28 +123,35 @@ export function P12UploadDialog({
       const mandantId = getActiveMandantId();
       if (!token || !mandantId) return;
 
-      let endpoint = '/signatur/sign-bilanz';
+      // Das Ziel kommt ausdruecklich vom Aufrufer. Ohne `signTarget` wird
+      // die ID genommen, die zum angezeigten EntityType gehoert — nicht die
+      // erste vorhandene aus der Liste.
+      const ziel = signTarget ?? 'bilanz';
+      const zielId =
+        ziel === 'abschluss'
+          ? jahresabschlussId
+          : ziel === 'anhang'
+            ? anhangId
+            : ziel === 'guv'
+              ? guvId
+              : bilanzId;
+
+      if (!zielId) {
+        setSignError(
+          'Für diese Ansicht ist kein Datensatz zum Signieren vorhanden.',
+        );
+        return;
+      }
+
+      const endpoint = `/signatur/sign-${ziel}`;
       const body: Record<string, string | boolean> = {
         mandantId,
         p12Base64,
         p12Password: password,
         signatureType,
         includeTimestamp,
+        [`${ziel === 'abschluss' ? 'jahresabschluss' : ziel}Id`]: zielId,
       };
-
-      if (jahresabschlussId) {
-        endpoint = '/signatur/sign-abschluss';
-        body.jahresabschlussId = jahresabschlussId;
-      } else if (anhangId) {
-        endpoint = '/signatur/sign-anhang';
-        body.anhangId = anhangId;
-      } else if (guvId) {
-        endpoint = '/signatur/sign-guv';
-        body.guvId = guvId;
-      } else if (bilanzId) {
-        endpoint = '/signatur/sign-bilanz';
-        body.bilanzId = bilanzId;
-      }
 
       const signResult = await apiFetch<{
         signatureId: string;

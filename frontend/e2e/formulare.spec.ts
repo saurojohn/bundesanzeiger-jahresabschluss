@@ -177,4 +177,25 @@ test.describe('Fachformulare: Aktionen, nicht nur Rendering', () => {
       'die Liste muss für KANZLEI_ADMIN ladbar sein',
     ).toBe(200);
   });
+
+  test('Audit: STEUERBERATER sieht nur den Rollenfehler, keinen Leerhinweis', async ({ page }) => {
+    await anmelden(page, STEUERBERATER);
+    await page.goto('http://localhost:3001/de-DE/audit');
+    await page.waitForTimeout(2500);
+
+    const body = await page.locator('body').innerText();
+    // Der Rollenfehler MUSS stehen …
+    expect(body, 'die Rollenverweigerung muss angezeigt werden').toContain(
+      'Rolle fehlt',
+    );
+    // … der Leerhinweis darf nicht.
+    //
+    // Bugfix 2026-10-05: Beides stand gleichzeitig da. "Keine Audit-Einträge
+    // für die gewählten Filter" behauptet eine leere Liste, obwohl nie ein
+    // Abruf erfolgreich war — der Anwender bekam zwei widersprüchliche
+    // Aussagen gleichzeitig.
+    expect(body, 'bei fehlender Rolle darf kein Leerhinweis erscheinen').not.toContain(
+      'Keine Audit-Einträge',
+    );
+  });
 });

@@ -281,6 +281,23 @@ export function BilanzListView() {
                       wormObjectKey={b.wormObjectKey}
                       onGenerated={() => void loadList()}
                     />
+                    {/* Bugfix 2026-10-05: Die qeS-Signatur war ueber die
+                        Oberflaeche nicht erreichbar. `ExportActions` (mit
+                        `canSign`) wurde nur in `BilanzForm` gerendert — und
+                        dort nur unter `bilanzId && savedBilanzId`. Nach dem
+                        Speichern ruft der Formular-Handler aber sofort
+                        `onSaved()` auf, das Formular schliesst, die Liste
+                        erscheint. Der Block wurde also nie sichtbar; die
+                        gueltige elektronische Signatur nach § 126 AO hatte
+                        keinen Bedienweg. Der Import von `ExportActions` in
+                        dieser Datei stand ohne Verwendung — genau hier
+                        gehoert er hin, neben der PDF-Aktion. */}
+                    <ExportActions
+                      entityType="bilanz"
+                      entityId={b.id}
+                      bilanzId={b.id}
+                      canSign
+                    />
                     <button
                       type="button"
                       onClick={() => setEditingId(b.id)}

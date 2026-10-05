@@ -8,6 +8,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Max,
   Min,
@@ -21,6 +22,22 @@ import { DEFAULT_API_KEY_RATE_LIMIT } from '../constants/api-key.constants';
  * gesetzt. `expiresAt` ist optional (null = unbegrenzt).
  */
 export class CreateApiKeyDto {
+  @ApiProperty({
+    description:
+      'Kanzlei, fuer die der Key gilt. Erforderlich — der Aufrufer ist ' +
+      'selbst dafuer verantwortlich, sie korrekt zu waehlen.',
+    example: 'b1a2c3d4-0000-4000-8000-000000000000',
+    format: 'uuid',
+  })
+  // Bugfix 2026-10-05: `kanzleiId` fehlte im DTO und wurde im Controller nur
+  // per Typ-Intersection `CreateApiKeyDto & { kanzleiId: string }`
+  // behauptet. Die ValidationPipe prueft nur dekorierte Properties — ohne
+  // Dekorator blieb `undefined` ungeprueft, und `kanzlei: { connect: {
+  // id: undefined } }` liess Prisma mit HTTP 500 abbrechen. Fehlende
+  // Pflichtangabe des Clients gehoeren zu 400, nicht zu 500.
+  @IsUUID('4', { message: 'kanzleiId muss eine gueltige UUID sein' })
+  kanzleiId!: string;
+
   @ApiProperty({
     description:
       'Menschenlesbarer Name für den API-Key (z.B. "DATEV-Integration-Production")',

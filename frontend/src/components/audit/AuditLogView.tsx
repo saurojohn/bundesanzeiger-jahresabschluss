@@ -257,9 +257,16 @@ export function AuditLogView() {
       {loading ? (
         <div className="text-sm text-slate-500">{t('common.loading')}</div>
       ) : entries.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">
-          {t('audit.noEntries')}
-        </div>
+        /* Bugfix 2026-10-05: Bei einem 403 (Rollenfehler) stand ueber dem
+           Fehlerband zusaetzlich "Keine Audit-Eintraege fuer die gewaehlten
+           Filter". Das ist doppelt falsch: es gab nie einen Abruf, der leer
+           zurueckkam, sondern einen abgelehnten. Der Leerhinweis erscheint
+           deshalb nur noch ohne Fehler. */
+        !error && (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">
+            {t('audit.noEntries')}
+          </div>
+        )
       ) : (
         <div className="space-y-3 md:hidden">
           {/* Mobile: Card-Layout (M4 Sprint 4 Pattern) */}

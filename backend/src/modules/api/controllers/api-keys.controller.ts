@@ -76,7 +76,7 @@ export class ApiKeysController {
     type: CreateApiKeyResponseDto,
   })
   async create(
-    @Body() body: CreateApiKeyDto & { kanzleiId: string },
+    @Body() body: CreateApiKeyDto,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<CreateApiKeyResponseDto> {

@@ -195,6 +195,15 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - **Status**: 🔴 **Nicht production-ready.** Kein durchgeführtes Deployment, kein IDW-PS-880-Audit, Signaturprüfung teilweise offen, keine E2E-Abdeckung für die Einstellungsformulare und den PDF-Download. ~~`next@15.0.3` mit bekannter CVE~~ — behoben 2026-10-01 (`next@15.5.27`). Formular-Speicherpfade sind seit 2026-10-04 e2e-abgedeckt. Details im Verifikationsstand.
 - Pilot-Phase-3 (Skalierung auf 5–8 Kanzleien): siehe [`docs/PILOT-PHASE-3-PLAN.md`](docs/PILOT-PHASE-3-PLAN.md)
 
+> **Zum CI-Status (Stand 2026-10-05):** In den letzten Läufen schlug
+> GitHub Actions derzeit fehl: *„The job was not acquired by Runner of type
+> hosted even after multiple attempts"* — die Jobs starten nach 15 Minuten
+> Warteschlange gar nicht erst. Das ist **kein** Code-Fehler und **kein**
+> rotes Qualitätsgate; die Gates wurden in diesem Zustand lokal vollständig
+> grün gefahren (321/321 Backend, 55/55 Playwright, tsc 0, eslint 0, Build
+> grün). Maßgeblich ist der lokale Lauf, solange die Runner-Kapazität
+> fehlt.
+
 ## Erfolgsmetriken (Go-Live-Kriterien)
 
 | Metrik | M1 ✅ | M2 ✅ | M3 ✅ | M4 (GA) |

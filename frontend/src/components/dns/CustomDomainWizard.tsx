@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken } from '@/lib/api';
+import { resolveKanzleiId } from '@/lib/kanzlei';
 
 const FQDN_REGEX =
   /^(?=.{4,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/;
@@ -75,11 +76,13 @@ export function CustomDomainWizard() {
         // undefined und `json()` existiert nicht. Der Pfad konnte nie laufen.
         // Ausserdem landeten die Aufrufe unter /api/api/... (doppeltes Praefix).
 
-        // kanzleiId via /me
-        const me = await apiFetch<{ mandanten: { kanzleiId: string }[] }>('/auth/me', {
-          headers,
-        });
-        const firstKanzlei = me.mandanten[0]?.kanzleiId;
+        // kanzleiId via /mandant → /mandant/:id
+        //
+        // Bugfix 2026-10-05: `/auth/me` liefert mandanten OHNE kanzleiId.
+        // `me.mandanten[0]?.kanzleiId` war damit immer undefined, und das
+        // `return` brach den ganzen Ladevorgang ab — der Assistent blieb
+        // dauerhaft leer. Dieselbe Annahme stand in SubscriptionView.
+        const firstKanzlei = token ? await resolveKanzleiId(token) : null;
         if (!firstKanzlei) {
           return;
         }

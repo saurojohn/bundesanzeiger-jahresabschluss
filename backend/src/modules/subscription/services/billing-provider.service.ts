@@ -112,7 +112,20 @@ class MockProvider implements BillingProvider {
     const sessionId = `mock_${Date.now()}_${args.kanzleiId.substring(0, 8)}`;
     // Im Mock-Mode leiten wir direkt auf success mit Tier-Param um.
     // Frontend erkennt den Mock-Mode und ruft /api/subscription/upgrade direkt.
-    const url = `${args.successUrl}?mock_session=${sessionId}&tier=${args.tier}&kanzlei=${args.kanzleiId}`;
+    //
+    // Bugfix 2026-10-05: hier stand ein festes `?`. Die successUrl kommt aus
+    // dem Frontend und enthält bereits einen Query
+    // (`…/subscription?upgrade=success`) — das Ergebnis war
+    // `…?upgrade=success?mock_session=mock_…&tier=…`. Alles zwischen dem
+    // ersten `?` und dem ersten `&` ist der WERT von `upgrade`, also:
+    //
+    //   new URL(url).searchParams.get('mock_session') → null
+    //
+    // Das Frontend schickte daraufhin einen leeren `mockSession` und die
+    // Aktivierung scheiterte mit HTTP 400. Die Trennung am Trennzeichen
+    // statt am Fragezeichen ist hier der ganze Unterschied.
+    const separator = args.successUrl.includes('?') ? '&' : '?';
+    const url = `${args.successUrl}${separator}mock_session=${sessionId}&tier=${args.tier}&kanzlei=${args.kanzleiId}`;
     return { url, sessionId };
   }
 

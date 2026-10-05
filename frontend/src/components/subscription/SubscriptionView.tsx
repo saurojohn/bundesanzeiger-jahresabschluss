@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken } from '@/lib/api';
+import { resolveKanzleiId } from '@/lib/kanzlei';
 
 type SubscriptionTier = 'PILOT' | 'STANDARD' | 'PREMIUM';
 type SubscriptionStatus =
@@ -88,10 +89,12 @@ export function SubscriptionView() {
         const token = getAccessToken();
         if (!token) return;
 
-        const me = await apiFetch<{ mandanten: { kanzleiId: string }[] }>('/auth/me', {
-          accessToken: token,
-        });
-        const firstKanzlei = me.mandanten[0]?.kanzleiId;
+        // `/auth/me` liefert mandanten OHNE kanzleiId (nur id, firmenname,
+        // rolle). `me.mandanten[0]?.kanzleiId` war daher immer `undefined`,
+        // kanzleiId blieb null — und `handleUpgrade` kehrt mit
+        // `if (!kanzleiId) return;` sofort wieder: die Tarif-Knöpfe waren
+        // sichtbar und aktiv, ohne jede Wirkung. Bugfix 2026-10-05.
+        const firstKanzlei = await resolveKanzleiId(token);
         if (firstKanzlei) setKanzleiId(firstKanzlei);
 
         // Tiers

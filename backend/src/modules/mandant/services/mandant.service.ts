@@ -106,12 +106,28 @@ export class MandantService {
     },
   ): Promise<PaginatedResult<Mandant> | Mandant[]> {
     const pageSize = Math.min(pagination?.pageSize ?? 100, 100);
-    const where: Prisma.MandantWhereInput =
-      user.globalRole === 'SYSTEM_ADMIN'
-        ? pagination?.kanzleiId
-          ? { kanzleiId: pagination.kanzleiId }
-          : {}
-        : { id: { in: user.mandanten.map((m) => m.id) } };
+    // Bugfix 2026-10-05: Die Liste zeigte nur Mandanten, die dem User
+    // ZUGEWIESEN sind. Ein neu angelegter Mandant gehoert zur Kanzlei, ist
+    // aber niemandem zugewiesen — der anlegende KANZLEI_ADMIN sah ihn
+    // deshalb in seiner eigenen Liste nicht, obwohl die Oberflaeche
+    // "Mandant erstellt" meldete. Anlegen schien wirkungslos.
+    //
+    // Der Rest des Moduls behandelt KANZLEI_ADMIN als kanzleiweite Rolle
+    // (assertKanzleiAdminAccess, branding.service, subscription.service,
+    // domain-verification.service, api-key.service). Die Liste war die
+    // einzige Stelle mit der engeren Regel — sie wird jetzt angeglichen.
+    const istKanzleiAdmin =
+      user.globalRole === 'SYSTEM_ADMIN' ||
+      user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+    const kanzleiId = istKanzleiAdmin
+      ? await this.resolveKanzleiId(user)
+      : null;
+
+    const where: Prisma.MandantWhereInput = istKanzleiAdmin
+      ? pagination?.kanzleiId || kanzleiId
+        ? { kanzleiId: pagination?.kanzleiId ?? kanzleiId! }
+        : {}
+      : { id: { in: user.mandanten.map((m) => m.id) } };
 
     // Backwards-Compat (M3-Regression-Fix): Ohne explizite Pagination liefern
     // wir ein flaches Array — so wie vor dem Cursor-Pagination-Rollout. Der
@@ -158,7 +174,7 @@ export class MandantService {
    * wird bei UPDATE/DELETE invalidiert.
    */
   async findOne(id: string, user: AuthUser): Promise<Mandant> {
-    this.assertMandantAccess(id, user);
+    await this.assertMandantAccess(id, user);
     const mandant = await this.cache.memoize(
       `mandant:${id}`,
       5 * 60_000,
@@ -181,7 +197,7 @@ export class MandantService {
     user: AuthUser,
     context: MandantContext,
   ): Promise<Mandant> {
-    this.assertMandantAccess(id, user);
+    await this.assertMandantAccess(id, user);
     const before = await this.prisma.mandant.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Mandant nicht gefunden');
 
@@ -227,7 +243,7 @@ export class MandantService {
    * Löscht einen Mandanten. Nur KANZLEI_ADMIN oder SYSTEM_ADMIN.
    */
   async delete(id: string, user: AuthUser, context: MandantContext): Promise<void> {
-    this.assertMandantAccess(id, user);
+    await this.assertMandantAccess(id, user);
     if (user.globalRole !== 'SYSTEM_ADMIN') {
       const isKanzleiAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
       if (!isKanzleiAdmin) {
@@ -275,10 +291,44 @@ export class MandantService {
   // Private helpers
   // ===========================================================================
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
+  /**
+   * Zugriff auf einen Mandanten.
+   *
+   * Bugfix 2026-10-05: Die Pruefung kannte nur Mandanten, die dem User
+   * ZUGEWIESEN sind. Ein frisch angelegter Mandant ist aber niemandem
+   * zugewiesen — der anlegende KANZLEI_ADMIN konnte ihn deshalb nicht
+   * einmal loeschen ("Kein Zugriff auf diesen Mandanten"), obwohl er ihn
+   * gerade erst erstellt hatte.
+   *
+   * KANZLEI_ADMIN verwaltet die Mandanten SEINER Kanzlei. Das ist die
+   * rollenweite Konvention des gesamten Moduls (branding.service,
+   * subscription.service, domain-verification.service, api-key.service) und
+   * gilt hier jetzt ebenfalls — mit einer DB-Pruefung, damit ein
+   * KANZLEI_ADMIN einer fremden Kanzlei weiterhin abgewiesen wird.
+   */
+  private async assertMandantAccess(
+    mandantId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
     const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
+    if (accessibleMandantIds.includes(mandantId)) return;
+
+    const istKanzleiAdmin = user.mandanten.some(
+      (m) => m.rolle === 'KANZLEI_ADMIN',
+    );
+    if (!istKanzleiAdmin) {
+      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
+    }
+
+    // Mandant muss in derselben Kanzlei liegen wie die des Users.
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { kanzleiId: true },
+    });
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+    const kanzleiId = await this.resolveKanzleiId(user);
+    if (mandant.kanzleiId !== kanzleiId) {
       throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
     }
   }

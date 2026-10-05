@@ -113,11 +113,31 @@ export class AuditIntegrityService {
       throw new Error(`AuditLog nicht gefunden: ${auditLogId}`);
     }
 
-    // Vorheriger Eintrag: der mit dem größten createdAt < current.createdAt
-    // Wir nehmen einen einfachen Index-Lookup statt Subquery.
+    // Vorheriger Eintrag — Bugfix 2026-10-05, zwei Fehler in EINER Zeile:
+    //
+    // (a) Es fehlte der `kanzleiId`-Filter. Die Kette lief damit über ALLE
+    //     Mandanten hinweg, während `verifyIntegrity()` je Kanzlei prüft.
+    //     Beide konnten nie übereinstimmen — die Prüfung meldete dauerhaft
+    //     BROKEN, sobald mehr als eine Kanzlei Audit-Einträge schrieb.
+    //
+    // (b) `createdAt: { lt }` überspringt Einträge mit IDENTISCHEM Zeitstempel.
+    //     Postgres schreibt createdAt mit Mikrosekunden; mehrere Einträge
+    //     innerhalb derselben Mikrosekunde (sehr wahrscheinlich bei einem
+    //     Sammel-Import) gelten für alle drei Prädikate als "gleichzeitig",
+    //     und keiner von ihnen wurde Vorgänger des anderen. Die Kette
+    //     übersprang sie lautlos.
+    //
+    // Die Reihenfolge ((createdAt, id)) ist damit eine TOTALORDNUNG und
+    // deckt sich mit der Sortierung in `verifyIntegrity()`.
     const previous = await this.prisma.auditLog.findFirst({
-      where: { createdAt: { lt: current.createdAt } },
-      orderBy: { createdAt: 'desc' },
+      where: {
+        kanzleiId: current.kanzleiId,
+        OR: [
+          { createdAt: { lt: current.createdAt } },
+          { createdAt: current.createdAt, id: { lt: current.id } },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { id: true, entryHash: true },
     });
 
@@ -156,7 +176,7 @@ export class AuditIntegrityService {
     fromDate?: Date;
     toDate?: Date;
   }): Promise<{
-    status: 'OK' | 'BROKEN' | 'PARTIAL';
+    status: 'OK' | 'BROKEN' | 'PARTIAL' | 'INCOMPATIBLE' | 'NO_ENTRIES';
     entriesChecked: number;
     brokenAt?: { auditLogId: string; expectedHash: string; actualHash: string };
     oldestUnhashedEntry?: string;
@@ -170,21 +190,32 @@ export class AuditIntegrityService {
       };
     }
 
-    // Alle Audit-Einträge chronologisch laden
+    // Alle Audit-Einträge chronologisch laden.
+    //
+    // Bugfix 2026-10-05: Nur nach `createdAt` zu sortieren ist KEINE
+    // Totalordnung — bei gleichen Zeitstempeln ist die Reihenfolge der DB
+    // nicht bestimmt. Die Verifikation lief dann durch eine andere
+    // Reihenfolge als der Schreibpfad in `computeHashForEntry()` und
+    // meldete BROKEN, obwohl die Kette in Ordnung war. `id` als
+    // Tie-Breaker macht beide Seiten deckungsgleich.
     const entries = await this.prisma.auditLog.findMany({
       where,
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
     if (entries.length === 0) {
-      return { status: 'OK', entriesChecked: 0 };
+      // Bugfix 2026-10-05: 'OK' bei 0 geprüften Einträgen war die
+      // gefährlichste Antwort der ganzen Kette — ein Audit-Trail, der
+      // nichts prüft, meldete sich als intakt. Für einen GoBD-Auditor ist
+      // "nichts zu prüfen" ein eigener Befund, kein bestandener Test.
+      return { status: 'NO_ENTRIES', entriesChecked: 0 };
     }
 
     let prevHash = AuditIntegrityService.GENESIS_HASH;
     let entriesChecked = 0;
     let oldestUnhashed: string | undefined;
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
        
       const entryAny = entry as any;
       const storedEntryHash = entryAny.entryHash as string | null | undefined;
@@ -209,8 +240,27 @@ export class AuditIntegrityService {
         .digest('hex');
 
       if (expectedHash !== storedEntryHash) {
+        // Bugfix 2026-10-05: "Hash stimmt nicht" heißt nicht automatisch
+        // " manipuliert". Einträge, die VOR der Korrektur der Kette
+        // geschrieben wurden (Vorgänger kanzleiübergreifend gesucht, keine
+        // Tie-Breaker-Reihenfolge), haben einen gespeicherten Hash, der sich
+        // nicht nachrechnen lässt — die Kette selbst ist dabei aber
+        // lückenlos verlinkt.
+        //
+        // Für einen GoBD-Auditor sind das zwei verschiedene Befunde:
+        //   BROKEN        = die Kette ist unterbrochen → echter Manipulations-
+        //                    oder Datenverlustverdacht, MUSS_eskaliert werden.
+        //   INCOMPATIBLE  = die Kette ist verlinkt, aber mit einem älteren
+        //                    Verfahren berechnet → known issue, dokumentations-
+        //                    pflichtig, KEIN Manipulationsverdacht.
+        //
+        // Vor dieser Unterscheidung meldete jede Bestandskette BROKEN und
+        // damit einen Manipulationsverdacht, wo keiner belegt war.
+        const linkedBySuccessor =
+          entries[index + 1]?.prevHash === storedEntryHash;
+
         return {
-          status: 'BROKEN',
+          status: linkedBySuccessor ? 'INCOMPATIBLE' : 'BROKEN',
           entriesChecked,
           brokenAt: {
             auditLogId: entry.id,

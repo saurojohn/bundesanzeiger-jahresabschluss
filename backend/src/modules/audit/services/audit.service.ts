@@ -89,6 +89,38 @@ export class AuditService {
    * GoBD-nachweislichen Eintrag nicht stillschweigend vernichten. Drei
    * Versuche mit exponentiellem Backoff; danach wirft die Methode.
    */
+  /**
+   * Ermittelt die kanzleiId zu einer mandantId.
+   *
+   * Bugfix 2026-10-05: Der `AuditInterceptor` uebergibt nur `mandantId`
+   * (`req.activeMandantId`) — `kanzleiId` war an KEINER Aufrufstelle
+   * gesetzt und landete deshalb konstant als `null` in der DB.
+   *
+   * Folge: `GET /api/audit/integrity?kanzleiId=…` filterte nach
+   * `kanzleiId` und fand nur die wenigen Eintrraege, die den Wert
+   * zufaellig ueber den Service direkt mitbekamen. Bei allen anderen
+   * Eintraege fand die Pruefung 0 Eintraege und meldete `status: "OK"` —
+   * ein Audit-Trail, der nichts prueft, aber intakt meldet. Das ist fuer
+   * eine GoBD-Nachweiskette die gefaehrlichste Form von "gruen".
+   *
+   * Die Aufloesung sitzt hier und nicht im Interceptor, damit sie fuer
+   * ALLE Aufrufstellen gilt (Interceptor, MandantService, BilanzService,
+   * SubscriptionService …). Der Lookup ist ein indexierter Lookup auf
+   * `Mandant.kanzleiId` und laeuft im ohnehin blockierenden Audit-Pfad.
+   */
+  private async resolveKanzleiId(
+    kanzleiId: string | null | undefined,
+    mandantId: string | null | undefined,
+  ): Promise<string | null> {
+    if (kanzleiId) return kanzleiId;
+    if (!mandantId) return null;
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { kanzleiId: true },
+    });
+    return mandant?.kanzleiId ?? null;
+  }
+
   private async writeWithRetry(
     args: Prisma.AuditLogCreateArgs,
     attempts = 3,
@@ -120,7 +152,7 @@ export class AuditService {
     try {
       const created = await this.writeWithRetry({
         data: {
-          kanzleiId: params.kanzleiId ?? null,
+          kanzleiId: await this.resolveKanzleiId(params.kanzleiId, params.mandantId),
           mandantId: params.mandantId ?? null,
           userId: params.userId ?? null,
           jahresabschlussId: params.jahresabschlussId ?? null,
@@ -178,7 +210,7 @@ export class AuditService {
     try {
       const created = await this.writeWithRetry({
         data: {
-          kanzleiId: params.kanzleiId ?? null,
+          kanzleiId: await this.resolveKanzleiId(params.kanzleiId, params.mandantId),
           mandantId: params.mandantId ?? null,
           userId: params.userId ?? null,
           jahresabschlussId: params.jahresabschlussId ?? null,

@@ -14,6 +14,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import type { AuditActionLiteral } from '../constants/audit-actions';
 import { isAuditAction } from '../constants/audit-actions';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../services/audit.service';
 import { AuditIntegrityService } from '../services/audit-integrity.service';
 
@@ -32,6 +33,7 @@ export class AuditController {
   constructor(
     private readonly auditService: AuditService,
     private readonly integrityService: AuditIntegrityService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get()
@@ -87,6 +89,43 @@ export class AuditController {
    * ca. 5-10 Sekunden. Nicht für Real-Time-UI geeignet; nur On-Demand
    * via Wirtschaftsprüfer-Tool oder GoBD-Audit-Job.
    */
+  /**
+   * Ermittelt die Kanzlei-IDs, für die der User die Integrität prüfen darf.
+   *
+   * Bugfix 2026-10-05: `user.mandanten` enthält MANDANT-UUIDs, keine
+   * Kanzlei-UUIDs. Der Controller hat daraus früher direkt eine "kanzleiId"
+   * gebaut — gefiltert wurde dann nach einer UUID, die keiner Kanzlei
+   * entspricht. Die Prüfung fand 0 Einträge und meldete `status: "OK"`.
+   *
+   * SYSTEM_ADMIN darf jede Kanzlei, alle anderen nur diejenigen, in denen
+   * sie einen Mandanten haben. Ein explizit angefragter `kanzleiId` wird nur
+   * übernommen, wenn er in dieser Menge liegt.
+   */
+  private async resolveKanzleiIds(
+    user: AuthUser,
+    angefragt?: string,
+  ): Promise<string[]> {
+    if (user.globalRole === 'SYSTEM_ADMIN') {
+      return angefragt ? [angefragt] : await this.prisma.kanzlei.findMany({
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      }).then((ks) => ks.map((k) => k.id));
+    }
+
+    const mandanten = await this.prisma.mandant.findMany({
+      where: { id: { in: user.mandanten.map((m) => m.id) } },
+      select: { kanzleiId: true },
+      orderBy: { kanzleiId: 'asc' },
+    });
+    const ids = [...new Set(mandanten.map((m) => m.kanzleiId))].filter(
+      (id): id is string => typeof id === 'string',
+    );
+    if (angefragt) {
+      return ids.includes(angefragt) ? [angefragt] : [];
+    }
+    return ids;
+  }
+
   @Get('integrity')
   @HttpCode(HttpStatus.OK)
   async verifyIntegrity(
@@ -95,7 +134,7 @@ export class AuditController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ): Promise<{
-    status: 'OK' | 'BROKEN' | 'PARTIAL';
+    status: 'OK' | 'BROKEN' | 'PARTIAL' | 'INCOMPATIBLE' | 'NO_ENTRIES';
     entriesChecked: number;
     brokenAt?: { auditLogId: string; expectedHash: string; actualHash: string };
     oldestUnhashedEntry?: string;
@@ -107,13 +146,14 @@ export class AuditController {
     // user.mandanten hat nur Mandant-IDs (kein kanzleiId-Feld), daher
     // schränken wir die Verifikation auf den ersten verfügbaren Mandant
     // ein. SYSTEM_ADMIN darf jede Kanzlei-ID prüfen.
-    let effectiveKanzleiId = kanzleiId;
-    if (user.globalRole !== 'SYSTEM_ADMIN') {
-      const allowedMandantId = user.mandanten[0]?.id;
-      // Wir nutzen den Mandant-Identifier als Kanzlei-Proxy (für SYSTEM_ADMIN
-      // gibt es keine Mandant-Einschränkung; KANZLEI_ADMIN darf nur eigene).
-      effectiveKanzleiId = kanzleiId && allowedMandantId ? kanzleiId : allowedMandantId;
-    }
+    // Bugfix 2026-10-05: Hier stand `user.mandanten[0].id` — eine MANDANT-UUID
+    // an der Stelle einer kanzleiId. Dieselbe Verwechslung wie im Branding-
+    // Service, nur mit umgekehrter Folge: statt zu viel freizugeben, wurde
+    // nach einer UUID gefiltert, die nie eine Kanzlei ist. Ergebnis: 0
+    // Einträge, `status: "OK"` — die Integritätsprüfung war für jeden
+    // Nicht-SYSTEM_ADMIN wirkungslos und meldete dabei „intakt".
+    const kanzleiIds = await this.resolveKanzleiIds(user, kanzleiId);
+    const effectiveKanzleiId = kanzleiIds[0];
     const result = await this.integrityService.verifyIntegrity({
       kanzleiId: effectiveKanzleiId,
       fromDate: from ? new Date(from) : undefined,

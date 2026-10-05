@@ -40,6 +40,43 @@
 > | Brandenzugriff (`PATCH /branding/:kanzleiId`) verglich `kanzleiId` gegen **Mandant-IDs** → für jeden `KANZLEI_ADMIN` gesperrt | Mandantentrennung |
 > | DNS-Verifikation lieferte 500 statt 503 bei fehlender Konfiguration | Betriebssicherheit |
 >
+> **Nachtrag 2026-10-05 (Nachtrag 4) — der schwerwiegendste Befund:**
+> Bei der Prüfung der Audit-Hash-Chain (GoBD Manipulationserkennung,
+> § 147 AO) waren **drei Fehler ineinander**, die zusammen die Nachweiskette
+> wirkungslos machten:
+>
+> 1. `kanzleiId` wurde an **keiner** Aufrufstelle gesetzt — der
+>    `AuditInterceptor` übergibt nur `mandantId`. Der Wert landete konstant
+>    als `null` in der Datenbank.
+> 2. Der Controller `GET /api/audit/integrity` baute daraus
+>    `user.mandanten[0].id` — eine **Mandant-UUID an der Stelle einer
+>    Kanzlei-UUID**. Gefiltert wurde nach einer ID, die keiner Kanzlei
+>    entspricht.
+> 3. Der Hash-Vorgänger wurde **kanzleiübergreifend** gesucht, während die
+>    Verifikation je Kanzlei prüft — die beiden Seiten konnten nie
+>    übereinstimmen.
+>
+> **Ergebnis im Betrieb:** Für jeden Nicht-SYSTEM_ADMIN fand die Prüfung
+> **0 Einträge** und meldete `status: "OK"`. Ein Audit-Trail, der nichts
+> prüft und dabei „intakt" meldet. Zusätzlich übersprang
+> `createdAt < current` Einträge mit identischem Zeitstempel, und jede
+> Bestandskette wurde pauschal als `BROKEN` gemeldet, was einen
+> Manipulationsverdacht suggerierte, wo keiner belegt war.
+>
+> Behoben: `kanzleiId` wird aus `mandantId` aufgelöst, die Kette ist je
+> Kanzlei getrennt und nutzt ((createdAt, id)) als Totalordnung, der
+> Controller löst echte Kanzlei-UUIDs auf. Neu sind die Status
+> `NO_ENTRIES` (nichts zu prüfen) und `INCOMPATIBLE` (Kette verlinkt, aber
+> mit älterem Verfahren berechnet) — damit ist „nichts geprüft" nicht mehr
+> von „geprüft und intakt" unterscheidbar.
+>
+> **Für den externen Audit heißt das:** Die Hash-Chain ist ab jetzt
+> technisch nachweisbar. Für Bestandsdaten, die vor dem Fix geschrieben
+> wurden, meldet sie `INCOMPATIBLE` — das ist dokumentationspflichtig und
+> KEIN Manipulationsverdacht. Eine Neuberechnung der Bestandskette wäre eine
+> Manipulation von Aufzeichnungen und darf ohne Freigabe des
+> Wirtschaftsprüfers nicht erfolgen.
+>
 > Diese Befunde widerlegen keine GoBD-Aussage dieses Berichts direkt,
 > zeigen aber dasselbe Muster wie der Nachtrag vom 2026-10-02: **✅ in
 > diesem Bericht bedeutet "zum Zeitpunkt der Prüfung belegt", nicht "dauerhaft
@@ -52,7 +89,7 @@
 > **kein** Nachweis. Maßgeblich ist, dass ein Test den Weg klickt, den ein
 > Anwender geht.
 
-**Audit-Datum**: 2026-09-25, Nachtrag 2026-10-02, Nachtrag 2026-10-05
+**Audit-Datum**: 2026-09-25, Nachtrag 2026-10-02, Nachtrag 2026-10-05 (2×)
 **Auditor (intern)**: DevOps + Compliance-Team
 **System-Version (Erstdurchgang)**: M4 Sprint 0+1+2+3+4+5, Commit `95dd932`
 **Selbstprüfung ist kein Normnachweis** (siehe TODO-8.3)

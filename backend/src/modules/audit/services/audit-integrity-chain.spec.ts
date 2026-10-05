@@ -48,11 +48,39 @@ function makePrismaMock(zeiten: Date[]) {
   // `findFirst` liefert den Vorgänger mit dem größten createdAt < given.
   // WICHTIG: der echte `update` schreibt den Hash in die DB — hier wird er
   // nur im Mock-Objekt gesetzt, damit der nächste Aufrufer ihn sieht.
+  // Bugfix 2026-10-05: Der Schreibpfad sucht den Vorgänger jetzt über
+  // ((createdAt, id)) als Totalordnung und zusätzlich gefiltert nach
+  // kanzleiId. Der Mock bildet beides ab — sonst prüft der Test einen Code,
+  // den es nicht mehr gibt.
   const findFirst = vi.fn(
-    ({ where }: { where: { createdAt: { lt: Date } } }) => {
-      const vorherige = eintraege
-        .filter((e) => e.createdAt < where.createdAt.lt)
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    ({
+      where,
+    }: {
+      where: {
+        kanzleiId?: string | null;
+        OR: Array<
+          | { createdAt: { lt: Date } }
+          | { createdAt: Date; id: { lt: string } }
+        >;
+      };
+    }) => {
+      const kanzleiFilter = where.kanzleiId;
+      const kandidaten = eintraege.filter((e) =>
+        kanzleiFilter == null ? true : e.kanzleiId === kanzleiFilter,
+      );
+      const istDavor = (x: (typeof eintraege)[number]): boolean =>
+        where.OR.some((z) =>
+          'createdAt' in z && z.createdAt instanceof Date && 'id' in z
+            ? x.createdAt.getTime() === z.createdAt.getTime() && x.id < z.id.lt
+            : x.createdAt < (z as { createdAt: { lt: Date } }).createdAt.lt,
+        );
+      const vorherige = kandidaten
+        .filter(istDavor)
+        .sort(
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            b.id.localeCompare(a.id),
+        );
       return Promise.resolve(
         vorherige.length ? { id: vorherige[0].id, entryHash: vorherige[0].entryHash } : null,
       );
@@ -66,7 +94,34 @@ function makePrismaMock(zeiten: Date[]) {
     return Promise.resolve({ ...e });
   });
 
-  return { mock: { auditLog: { findUnique, findFirst, update } } as never, eintraege };
+  // findMany fuer `verifyIntegrity()` — sortiert nach derselben Totalordnung
+  // ((createdAt, id)) wie der Schreibpfad.
+  const findMany = vi.fn(
+    ({
+      where,
+      orderBy,
+    }: {
+      where: Record<string, unknown>;
+      orderBy?: Array<{ createdAt?: 'asc' | 'desc'; id?: 'asc' | 'desc' }>;
+    }) => {
+      let treffer = eintraege.filter(
+        (e) => !where.kanzleiId || e.kanzleiId === where.kanzleiId,
+      );
+      const ob = orderBy?.[0] ?? { createdAt: 'asc' as const };
+      treffer = [...treffer].sort((a, b) => {
+        const c = a.createdAt.getTime() - b.createdAt.getTime();
+        const primary = ob.createdAt === 'desc' ? -c : c;
+        if (primary !== 0) return primary;
+        return ob.id === 'desc' ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id);
+      });
+      return Promise.resolve(treffer.map((e) => ({ ...e })));
+    },
+  );
+
+  return {
+    mock: { auditLog: { findUnique, findFirst, findMany, update } } as never,
+    eintraege,
+  };
 }
 
 describe('AuditIntegrityService — Race-Condition', () => {

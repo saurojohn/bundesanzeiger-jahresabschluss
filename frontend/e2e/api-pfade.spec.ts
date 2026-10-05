@@ -103,3 +103,45 @@ test.describe('API-Pfade im Quellbaum', () => {
     ).toHaveLength(0);
   });
 });
+
+/**
+ * Zweite Wächter-Instanz: rohe `fetch('/api/…')`-Aufrufe.
+ *
+ * Der erste Wächter prüft nur `apiFetch`. In fünf Stellen wird aber direkt
+ * `fetch` benutzt — dort entfällt `BASE_API` automatisch, und ein
+ * doppeltes `/api` fällt nicht mehr auf. Genau so entstanden schon zwei
+ * Fehler (`/api/api/subscription/…` und `/mandanten`).
+ */
+test.describe('Rohe fetch-Aufrufe', () => {
+  test('kein doppeltes /api in fetch-Aufrufen', () => {
+    const treffer: string[] = [];
+    for (const datei of alleDateien(SRC)) {
+      const inhalt = readFileSync(datei, 'utf8');
+      const muster = /fetch\(\s*[`'"](\/api[^`'"]*)[`'"]/g;
+      let m: RegExpExecArray | null;
+      while ((m = muster.exec(inhalt)) !== null) {
+        const pfad = m[1];
+        if (pfad.startsWith('/api/api/')) {
+          const zeile = inhalt.slice(0, m.index).split('\n').length;
+          treffer.push(`${datei.replace(`${process.cwd()}/`, '')}:${zeile} → ${pfad}`);
+        }
+      }
+    }
+    expect(treffer, 'ein doppeltes /api erzeugt /api/api/…:\n' + treffer.join('\n')).toHaveLength(0);
+  });
+
+  test('kein /api-Prefix in apiFetch-Aufrufen (Wächter 1, hier gegengeprüft)', () => {
+    const treffer: string[] = [];
+    for (const datei of alleDateien(SRC)) {
+      const inhalt = readFileSync(datei, 'utf8');
+      // apiFetch verdoppelt NICHT — es setzt BASE_API davor. Ein hier
+      // enthaltenes '/api' wäre ein Fehler (siehe /tmp/oauth-Sonden).
+      const muster = /apiFetch(?:<[^>]*>)?\(\s*[`'"]\/api\//g;
+      if (muster.test(inhalt)) {
+        const zeile = inhalt.slice(0, muster.exec(inhalt)!.index).split('\n').length;
+        treffer.push(`${datei.replace(`${process.cwd()}/`, '')}:${zeile}`);
+      }
+    }
+    expect(treffer, 'apiFetch setzt /api selbst voran:\n' + treffer.join('\n')).toHaveLength(0);
+  });
+});

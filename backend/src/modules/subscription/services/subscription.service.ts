@@ -245,15 +245,32 @@ export class SubscriptionService {
     await this.prisma.kanzlei.update({
       where: { id: kanzleiId },
       data: {
-        // Schema-Felder — falls Migration noch nicht durch ist, werden diese
-        // vom Prisma-Generator als unbekannt markiert. Daher dynamisch via raw SQL:
+        // Bugfix 2026-10-05: `data` war LEER. Der Tier-Wechsel schrieb
+        // nichts; das `.catch()` darunter schluckte jeden Fehler und
+        // meldete Erfolg. Folge: `mockActivate`, `checkout`, der
+        // Stripe-Webhook und `cancel` waren stille No-Ops mit HTTP 200 —
+        // eine Kanzlei konnte nie einen bezahlten Tarif erreichen.
+        //
+        // Die Feldnamen stammen aus dem Prisma-Schema (model Kanzlei):
+        // `subscriptionTier`, `subscriptionStatus`, … NICHT `tier`/`status` —
+        // siehe das weiter unten liegende `KanzleiSubscriptionData`, das die
+        // Logik in der Domäne abbildet, nicht den DB-Spaltennamen.
+        subscriptionTier: effectiveTier,
+        subscriptionStatus: status,
+        subscriptionProvider: providerName,
+        subscriptionProviderId: _providerSubscriptionId,
+        ...( _periodEnd !== undefined
+          ? { subscriptionPeriodEnd: _periodEnd }
+          : {}),
       },
-    }).catch(() => {
-      // Fallback: wenn Schema-Felder fehlen, loggen wir nur.
-      this.logger.warn(
-        `Subscription-Update für ${kanzleiId} nicht möglich — Schema-Migration erforderlich. ` +
-          'Siehe Sprint 3 Schema-Migration: backend/prisma/migrations/<timestamp>_add_subscription_fields/',
+    }).catch((err: unknown) => {
+      // Kein Verschlucken mehr: ein fehlgeschlagener Tier-Wechsel ist ein
+      // Serverfehler, kein Grund fuer eine Erfolgsmeldung. Wir protokollieren
+      // und werfen weiter.
+      this.logger.error(
+        `Subscription-Update fuer ${kanzleiId} fehlgeschlagen: ${String(err)}`,
       );
+      throw err;
     });
 
     await this.cache.invalidate(`subscription:${kanzleiId}`);
@@ -270,19 +287,35 @@ export class SubscriptionService {
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
 
-    const data = (kanzlei as unknown as Partial<KanzleiSubscriptionData>);
-    const tier: SubscriptionTier = data.tier ?? 'PILOT';
-    const status: SubscriptionStatus = data.status ?? 'TRIALING';
+    // Bugfix 2026-10-05: Der Read griff auf `data.tier` / `data.status`
+    // zu. Die DB-Spalten heißen `subscriptionTier` / `subscriptionStatus`
+    // (model Kanzlei, schema.prisma) und werden NICHT umbenannt. Damit
+    // war `tier` immer undefined und es griffen durchweg die
+    // Spalten-Defaults (PILOT/TRIALING) — ein gespeicherter Premium-Tier
+    // wäre nie angekommen. `KanzleiSubscriptionData` bildet die Domaene ab,
+    // nicht die DB-Struktur; deshalb wird hier bewusst direkt gelesen.
+    const k = kanzlei as unknown as {
+      subscriptionTier?: string | null;
+      subscriptionStatus?: string | null;
+      subscriptionProvider?: string | null;
+      subscriptionProviderId?: string | null;
+      subscriptionPeriodEnd?: Date | null;
+      subscriptionCancelAtEnd?: boolean | null;
+    };
+    const tier = (k.subscriptionTier ?? 'PILOT') as SubscriptionTier;
+    const status = (k.subscriptionStatus ?? 'TRIALING') as SubscriptionStatus;
     const tierConfig = this.featureFlags.getTierConfig(tier);
 
     return {
       kanzleiId,
       tier,
       status,
-      providerName: data.providerName ?? this.billingProvider.getProviderName(),
-      providerSubscriptionId: data.providerSubscriptionId ?? null,
-      currentPeriodEnd: data.currentPeriodEnd ?? null,
-      cancelAtPeriodEnd: data.cancelAtPeriodEnd ?? false,
+      providerName:
+        (k.subscriptionProvider as 'stripe' | 'mock' | null | undefined) ??
+        this.billingProvider.getProviderName(),
+      providerSubscriptionId: k.subscriptionProviderId ?? null,
+      currentPeriodEnd: k.subscriptionPeriodEnd ?? null,
+      cancelAtPeriodEnd: k.subscriptionCancelAtEnd ?? false,
       maxMandanten: tierConfig.maxMandanten === Number.POSITIVE_INFINITY ? -1 : tierConfig.maxMandanten,
       features: this.featureFlags.getFeatures(tier),
       updatedAt: new Date(),

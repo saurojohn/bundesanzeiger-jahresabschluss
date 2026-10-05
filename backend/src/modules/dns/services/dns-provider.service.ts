@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { promises as dns } from 'dns';
 
@@ -139,7 +144,16 @@ class HetznerDnsProvider implements DnsProvider {
 
   async createTxtRecord(args: { name: string; value: string; ttl?: number }): Promise<DnsTxtRecord> {
     if (!this.zoneId) {
-      throw new Error('HETZNER_DNS_ZONE_ID nicht gesetzt');
+      // Bugfix 2026-10-05: hier stand ein nackter `Error` → HTTP 500
+      // "Internal server error". Fehlende DNS-Konfiguration ist aber weder
+      // ein Fehler des Aufrufers noch ein Serverdefekt, sondern ein
+      // Nicht-verfüger-Zustand der Instanz. In jedem Deployment ohne
+      // Hetzner-DNS-Zugang (Dev/Pilot) lieferte "Erneut prüfen" damit 500
+      // statt einer verständlichen Meldung.
+      throw new ServiceUnavailableException(
+        'DNS-Provider ist nicht konfiguriert (HETZNER_DNS_ZONE_ID fehlt). ' +
+          'Die Domain-Verifikation kann in dieser Umgebung nicht durchgeführt werden.',
+      );
     }
     const res = await fetch(`${this.baseUrl}/records`, {
       method: 'POST',
@@ -179,7 +193,16 @@ class HetznerDnsProvider implements DnsProvider {
 
   async listTxtRecords(name: string): Promise<DnsTxtRecord[]> {
     if (!this.zoneId) {
-      throw new Error('HETZNER_DNS_ZONE_ID nicht gesetzt');
+      // Bugfix 2026-10-05: hier stand ein nackter `Error` → HTTP 500
+      // "Internal server error". Fehlende DNS-Konfiguration ist aber weder
+      // ein Fehler des Aufrufers noch ein Serverdefekt, sondern ein
+      // Nicht-verfüger-Zustand der Instanz. In jedem Deployment ohne
+      // Hetzner-DNS-Zugang (Dev/Pilot) lieferte "Erneut prüfen" damit 500
+      // statt einer verständlichen Meldung.
+      throw new ServiceUnavailableException(
+        'DNS-Provider ist nicht konfiguriert (HETZNER_DNS_ZONE_ID fehlt). ' +
+          'Die Domain-Verifikation kann in dieser Umgebung nicht durchgeführt werden.',
+      );
     }
     const url = `${this.baseUrl}/records?zone_id=${this.zoneId}&name=${encodeURIComponent(name)}&type=TXT`;
     const res = await fetch(url, { headers: this.getHeaders() });

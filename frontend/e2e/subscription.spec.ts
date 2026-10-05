@@ -38,8 +38,18 @@ test('Subscription: Tarif wechseln → Checkout-Antwort ohne /api/api-Doppelprä
   await page.goto('http://localhost:3001/de-DE/einstellungen/subscription');
   await page.waitForTimeout(3000);
 
-  const aktualisieren = page.getByRole('button', { name: /Auf Premium aktualisieren/i });
-  await expect(aktualisieren, 'es muss eine Tarif-Aktion geben').toBeVisible();
+  // Nicht auf "Auf Premium aktualisieren" festlegen: Ist die Kanzlei schon
+  // PREMIUM, gibt es diesen Knopf nicht (`isCurrent` blendet ihn aus), und
+  // der Test scheitert an seinem eigenen Zustand — die Kopplung entstand
+  // durch den Custom-Domain-Test, der die Kanzlei auf PREMIUM hebt.
+  // Deshalb: irgendeinen angebotenen Tarifwechsel nehmen.
+  const aktualisieren = page
+    .getByRole('button', { name: /^Auf .+ aktualisieren$/i })
+    .first();
+  await expect(
+    aktualisieren,
+    'es muss mindestens eine Tarif-Aktion geben (die Kanzlei hat sonst schon den höchsten Tarif)',
+  ).toBeVisible();
 
   const checkout = page.waitForResponse(
     (r) => r.request().method() === 'POST' && r.url().includes('/checkout'),

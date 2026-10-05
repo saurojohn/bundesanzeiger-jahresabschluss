@@ -176,7 +176,7 @@ export class AuditIntegrityService {
     fromDate?: Date;
     toDate?: Date;
   }): Promise<{
-    status: 'OK' | 'BROKEN' | 'PARTIAL' | 'INCOMPATIBLE' | 'NO_ENTRIES';
+    status: 'OK' | 'BROKEN' | 'PARTIAL' | 'NO_ENTRIES';
     entriesChecked: number;
     brokenAt?: { auditLogId: string; expectedHash: string; actualHash: string };
     oldestUnhashedEntry?: string;
@@ -215,7 +215,7 @@ export class AuditIntegrityService {
     let entriesChecked = 0;
     let oldestUnhashed: string | undefined;
 
-    for (const [index, entry] of entries.entries()) {
+    for (const entry of entries) {
        
       const entryAny = entry as any;
       const storedEntryHash = entryAny.entryHash as string | null | undefined;
@@ -240,27 +240,22 @@ export class AuditIntegrityService {
         .digest('hex');
 
       if (expectedHash !== storedEntryHash) {
-        // Bugfix 2026-10-05: "Hash stimmt nicht" heißt nicht automatisch
-        // " manipuliert". Einträge, die VOR der Korrektur der Kette
-        // geschrieben wurden (Vorgänger kanzleiübergreifend gesucht, keine
-        // Tie-Breaker-Reihenfolge), haben einen gespeicherten Hash, der sich
-        // nicht nachrechnen lässt — die Kette selbst ist dabei aber
-        // lückenlos verlinkt.
+        // KEINE Unterscheidung "INCOMPATIBLE" — bewusst verworfen
+        // (2026-10-05). Der Versuch, Altketten über den prevHash des
+        // Nachfolgers von echter Manipulation zu trennen, hat den
+        // bestehenden Test "erkennt eine nachträgliche Manipulation"
+        // umgeworfen: Wird B.entryHash nachträglich verändert, zeigt der
+        // Nachfolger C.prevHash IMMER noch auf den unveränderten Wert —
+        // eine echte Manipulation sieht damit exakt aus wie eine Altkette.
         //
-        // Für einen GoBD-Auditor sind das zwei verschiedene Befunde:
-        //   BROKEN        = die Kette ist unterbrochen → echter Manipulations-
-        //                    oder Datenverlustverdacht, MUSS_eskaliert werden.
-        //   INCOMPATIBLE  = die Kette ist verlinkt, aber mit einem älteren
-        //                    Verfahren berechnet → known issue, dokumentations-
-        //                    pflichtig, KEIN Manipulationsverdacht.
-        //
-        // Vor dieser Unterscheidung meldete jede Bestandskette BROKEN und
-        // damit einen Manipulationsverdacht, wo keiner belegt war.
-        const linkedBySuccessor =
-          entries[index + 1]?.prevHash === storedEntryHash;
-
+        // Das hätte genau die Verhaltensweise erzeugt, die dieser Bericht
+        // vermeiden soll: Manipulationsverdacht als "bekannter Fall"
+        // einstufen. Sicherheitsprüfungen müssen FALL-OPEN sein — im
+        // Zweifel BROKEN. Eine Altkette braucht eine dokumentierte
+        // Neuberechnung mit Freigabe des Wirtschaftsprüfers, keine
+        // automatische Einstufung.
         return {
-          status: linkedBySuccessor ? 'INCOMPATIBLE' : 'BROKEN',
+          status: 'BROKEN',
           entriesChecked,
           brokenAt: {
             auditLogId: entry.id,

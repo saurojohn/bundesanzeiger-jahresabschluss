@@ -134,7 +134,7 @@ export class AuditController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ): Promise<{
-    status: 'OK' | 'BROKEN' | 'PARTIAL' | 'INCOMPATIBLE' | 'NO_ENTRIES';
+    status: 'OK' | 'BROKEN' | 'PARTIAL' | 'NO_ENTRIES';
     entriesChecked: number;
     brokenAt?: { auditLogId: string; expectedHash: string; actualHash: string };
     oldestUnhashedEntry?: string;

@@ -14,10 +14,26 @@ type HgbPosition = {
   gruppe?: string; // "A" | "B" | "C" | ...
 };
 
-type HgbSchema = {
-  aktiva: HgbPosition[];
-  passiva: HgbPosition[];
+type HgbSchemaPosition = {
+  id: string;
+  kontonummer: string;
+  bezeichnung: string;
+  seite: 'AKTIVA' | 'PASSIVA';
+  gruppe: string;
 };
+
+/**
+ * `GET /api/bilanz/schema` liefert ein FLACHES Array aller
+ * HGB-Positionen mit `seite` — nicht `{ aktiva: [], passiva: [] }`.
+ *
+ * Bugfix 2026-10-05: Der Typ behauptete die Objektform. Beim Anlegen einer
+ * neuen Bilanz lief `schemaData.aktiva.map(...)` in einen TypeError:
+ * „Cannot read properties of undefined (reading 'map')" — als rotes Band
+ * in einer deutschen Oberfläche, 0 Positionszeilen, und der Knopf
+ * „Speichern" blieb AKTIV. Ergebnis: eine leere Jahresbilanz ließ sich
+ * anlegen und wanderte in E-Bilanz und Bundesanzeiger-Meldung.
+ */
+type HgbSchema = HgbSchemaPosition[];
 
 type BilanzPosition = {
   id?: string;
@@ -134,25 +150,16 @@ export function BilanzForm({
           setRelatedIds(related);
         }
       } else {
-        // Initial positionen aus Schema
-        const initial: BilanzPosition[] = [
-          ...schemaData.aktiva.map((p, idx) => ({
-            kontonummer: `${p.kontonummerPrefix}${String(idx + 1).padStart(2, '0')}`,
-            bezeichnung: p.bezeichnung,
-            seite: 'AKTIVA' as const,
-            betragVorjahr: null,
-            betragAktuell: 0,
-            reihenfolge: idx + 1,
-          })),
-          ...schemaData.passiva.map((p, idx) => ({
-            kontonummer: `${p.kontonummerPrefix}${String(idx + 1).padStart(2, '0')}`,
-            bezeichnung: p.bezeichnung,
-            seite: 'PASSIVA' as const,
-            betragVorjahr: null,
-            betragAktuell: 0,
-            reihenfolge: schemaData.aktiva.length + idx + 1,
-          })),
-        ];
+        // Initial positionen aus Schema. Die API liefert EIN flaches
+        // Array mit `seite` je Position (siehe HgbSchema).
+        const initial: BilanzPosition[] = schemaData.map((p, idx) => ({
+          kontonummer: p.kontonummer,
+          bezeichnung: p.bezeichnung,
+          seite: p.seite,
+          betragVorjahr: null,
+          betragAktuell: 0,
+          reihenfolge: idx + 1,
+        }));
         setPositionen(initial);
       }
     } catch (err) {

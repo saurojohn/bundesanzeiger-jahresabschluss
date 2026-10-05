@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
+import { alsNutzerMeldung } from '@/lib/api';
 
 type LoginState = 'idle' | 'submitting' | 'totp_required' | 'error';
 
@@ -31,6 +32,13 @@ export function LoginForm() {
         }),
       });
 
+      // Bugfix 2026-10-05: apiFetch leitet bei 401 zum Login um (?expired=1).
+      // Der Hinweis wird hier einmalig angezeigt, damit der Benutzer weiß,
+      // WARUM er erneut angemeldet werden muss.
+      if (new URLSearchParams(window.location.search).has('expired')) {
+        setErrorMessage(t('auth.sessionExpired'));
+      }
+
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         setState('error');
@@ -52,8 +60,16 @@ export function LoginForm() {
       // Redirect to dashboard
       router.push('/de-DE/dashboard');
     } catch (err) {
+      // Bugfix 2026-10-05: Der Fehler wurde hier vollstaendig verworfen und
+      // durch einen generischen Text ersetzt. Jede Verbindungsstoerung auf
+      // der Anmeldeseite — dem wichtigsten Bildschirm des Produkts — zeigte
+      // "Ein unbekannter Fehler ist aufgetreten", unabhaengig von der
+      // tatsaechlichen Ursache. Die konkrete Meldung aus `apiFetch`
+      // (deutsch, mit Handlungshinweis) wird jetzt genutzt.
       setState('error');
-      setErrorMessage(t('auth.login.errors.unknown'));
+      setErrorMessage(
+        alsNutzerMeldung(err) || t('auth.login.errors.unknown'),
+      );
     }
   }
 

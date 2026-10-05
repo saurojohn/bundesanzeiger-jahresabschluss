@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { PublicApiRepository } from '../api.repository';
 import { AuditService } from '../../audit/services/audit.service';
 import {
@@ -98,6 +99,7 @@ export class ApiKeyService {
     private readonly auditService: AuditService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ===========================================================================
@@ -116,7 +118,7 @@ export class ApiKeyService {
     user: AuthUser,
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<CreateApiKeyResponseDto> {
-    this.assertKanzleiAdminAccess(args.kanzleiId, user);
+    await this.assertKanzleiAdminAccess(args.kanzleiId, user);
 
     // Scopes validieren
     const validScopes: APIScope[] = [];
@@ -202,7 +204,7 @@ export class ApiKeyService {
    * Liste API-Keys einer Kanzlei (maskierte DTOs, OHNE plaintextSecret).
    */
   async listApiKeys(kanzleiId: string, user: AuthUser): Promise<ApiKeyDto[]> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
     const keys = await this.repository.findApiKeysByKanzlei(kanzleiId);
     return keys.map((k) => this.toDto(k));
   }
@@ -218,7 +220,7 @@ export class ApiKeyService {
     const key = await this.repository.findApiKeyById(apiKeyId);
     if (!key) throw new NotFoundException('API-Key nicht gefunden');
 
-    this.assertKanzleiAdminAccess(key.kanzleiId, user);
+    await this.assertKanzleiAdminAccess(key.kanzleiId, user);
 
     await this.repository.revokeApiKey(apiKeyId, user.id);
 
@@ -380,7 +382,19 @@ export class ApiKeyService {
   /**
    * Erzwingt KANZLEI_ADMIN- oder SYSTEM_ADMIN-Zugriff auf eine Kanzlei.
    */
-  private assertKanzleiAdminAccess(kanzleiId: string, user: AuthUser): void {
+  /**
+   * Bugfix 2026-10-05: Der Parameter `kanzleiId` wurde mit `void
+   * kanzleiId;` weggeworfen — der Kommentar begründete das als
+   * "pragmatisch": jeder KANZLEI_ADMIN dürfe die API-Keys "seiner"
+   * Kanzlei verwalten. Geprüft wurde aber gar nichts, also auch nicht
+   * "seiner": ein Admin aus Kanzlei A konnte einen API-Key für Kanzlei B
+   * anlegen und deren Daten über die Public API lesen. `revokeApiKey`
+   * lud den Key zudem per `findApiKeyById` ohne kanzleiId-Filter.
+   */
+  private async assertKanzleiAdminAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
     const isKanzleiAdmin = user.mandanten.some(
       (m) => m.rolle === 'KANZLEI_ADMIN',
@@ -389,6 +403,14 @@ export class ApiKeyService {
       throw new ForbiddenException(
         'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf API-Keys verwalten',
       );
+    }
+    // Ziel-Kanzlei muss eine sein, in der der User einen Mandanten hat.
+    const mandant = await this.prisma.mandant.findFirst({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+      select: { id: true },
+    });
+    if (!mandant) {
+      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
     }
     // Mandant-Trennung: User muss einen Mandanten der Kanzlei haben.
     // Da user.mandanten nur Mandant-IDs enthält, prüfen wir pragmatisch:

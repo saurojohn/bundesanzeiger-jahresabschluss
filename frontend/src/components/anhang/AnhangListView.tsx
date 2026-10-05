@@ -426,17 +426,24 @@ function AnhangForm({
             className="bg-white rounded-lg border border-slate-200 p-4"
           >
             <div className="flex items-start justify-between gap-3 mb-2">
+              {/* Bugfix 2026-10-05: Das Titelfeld war editierbar, die
+                  Textarea daneben gesperrt. Der PATCH lässt `abschnitte`
+                  bei gesperrten Datensätzen weg — der Benutzer änderte den
+                  Titel, speicherte, sah „Erfolg" und die Änderung war
+                  weg. Stiller Datenverlust ohne jede Meldung. */}
               <input
                 type="text"
+                disabled={abschnitteSperre}
                 value={a.titel}
                 onChange={(e) => updateAbschnitt(idx, { titel: e.target.value })}
                 placeholder={t('anhang.fields.titel')}
-                className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-50 disabled:text-slate-500"
               />
               <button
                 type="button"
+                disabled={abschnitteSperre}
                 onClick={() => removeAbschnitt(idx)}
-                className="text-xs text-red-600 hover:text-red-700"
+                className="text-xs text-red-600 hover:text-red-700 disabled:opacity-50"
               >
                 {t('anhang.actions.deleteAbschnitt')}
               </button>

@@ -52,9 +52,11 @@ export class BrandingController {
   @Get(':kanzleiId')
   getBranding(
     @Param('kanzleiId', new ParseUUIDPipe({ version: '4' })) kanzleiId: string,
-    @CurrentUser() _user: AuthUser,
+    @CurrentUser() user: AuthUser,
   ): ReturnType<BrandingService['getBranding']> {
-    return this.brandingService.getBranding(kanzleiId);
+    // Bugfix 2026-10-05: `user` wurde als `_user` empfangen und verworfen —
+    // der Lese-Pfad prüfte die Kanzlei-Zugehörigkeit nicht.
+    return this.brandingService.getBranding(kanzleiId, user);
   }
 
   /**

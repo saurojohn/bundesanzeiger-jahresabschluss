@@ -40,6 +40,25 @@
 > | Brandenzugriff (`PATCH /branding/:kanzleiId`) verglich `kanzleiId` gegen **Mandant-IDs** → für jeden `KANZLEI_ADMIN` gesperrt | Mandantentrennung |
 > | DNS-Verifikation lieferte 500 statt 503 bei fehlender Konfiguration | Betriebssicherheit |
 >
+> **Nachtrag 2026-10-05 (Nachtrag 5) — Mandantentrennung und
+> Datenintegrität:** Eine systematische Prüfung aller mandantenbezogenen
+> Routen auf Cross-Tenant-Zugriffe fand **sieben** weitere Defekte:
+>
+> | Befund | Wirkung |
+> |---|---|
+> | `SubscriptionService.assertKanzleiReadAccess` war `void` und warf in einer `.then()`-Promise | **Datenleck + Dienstausfall**: ein normaler Leseaufruf auf eine fremde Kanzlei lieferte deren Daten UND beendete den Node-Prozess (`unhandledRejection`) |
+> | `BrandingService.getBranding` nahm keinen `user`; der Controller verwarf ihn als `_user` | Branding jeder Kanzlei für jeden angemeldeten Benutzer lesbar |
+> | `KonsolidierungService` filterte nur nach `kanzleiId` | Mandanten konnten Konsolidierungen fremder Mandanten derselben Kanzlei einsehen (GuV-Ergebnis, Salden) |
+> | `ApiKeyService.assertKanzleiAdminAccess` verwarf `kanzleiId` mit `void kanzleiId;` | API-Keys für fremde Kanzleien anlegbar; Daten über die Public API abrufbar |
+> | `GET /bilanz/schema` und `/guv/schema` liefern ein flaches Array, das Frontend erwartete `{aktiva,passiva}` bzw. `{positionen}` | Neue Bilanz crashte mit englischem TypeError, **neue GuV wurde mit 0 Positionen angelegt** — ohne jede Meldung |
+> | Gesperrte Datensätze: Betrags-/Titelfelder editierbar, obwohl der PATCH sie weglässt | **Stiller Datenverlust** bei gemeldetem Erfolg |
+> | `JahresabschlussView`: `.catch(() => [])` | Jeder Serverausfall sah aus wie „noch kein Abschluss vorhanden" |
+>
+> Sicherheitsrelevant ist vor allem der Dienstausfall: **ein angemeldeter
+> Benutzer konnte den Betrieb mit einem einzigen Leseaufruf anhalten** —
+> das ist ein Verfügbarkeitsrisiko der Produktionsstufe, keine
+> Komfortfrage.
+>
 > **Nachtrag 2026-10-05 (Nachtrag 4) — der schwerwiegendste Befund:**
 > Bei der Prüfung der Audit-Hash-Chain (GoBD Manipulationserkennung,
 > § 147 AO) waren **drei Fehler ineinander**, die zusammen die Nachweiskette

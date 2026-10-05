@@ -99,7 +99,20 @@ export class BrandingService {
    * DEFAULT_BRANDING verwendet. Dadurch müssen Pilot-Kanzleien nicht
    * migriert werden — sie sehen automatisch das aktuelle Design.
    */
-  async getBranding(kanzleiId: string): Promise<KanzleiBrandingDto> {
+  /**
+   * Branding einer Kanzlei lesen — mit Tenant-Pruefung.
+   *
+   * Bugfix 2026-10-05: `getBranding` nahm keinen `user` und rief
+   * `assertKanzleiReadAccess` nicht auf. Der Controller holte den User als
+   * `_user` und verwarf ihn. `GET /api/branding/<fremde-kanzleiId>` lieferte
+   * daher 200 mit den Branding-Daten einer fremden Kanzlei — der Lese-Pfad
+   * war ungeschuetzt, obwohl `assertKanzleiReadAccess` existierte und der
+   * Schreib-Pfad ihn korrekt verwendete.
+   */
+  async getBranding(kanzleiId: string, user?: AuthUser): Promise<KanzleiBrandingDto> {
+    // await ist Pflicht: die Methode ist async — ohne await landet die
+    // Ablehnung in einer verwaisten Promise und beendet den Prozess.
+    if (user) await this.assertKanzleiReadAccess(kanzleiId, user);
     return this.cache.memoize(
       `branding:${kanzleiId}`,
       60 * 60 * 1000, // 1h

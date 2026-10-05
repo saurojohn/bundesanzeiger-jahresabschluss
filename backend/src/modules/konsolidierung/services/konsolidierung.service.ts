@@ -190,7 +190,18 @@ export class KonsolidierungService {
       buchungenByEinheit.set(b.einheitId, arr);
     }
 
-    return einheiten.map((e) =>
+    // Mandant-Trennung auch in der Liste: Einheiten ohne Beteiligung des
+    // Users werden nicht ausgegeben (siehe assertBeteiligung).
+    const sichtbar = einheiten.filter((e) => {
+      if (user.globalRole === 'SYSTEM_ADMIN') return true;
+      const erlaubt = new Set(user.mandanten.map((m) => m.id));
+      return (
+        erlaubt.has(e.mutterMandantId) ||
+        e.tochterMandantIds.some((id) => erlaubt.has(id))
+      );
+    });
+
+    return sichtbar.map((e) =>
       this.toResponseDto({
         ...e,
         buchungen: buchungenByEinheit.get(e.id) ?? [],
@@ -608,6 +619,18 @@ export class KonsolidierungService {
    * Lädt eine Einheit für den User (mit Kanzlei-Filter) inklusive Buchungen.
    * Wirft NotFoundException, falls nicht in der Kanzlei des Users.
    */
+  /**
+   * Bugfix 2026-10-05: Der Zugriff lief allein ueber die KANZLEI des ersten
+   * Mandanten. Eine Konsolidierungs-Einheit gehoert aber zur Mutter ODER zu
+   * den Toechtern — ein Benutzer mit einem Mandant der Kanzlei sah deshalb
+   * Einheiten, deren GuV- und Saldendaten aus Mandanten bestanden, auf die
+   * er keinen Zugriff hat (empirisch: 3 Einheiten inkl. Konzern-GuV-Ergebnis
+   * einer fremden Mandantin).
+   *
+   * Neu: Der Benutzer muss mindestens an EINEM beteiligten Mandanten
+   * berechtigt sein. Das ist die fachliche Bedingung — wer an der
+   * Konsolidierung teilnimmt, darf sie sehen.
+   */
   private async loadEinheitForUser(einheitId: string, user: AuthUser): Promise<KonsolidierungsEinheitEntity> {
     const kanzleiId = await this.resolveKanzleiId(user);
     const einheit = await this.konsolidierungRepository.findWithBuchungen(
@@ -617,7 +640,28 @@ export class KonsolidierungService {
     if (!einheit) {
       throw new NotFoundException('Konsolidierungs-Einheit nicht gefunden');
     }
+    this.assertBeteiligung(einheit, user);
     return einheit;
+  }
+
+  /**
+   * Erzwingt Mandant-Trennung fuer Lesepfade: mindestens EIN beteiligter
+   * Mandant muss zum User gehoeren (Mutter oder Tochter).
+   */
+  private assertBeteiligung(
+    einheit: { mutterMandantId: string; tochterMandantIds: string[] },
+    user: AuthUser,
+  ): void {
+    if (user.globalRole === 'SYSTEM_ADMIN') return;
+    const erlaubt = new Set(user.mandanten.map((m) => m.id));
+    const beteiligt =
+      erlaubt.has(einheit.mutterMandantId) ||
+      einheit.tochterMandantIds.some((id) => erlaubt.has(id));
+    if (!beteiligt) {
+      throw new ForbiddenException(
+        'Kein Zugriff auf diese Konsolidierungs-Einheit',
+      );
+    }
   }
 
   /**

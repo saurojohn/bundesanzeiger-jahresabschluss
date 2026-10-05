@@ -31,12 +31,25 @@ export function JahresabschlussView() {
       const token = getAccessToken();
       const mandantId = getActiveMandantId();
       if (!token || !mandantId) return;
-      // Backend-Jahresabschluss-Endpoint existiert noch nicht
-      // Fallback: leere Liste mit Hinweis
+      // Bugfix 2026-10-05: Das `.catch(() => [])` hier hat JEDEN
+      // Serverfehler in eine leere Liste verwandelt. Ein Ausfall, ein 500
+      // oder ein fehlgeschlagener Aufruf sah für den Anwender exakt aus wie
+      // „noch kein Jahresabschluss vorhanden" — und das äußere `catch`
+      // darunter war toter Code.
+      //
+      // Der Endpoint existiert weiterhin nicht (404). Der Unterschied:
+      // ein 404 ist der erwartete Fall und wird als Leerzustand gezeigt,
+      // jeder ANDERE Fehler ist ein Fehler und wird als solcher gemeldet.
+      // Der Benutzer muss unterscheiden können zwischen „gibt es noch
+      // keinen" und „das System ist gerade ausgefallen".
       const result = await apiFetch<JahresabschlussSummary[]>(
         `/jahresabschluss?mandantId=${mandantId}`,
         { accessToken: token },
-      ).catch(() => []);
+      ).catch((err: unknown) => {
+        const status = (err as { status?: number }).status;
+        if (status === 404) return []; // erwartet: Endpunkt existiert noch nicht
+        throw err;
+      });
       setList(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.network.message'));

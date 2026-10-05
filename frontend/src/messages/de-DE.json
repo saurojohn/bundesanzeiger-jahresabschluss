@@ -62,7 +62,8 @@
       "title": "Abmeldung erfolgreich",
       "message": "Sie wurden sicher abgemeldet.",
       "loginAgain": "Erneut anmelden"
-    }
+    },
+    "sessionExpired": "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an."
   },
   "navigation": {
     "dashboard": "Übersicht",

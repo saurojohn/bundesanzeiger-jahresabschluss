@@ -61,7 +61,7 @@ export class SubscriptionService {
    * gelaufen), wird PILOT als Default zurückgegeben.
    */
   async getSubscription(kanzleiId: string, user: AuthUser): Promise<SubscriptionResponseDto> {
-    this.assertKanzleiReadAccess(kanzleiId, user);
+    await this.assertKanzleiAccess(kanzleiId, user);
     return this.cache.memoize(
       `subscription:${kanzleiId}`,
       5 * 60 * 1000, // 5 min
@@ -83,7 +83,7 @@ export class SubscriptionService {
     cancelUrl: string,
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<CheckoutResponseDto> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
 
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
@@ -136,7 +136,7 @@ export class SubscriptionService {
     mockSession: string,
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<SubscriptionResponseDto> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
     if (this.billingProvider.getProviderName() !== 'mock') {
       throw new BadRequestException(
         'mockActivate ist nur im Mock-Provider-Mode verfügbar (STRIPE_SECRET_KEY nicht gesetzt)',
@@ -168,7 +168,7 @@ export class SubscriptionService {
    * (Stripe-Customer-Portal-URL oder Mock-URL).
    */
   async getPortalUrl(kanzleiId: string, user: AuthUser, returnUrl: string): Promise<{ url: string }> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
     const providerCustomerId = (kanzlei as unknown as { providerCustomerId?: string }).providerCustomerId;
@@ -193,7 +193,7 @@ export class SubscriptionService {
     user: AuthUser,
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<{ canceled: boolean; effectiveAt: Date }> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
     const providerSubId = (kanzlei as unknown as { subscriptionProviderId?: string | null })
@@ -322,39 +322,52 @@ export class SubscriptionService {
     };
   }
 
-  private assertKanzleiReadAccess(kanzleiId: string, user: AuthUser): void {
+  /**
+   * Zugriff auf die Kanzlei — MANDANT-genau, nicht kanzleiweit.
+   *
+   * Bugfix 2026-10-05: Der Check war `void` und lief über
+   * `.then((m) => { if (!m) throw new ForbiddenException(...) })`. Der `throw`
+   * landete in einer VERWAISTEN Promise: die Pruefung wirkte nicht, UND die
+   * Rejection war ein `unhandledRejection` — Node >=15 beendet den Prozess
+   * damit. Ein angemeldeter Benutzer konnte den Dienst also durch einen
+   * normalen Leseaufruf auf eine fremde Kanzlei stilllegen (empirisch
+   * reproduziert: Prozess beendet, Socket geschlossen).
+   *
+   * Davor stand zusaetzlich `m.id === kanzleiId` — ein Vergleich einer
+   * Mandant-UUID mit einer Kanzlei-UUID — und `m.rolle === 'KANZLEI_ADMIN'`
+   * haette jedem Admin Zugriff auf JEDE Kanzlei gegeben. Beides ist durch
+   * einen einzigen, ehrlich awaiteten DB-Lookup ersetzt.
+   */
+  private async assertKanzleiAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const hasMandant = user.mandanten.some((m) => m.id === kanzleiId || m.rolle === 'KANZLEI_ADMIN');
-    // Wir prüfen grob: wenn der User keinen Mandant dieser Kanzlei hat,
-    // wird das spätestens beim Repository-Lookup fehlschlagen.
-    if (!hasMandant) {
-      // Fallback: per DB-Lookup prüfen
-       
-      this.prisma.mandant
-        .findFirst({ where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } } })
-        .then((m) => {
-          if (!m) throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
-        });
+    const mandant = await this.prisma.mandant.findFirst({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+      select: { id: true },
+    });
+    if (!mandant) {
+      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
     }
   }
 
-  private assertKanzleiAdminAccess(kanzleiId: string, user: AuthUser): void {
+  /**
+   * Schreibzugriff: KANZLEI_ADMIN oder SYSTEM_ADMIN, und ausschliesslich
+   * fuer die eigene Kanzlei. Dieselbe Behebung (await statt void-Promise).
+   */
+  private async assertKanzleiAdminAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
     const isAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
     if (!isAdmin) {
-      throw new ForbiddenException('Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Subscription ändern');
+      throw new ForbiddenException(
+        'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Subscription ändern',
+      );
     }
-    // Stichprobe: mindestens ein Mandant muss zu dieser Kanzlei gehören
-    const belongs = user.mandanten.some((m) => m.id === kanzleiId);
-    if (!belongs) {
-      // Async-Check via DB
-       
-      this.prisma.mandant
-        .findFirst({ where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } } })
-        .then((m) => {
-          if (!m) throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
-        });
-    }
+    await this.assertKanzleiAccess(kanzleiId, user);
   }
 }
 

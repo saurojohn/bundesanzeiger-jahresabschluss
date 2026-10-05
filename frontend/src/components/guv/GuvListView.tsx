@@ -352,10 +352,20 @@ function GuvForm({
   onSaved: () => void;
 }) {
   const t = useTranslations();
-  const [schema, setSchema] = useState<{
-    verfahren: 'GKV' | 'UKV';
-    positionen: Array<{ kontonummer: string; bezeichnung: string; kategorie: GuvPosition['kategorie'] }>;
-  } | null>(null);
+  /**
+   * `GET /api/guv/schema` liefert ein FLACHES Array der GuV-Positionen —
+   * nicht `{ verfahren, positionen: [...] }`.
+   *
+   * Bugfix 2026-10-05: Der Typ behauptete die Objektform, der Zugriff
+   * `schemaData?.positionen ?? []` lieferte deshalb IMMER eine leere
+   * Liste. Beim Anlegen einer neuen GuV sah der Benutzer eine leere
+   * Tabelle — ohne jede Fehlermeldung — und „Speichern" war aktiv. Es
+   * entstand eine GuV mit NULL Positionen, die später in Saldo,
+   * E-Bilanz-XBRL und Bundesanzeiger-Meldung einfließt.
+   */
+  const [schema, setSchema] = useState<
+    Array<{ id: string; kontonummer: string; bezeichnung: string; kategorie: GuvPosition['kategorie'] }> | null
+  >(null);
   const [geschaeftsjahr, setGeschaeftsjahr] = useState<number>(
     new Date().getFullYear(),
   );
@@ -400,7 +410,7 @@ function GuvForm({
         );
         setSchema(schemaData);
         setPositionen(
-          (schemaData?.positionen ?? []).map((p, idx) => ({
+          (schemaData ?? []).map((p, idx) => ({
             kontonummer: p.kontonummer,
             bezeichnung: p.bezeichnung,
             kategorie: p.kategorie,
@@ -489,8 +499,19 @@ function GuvForm({
     setPositionen((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
   }
 
+  // Bugfix 2026-10-05: Dieser `return` stand VOR dem Fehlerbanner weiter
+  // unten. Schlug der Schema-Abruf fehl (401, 500, Backend nicht
+  // erreichbar), blieb `schema` null, der Benutzer sah dauerhaft
+  // "Wird geladen …" — und der gesetzte Fehler wurde nie gerendert. Der
+  // Ladeindikator behauptete Aktivität, während nichts mehr kam.
   if (!schema) {
-    return <div className="text-sm text-slate-500">{t('common.loading')}</div>;
+    return error ? (
+      <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+        {error}
+      </div>
+    ) : (
+      <div className="text-sm text-slate-500">{t('common.loading')}</div>
+    );
   }
 
   return (
@@ -612,6 +633,7 @@ function GuvForm({
                   <input
                     type="number"
                     step="0.01"
+                    disabled={positionenSperre}
                     value={p.betragVorjahr ?? ''}
                     onChange={(e) =>
                       updatePosition(idx, {
@@ -620,13 +642,14 @@ function GuvForm({
                           : null,
                       })
                     }
-                    className="block w-full text-right rounded border border-slate-200 px-2 py-1 text-sm num-de"
+                    className="block w-full text-right rounded border border-slate-200 px-2 py-1 text-sm num-de disabled:bg-slate-50 disabled:text-slate-500"
                   />
                 </td>
                 <td className="px-3 py-1.5">
                   <input
                     type="number"
                     step="0.01"
+                    disabled={positionenSperre}
                     value={p.betragAktuell || ''}
                     onChange={(e) =>
                       updatePosition(idx, {

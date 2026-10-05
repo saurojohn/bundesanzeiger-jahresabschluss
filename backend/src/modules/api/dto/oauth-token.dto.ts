@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsInt, IsString } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 /**
  * OAuth2 Token-Request (POST /oauth/token, client_credentials-Grant).
@@ -37,10 +37,19 @@ export class OAuthTokenRequestDto {
   @ApiProperty({
     description:
       'Optional: gewünschte Scopes (space-separated). ' +
-      'Muss eine Teilmenge der im API-Key hinterlegten Scopes sein.',
+      'Muss eine Teilmenge der im API-Key hinterlegten Scopes sein. ' +
+      'Weggelassen bedeutet: alle Scopes des Keys (RFC 6749 §4.4.2 — ' +
+      'scope ist beim client_credentials-Grant OPTIONAL).',
     required: false,
     example: 'mandant:read bilanz:read',
   })
+  // Bugfix 2026-10-05: `@IsString()` ohne `@IsOptional()` machte das Feld
+  // trotz `scope?` und `required: false` PFLICHT für die ValidationPipe.
+  // Ein spezifikationskonformer Client, der `scope` weglässt, bekam deshalb
+  // 400 "scope must be a string" — noch bevor die Zugangsdaten überhaupt
+  // geprüft wurden. Dieselbe Klasse wie bei `abschnitte` und `kanzleiId`:
+  // der Typ sagt optional, die Validierung sagt Pflicht.
+  @IsOptional()
   @IsString()
   scope?: string;
 }

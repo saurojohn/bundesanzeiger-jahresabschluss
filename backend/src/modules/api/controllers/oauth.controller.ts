@@ -51,8 +51,18 @@ export class OAuthController {
     description: 'Ungültige Parameter oder grant_type',
   })
   @ApiResponse({
-    status: 401,
-    description: 'client_id oder client_secret ungültig',
+    // Bugfix 2026-10-05: Hier stand 401, der Code antwortete 400. Laut
+    // RFC 6749 §5.2 darf der Authorization Server 401 NUR dann MANDATISCH
+    // liefern, wenn der Client sich per `Authorization`-Header
+    // authentifiziert hat. Dieser Server akzeptiert ausschliesslich
+    // client_id/client_secret im Body, also ist 400 `invalid_client` die
+    // spezifikationskonforme Antwort. Die Doku wird der Wirklichkeit
+    // angeglichen, nicht umgekehrt — die Doku war falsch.
+    status: 400,
+    description:
+      'client_id oder client_secret ungültig (error: invalid_client). ' +
+      'RFC 6749 §5.2 erlaubt hier 400, weil die Authentifizierung über den ' +
+      'Body läuft; 401 gilt nur für den Authorization-Header.',
   })
   async issueToken(
     @Body() dto: OAuthTokenRequestDto,

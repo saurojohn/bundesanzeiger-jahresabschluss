@@ -26,7 +26,33 @@
 > der externe Audit nicht durchgeführt wurde. Er beschreibt die
 > Compliance-Zielsetzung und den jeweils belegten Teilstand.
 
-**Audit-Datum**: 2026-09-25, Nachtrag 2026-10-02
+> **Nachtrag 2026-10-05 (Nachtrag 3):** Bei einer systematischen
+> Abdeckung aller Schreibpfade der Oberfläche (43 Stück) wurden **zehn
+> weitere Defekte** gefunden und behoben, die Compliance-Aussagen dieses
+> Berichts direkt betreffen:
+>
+> | Befund | Compliance-Relevanz |
+> |---|---|
+> | `applyKonsolidierung` legte Konzern-Bilanz/GuV unter Unique-Constraint an, ohne Vorprüfung → HTTP 500 und möglicher Teilzustand (Konzern-Bilanz ohne Konzern-GuV) | GoBD-Vollständigkeit / Nachvollziehbarkeit |
+> | `applyTierChange` schrieb `data: {}` — **Tarifwechsel wurden nie gespeichert**, Antwort trotzdem HTTP 200 | Rechnungsstellungs- und Aufbewahrungspflicht (§ 147 AO) |
+> | Neu angelegter Mandant war für den anlegenden `KANZLEI_ADMIN` unsichtbar und nicht löschbar (Liste/Access nur über zugewiesene Mandanten) | Mandantentrennung |
+> | Die gueltige elektronische Signatur (§ 126 AO) hatte **keinen Bedienweg**; GuV und Anhang waren gar nicht signierbar | Signaturpflicht des Abschlusses |
+> | Brandenzugriff (`PATCH /branding/:kanzleiId`) verglich `kanzleiId` gegen **Mandant-IDs** → für jeden `KANZLEI_ADMIN` gesperrt | Mandantentrennung |
+> | DNS-Verifikation lieferte 500 statt 503 bei fehlender Konfiguration | Betriebssicherheit |
+>
+> Diese Befunde widerlegen keine GoBD-Aussage dieses Berichts direkt,
+> zeigen aber dasselbe Muster wie der Nachtrag vom 2026-10-02: **✅ in
+> diesem Bericht bedeutet "zum Zeitpunkt der Prüfung belegt", nicht "dauerhaft
+> sichergestellt"**. Erneut gilt: kein Nachweis ohne externen Audit.
+>
+> **Konsequenz für die Teststrategie:** Die zehn Befunde waren ausschliesslich
+> über Bedienung auffindbar — Renderprüfungen meldeten sie durchgehend als
+> grün. Seit 2026-10-05 sind alle 43 Schreibpfade der Oberfläche durch
+> End-to-End-Tests abgedeckt; der Abdeckungsgrad allein ist aber weiterhin
+> **kein** Nachweis. Maßgeblich ist, dass ein Test den Weg klickt, den ein
+> Anwender geht.
+
+**Audit-Datum**: 2026-09-25, Nachtrag 2026-10-02, Nachtrag 2026-10-05
 **Auditor (intern)**: DevOps + Compliance-Team
 **System-Version (Erstdurchgang)**: M4 Sprint 0+1+2+3+4+5, Commit `95dd932`
 **Selbstprüfung ist kein Normnachweis** (siehe TODO-8.3)

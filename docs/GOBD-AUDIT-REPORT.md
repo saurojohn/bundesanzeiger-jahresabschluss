@@ -279,6 +279,72 @@ fragte. Für die externe Prüfung heißt das: „`saldostimmt: true`" und
 
 ---
 
+### Nachtrag 2026-10-06/07: Auditrunde Webhook, Branding, DNS, PDF, Konsolidierung
+
+Nach der E-Bilanz-Runde wurden fünf weitere Module geprüft. Zehn Defekte
+wurden behoben — wiederum alle aus derselben Familie: **ein Wert war
+deklariert und wurde nicht benutzt, oder eine Prüfung war eine Anzeige.**
+
+#### Behandelt
+
+| # | Modul | Defekt | Beleg |
+|---|---|---|---|
+| 1 | Webhook | DB-Fehler bei der Zustellung beendete den Prozess | `node`: Exit-Code 1, während der Aufrufer bereits regulär geantwortet hatte |
+| 2 | Webhook | `assertKanzleiAccess` prüfte `rolle !== undefined` und verwarf `kanzleiId` | Lesen fremder Kanzleien inkl. Ziel-URLs |
+| 3 | Webhook | `assertKanzleiAdminAccess` verwarf `kanzleiId` | Schreibpfad über die Kanzleigrenze erreichbar |
+| 4 | Branding | `getLogoBuffer` rief die Prüfung **ohne `await`** auf | Fremdes Logo aus WORM **und** Prozessabbruch |
+| 5 | DNS | `assertKanzleiAdminAccess` verwendete `kanzleiId` nicht | Domain-Verifikation für fremde Kanzlei |
+| 6 | DNS | Prisma-Fehler geschluckt | Erfolg gemeldet, `customDomainVerified` nie gesetzt |
+| 7 | PDF | Kein Saldo-Gate | Aktiva 0 / Passiva 30.000 → fertiges, archiviertes PDF |
+| 8 | PDF | Footer trug `SHA-256: PENDING-PLACEHOL…` | In **jedem** erzeugten PDF |
+| 9 | PDF | `Math.max(aktiva, passiva)` verschwieg die Differenz | 5,00 € Ausgleichsposition unsichtbar |
+| 10 | Konsolidierung | `Math.max(negativ − x, 0)` klemmte jeden Materialaufwand auf **0** | Negativprobe: `expected +0 to be -30000` |
+
+Zusätzlich behoben: fehlende Umbruchlogik im Abschluss-PDF (60
+Positionen ergaben 65 statt 5 Seiten), falsche PDF/A-3-Konformitätsaussage
+auf dem Titelblatt, Download-Dateiname mit laufendem statt
+Geschäftsjahr, verworfene `beteiligungsquote` (Equity-Methode nicht
+umgesetzt), `updateStatus` ohne Kanzleifilter.
+
+#### Der Kern
+
+Bei **jedem** dieser Defekte stand eine Aussage im Code, die nicht dem
+Verhalten entsprach:
+
+- Kommentar: „Im PDF-Footer erscheint der erste Hash-Drittel als
+  Korrelations-ID" — es stand dort nie ein Hash.
+- Kommentar: „Mandant-Trennung wird erzwungen" — das Repository
+  filterte nicht.
+- Titelblatt: „PDF/A-3-konform" — kein `/Metadata`, kein
+  `/OutputIntent`, keine eingebetteten Fonts.
+
+Ein Kommentar ist kein Nachweis. Für den externen Audit heißt das: Bei
+der Abnahme muss **jede Konformitäts- und Sicherheitsaussage im Code
+gegen ihr Laufzeitverhalten geprüft werden**, nicht gegen ihre
+Beschreibung.
+
+#### Nicht behoben — offene Funktionslücken (bewusst nicht kaschiert)
+
+Der Konzernabschluss stellt sich als funktionierendes Modul dar, ist
+aber ein Gerüst:
+
+- **§ 301 HGB Kapitalkonsolidierung** kann nie auslösen:
+  `anschaffungskosten` und `eigenkapitalTochter` stehen fest auf 0 und
+  es existiert kein Schreibpfad dafür.
+- **§ 304, § 306, § 308, § 330** sind nicht abgebildet; für jede erzeugte
+  Position wird `betragVorjahr: null` gesetzt.
+- **`apply()` widerspricht sich selbst**: es verlangt, dass die Mutter
+  keine Bilanz hat (`assertZieljahrFrei`), und lädt sie zwei Zeilen
+  später. Ein fachlich gültiges Ergebnis ist in beiden Zweigen
+  unerreichbar.
+- **Keine Transaktionalität** über drei Schreibvorgänge; die Sätze werden
+  sofort `VALIDATED`, bevor die Einheit `COMPLETED` wird.
+
+Das sind keine Codekorrekturen, sondern fehlende Fachlogik. Sie wurden
+nicht durch Platzhalter überdeckt, damit das Modul fertig wirkt.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

@@ -396,6 +396,7 @@ export class KonsolidierungService {
     const konsBilanzPositionen = this.aggregateBilanzPositionen(
       bilanzMap,
       Number(einheit.beteiligungsquote),
+      einheit.mutterMandantId,
     );
     // Eliminations-Buchungen auf Bilanz anwenden (Soll-/Haben-Korrektur).
     this.applyEliminationsToBilanz(konsBilanzPositionen, buchungen);
@@ -404,6 +405,7 @@ export class KonsolidierungService {
     const konsGuvPositionen = this.aggregateGuvPositionen(
       guvMap,
       Number(einheit.beteiligungsquote),
+      einheit.mutterMandantId,
     );
     this.applyEliminationsToGuv(konsGuvPositionen, buchungen);
 
@@ -871,9 +873,27 @@ export class KonsolidierungService {
    * Aggregiert Bilanz-Positionen aus allen Teilnehmern. Pro HGB-Position
    * wird der höchste reihenfolge-Wert genutzt.
    */
+  /**
+   * Bringt eine Beteiligungsquote in die Form 0…1.
+   *
+   * Das DTO erlaubt 1…100 (Prozent). Unplausible oder fehlende Werte
+   * werden auf 1 (=100 %) gesetzt — NICHT auf 0. Eine Quote von 0
+   * wuerde die Tochter vollstaendig aus dem Konzernabschluss
+   * entfernen, ohne dass jemand es bemerkt; das waere ein stiller
+   * Datenverlust. Lieber zu viel einbezogen (sichtbar falsch) als
+   * zu wenig (unsichtbar falsch).
+   */
+  private normiereBeteiligungsquote(wert: number): number {
+    if (!Number.isFinite(wert) || wert <= 0) return 1;
+    const quote = wert > 1 ? wert / 100 : wert;
+    if (quote > 1) return 1;
+    return quote;
+  }
+
   private aggregateBilanzPositionen(
     bilanzMap: Array<{ mandantId: string; bilanz: NonNullable<Awaited<ReturnType<BilanzRepository['findWithPositionen']>>> }>,
     beteiligungsquote: number,
+    mutterMandantId: string,
   ): Array<{
     seite: 'AKTIVA' | 'PASSIVA';
     kontonummer: string;
@@ -893,30 +913,39 @@ export class KonsolidierungService {
       }
     >();
 
-    for (const { bilanz } of bilanzMap) {
+    // Bugfix 2026-10-06: `beteiligungsquote` wurde als Parameter
+    // angenommen und mit `void beteiligungsquote;` verworfen. Die
+    // Aggregation addierte JEDE Tochter-Bilanz vollstaendig. Bei 60 %
+    // Beteiligung gingen damit 100 % der Tochterpositionen in den
+    // Konzernabschluss ein — die Equity-Methode (§ 305 Abs. 1 HGB)
+    // war nicht umgesetzt, und der nicht kontrollierte Anteil wurde
+    // als Konzernvermoegen ausgewiesen.
+    //
+    // Die Quote gilt fuer die TOCHTER, nicht fuer die Mutter (die
+    // gehoert zu 100 % zum Konzern).
+    const quote = this.normiereBeteiligungsquote(beteiligungsquote);
+
+    for (const { mandantId, bilanz } of bilanzMap) {
+      const faktor = mandantId === mutterMandantId ? 1 : quote;
       for (const p of bilanz.positionen) {
         const key = `${p.seite}::${p.kontonummer}`;
+        const beitrag = Number(p.betragAktuell) * faktor;
         const existing = positionMap.get(key);
         if (!existing) {
           positionMap.set(key, {
             seite: p.seite as 'AKTIVA' | 'PASSIVA',
             kontonummer: p.kontonummer,
             bezeichnung: p.bezeichnung,
-            betragAktuell: Number(p.betragAktuell),
+            betragAktuell: beitrag,
             bemerkung: undefined,
             reihenfolge: p.reihenfolge,
           });
         } else {
-          existing.betragAktuell += Number(p.betragAktuell);
+          existing.betragAktuell += beitrag;
           existing.reihenfolge = Math.max(existing.reihenfolge, p.reihenfolge);
         }
       }
     }
-
-    // Aufwand/Ertrag-Korrektur: bei < 100% Beteiligung werden
-    // Tochter-Positionen proportional skaliert. Pilot: nur Umsatzerlöse
-    // werden bereits in calculateBuchungen eliminiert; hier Full-Aggregation.
-    void beteiligungsquote;
 
     return Array.from(positionMap.values())
       .sort((a, b) => a.reihenfolge - b.reihenfolge)
@@ -929,6 +958,7 @@ export class KonsolidierungService {
   private aggregateGuvPositionen(
     guvMap: Array<{ mandantId: string; guv: NonNullable<Awaited<ReturnType<GuVRepository['findWithPositionen']>>> }>,
     beteiligungsquote: number,
+    mutterMandantId: string,
   ): Array<{
     kontonummer: string;
     bezeichnung: string;
@@ -947,26 +977,30 @@ export class KonsolidierungService {
       }
     >();
 
-    for (const { guv } of guvMap) {
+    // Siehe `aggregateBilanzPositionen`: die Quote galt fuer die
+    // Tochter, wurde hier aber verworfen (`void beteiligungsquote`).
+    const quote = this.normiereBeteiligungsquote(beteiligungsquote);
+
+    for (const { mandantId, guv } of guvMap) {
+      const faktor = mandantId === mutterMandantId ? 1 : quote;
       for (const p of guv.positionen) {
         const key = p.kontonummer;
+        const beitrag = Number(p.betragAktuell) * faktor;
         const existing = positionMap.get(key);
         if (!existing) {
           positionMap.set(key, {
             kontonummer: p.kontonummer,
             bezeichnung: p.bezeichnung,
             kategorie: p.kategorie,
-            betragAktuell: Number(p.betragAktuell),
+            betragAktuell: beitrag,
             reihenfolge: p.reihenfolge,
           });
         } else {
-          existing.betragAktuell += Number(p.betragAktuell);
+          existing.betragAktuell += beitrag;
           existing.reihenfolge = Math.max(existing.reihenfolge, p.reihenfolge);
         }
       }
     }
-
-    void beteiligungsquote;
 
     return Array.from(positionMap.values())
       .sort((a, b) => a.reihenfolge - b.reihenfolge)
@@ -1030,6 +1064,47 @@ export class KonsolidierungService {
   /**
    * Wendet Eliminations-Buchungen auf GuV-Positionen an.
    */
+  /**
+   * Reduziert die SUMME aller Positionen einer Kategorie um `betrag`,
+   * anteilig auf die Einzelpositionen verteilt.
+   *
+   * Bewusst NICHT auf jede Position voll: bei n Positionen ergaebe das
+   * eine Reduktion um n × betrag. Und fuer Aufwandskategorien
+   * (negative Werte) muss sich der Betrag Richtung null bewegen, nicht
+   * darueber hinaus.
+   *
+   * Ist die Kategorie nicht vorhanden oder betraegt 0, wird nichts
+   * getan — es wird KEINE Ersatzposition erfunden, weil wir nicht
+   * wissen, auf welche HGB-Position eine Eliminationsbuchung gehoert.
+   */
+  private reduziereKategorie(
+    positionen: Array<{
+      kategorie: string;
+      betragAktuell: number;
+    }>,
+    kategorie: string,
+    betrag: number,
+  ): void {
+    if (betrag === 0) return;
+    const betroffen = positionen.filter((p) => p.kategorie === kategorie);
+    if (betroffen.length === 0) return;
+
+    const summe = betroffen.reduce((acc, p) => acc + Number(p.betragAktuell), 0);
+    if (summe === 0) return;
+
+    // Anteil dieser Position an der Kategorie-Summe.
+    const faktor = betrag / Math.abs(summe);
+    for (const p of betroffen) {
+      const anteil = Number(p.betragAktuell) * faktor;
+      const neu = Number(p.betragAktuell) - anteil;
+      // Vorzeichen der Kategorie erhalten: Erloese >= 0, Aufwand <= 0.
+      p.betragAktuell =
+        kategorie === 'ERLOES'
+          ? Math.max(neu, 0)
+          : Math.min(neu, 0);
+    }
+  }
+
   private applyEliminationsToGuv(
     positionen: Array<{
       kontonummer: string;
@@ -1043,13 +1118,29 @@ export class KonsolidierungService {
     for (const b of buchungen) {
       const betrag = Number(b.betrag);
       if (b.buchungsArt === 'AUFWAND_ERTRAG') {
-        // Umsatzerlöse (ERLOES) und korrespondierender Materialaufwand
-        // (MATERIAL) reduzieren.
-        for (const p of positionen) {
-          if (p.kategorie === 'ERLOES' || p.kategorie === 'MATERIAL') {
-            p.betragAktuell = Math.max(p.betragAktuell - betrag, 0);
-          }
-        }
+        // Bugfix 2026-10-06. Vorher:
+        //   for (const p of positionen)
+        //     if (ERLOES || MATERIAL) p.betragAktuell = Math.max(p.betragAktuell - betrag, 0);
+        //
+        // Zwei Fehler in einer Zeile:
+        //
+        // 1. VORZEICHEN. Aufwendungen werden im ganzen System als negative
+        //    Werte gespeichert (`guv.service.ts:431`: „Aufwendungen
+        //    (Material, Personal, Abschreibung, etc.) sind negative
+        //    Werte"). Fuer jede MATERIAL-Position galt daher
+        //    `negativ - betrag` = negativ, und `Math.max(..., 0)` ergab
+        //    EXAKT 0. Jeder Materialaufwand des Konzerns — Mutter und
+        //    Tochter, auch Fremdeinkaeufe — wurde unabhaengig vom
+        //    Eliminationsbetrag auf 0 gesetzt.
+        // 2. MEHRFACH. `betrag` wurde auf JEDE ERLOES-Position einzeln
+        //    abgezogen. Bei n Erloes-Positionen (4400/4410/4720 …)
+        //    sanken die Erloese um n × betrag.
+        //
+        // Korrekt: die Buchung reduziert die KATEGORIE-SUMME um genau
+        // `betrag`. Erloese sinken, der korrespondierende Aufwand wird
+        // weniger negativ (seine Groesse nimmt ab).
+        this.reduziereKategorie(positionen, 'ERLOES', betrag);
+        this.reduziereKategorie(positionen, 'MATERIAL', betrag);
       } else if (b.buchungsArt === 'LATENTE_STEUERN') {
         // Latente Steuern als zusätzliche STEUER-Position.
         const existing = positionen.find((p) => p.kategorie === 'STEUER');

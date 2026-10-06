@@ -1,0 +1,272 @@
+/**
+ * Regressionstest: Konzernabschluss — Eliminationsrechnung, Beteiligungsquote,
+ * Kanzlei-Filter.
+ *
+ * Bugfix 2026-10-06. Drei Defekte, alle aus derselben Familie: ein Wert
+ * war deklariert und wurde nicht benutzt.
+ *
+ * 1. ELIMINATION. Vorher:
+ *      for (const p of positionen)
+ *        if (ERLOES || MATERIAL) p.betragAktuell = Math.max(p.betragAktuell - betrag, 0);
+ *    Aufwendungen werden im ganzen System NEGATIV gespeichert
+ *    (`guv.service.ts:431`). Also galt fuer jede MATERIAL-Position
+ *    `negativ - betrag` = negativ, und `Math.max(..., 0)` ergab
+ *    EXAKT 0 — jeder Materialaufwand des Konzerns wurde unabhaengig
+ *    vom Eliminationsbetrag auf 0 gesetzt. Und `betrag` wurde auf
+ *    JEDE Erloes-Position einzeln abgezogen, also n × betrag.
+ *
+ * 2. BETEILIGUNGSQUOTE. Beide Aggregationsfunktionen nahmen
+ *    `beteiligungsquote` als Parameter und setzten ihn mit
+ *    `void beteiligungsquote;` ins Leere. Die Quote galt fuer die
+ *    TOCHTER; die Mutter gehoert zu 100 % zum Konzern.
+ *
+ * 3. KANZLEI-FILTER. `updateStatus(id, kanzleiId, …)` hat den
+ *    `kanzleiId` angenommen und `where: { id }` verwendet — die
+ *    Kanzleizugehoerigkeit wurde nicht geprueft.
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import { KonsolidierungService } from './konsolidierung.service';
+import type { KonsolidierungRepository } from '../../../common/repositories/konsolidierung.repository';
+import { NotFoundException } from '@nestjs/common';
+
+const MUTTER = 'm1';
+const TOCHTER = 'm2';
+
+type Pos = {
+  seite?: 'AKTIVA' | 'PASSIVA';
+  kontonummer: string;
+  bezeichnung: string;
+  kategorie?: string;
+  betragAktuell: number;
+  reihenfolge: number;
+};
+
+function svc() {
+  const repository = {
+    findByIdForUser: vi.fn().mockResolvedValue(null),
+    updateStatus: vi.fn().mockResolvedValue({}),
+    deleteBuchungen: vi.fn().mockResolvedValue(undefined),
+    createBuchungen: vi.fn().mockResolvedValue([]),
+    findBuchungen: vi.fn().mockResolvedValue([]),
+    findBuchungenByEinheitIds: vi.fn().mockResolvedValue([]),
+  } as unknown as KonsolidierungRepository;
+
+  const service = new KonsolidierungService(
+    {} as never, // prisma
+    repository,
+    {} as never, // bilanzRepository
+    {} as never, // guvRepository
+    {} as never, // auditService
+  );
+  return { service, repository };
+}
+
+const intern = (s: KonsolidierungService) =>
+  s as unknown as {
+    reduziereKategorie: (
+      positionen: Array<{ kategorie: string; betragAktuell: number }>,
+      kategorie: string,
+      betrag: number,
+    ) => void;
+    normiereBeteiligungsquote: (w: number) => number;
+    aggregateBilanzPositionen: (
+      map: Array<{ mandantId: string; bilanz: { positionen: Pos[] } }>,
+      quote: number,
+      mutter: string,
+    ) => Pos[];
+    aggregateGuvPositionen: (
+      map: Array<{ mandantId: string; guv: { positionen: Pos[] } }>,
+      quote: number,
+      mutter: string,
+    ) => Pos[];
+    applyEliminationsToGuv: (
+      positionen: Array<{
+        kategorie: string;
+        betragAktuell: number;
+        reihenfolge: number;
+      }>,
+      buchungen: Array<{ buchungsArt: string; betrag: { toString(): string } }>,
+    ) => void;
+  };
+
+describe('Konsolidierung: Eliminationsrechnung', () => {
+  it('setzt einen negativen Materialaufwand NICHT auf 0 (BUG vor dem Fix)', () => {
+    const { service } = svc();
+    // Aufwendungen sind negative Werte.
+    const positionen = [{ kategorie: 'MATERIAL', betragAktuell: -50000 }];
+    intern(service).reduziereKategorie(positionen, 'MATERIAL', 5000);
+    // Erwartet: der Aufwand wird um 5.000 kleiner in der Groesse,
+    // also weniger negativ. Vor dem Fix stand hier exakt 0.
+    expect(positionen[0].betragAktuell).toBe(-45000);
+    expect(positionen[0].betragAktuell).not.toBe(0);
+  });
+
+  it('reduziert eine Erlösposition um den Eliminationsbetrag', () => {
+    const { service } = svc();
+    const positionen = [{ kategorie: 'ERLOES', betragAktuell: 20000 }];
+    intern(service).reduziereKategorie(positionen, 'ERLOES', 5000);
+    expect(positionen[0].betragAktuell).toBe(15000);
+  });
+
+  it('reduziert die KATEGORIE-SUMME um genau den Betrag (nicht n ×)', () => {
+    const { service } = svc();
+    // Drei Erloes-Positionen — vor dem Fix wurde `betrag` DREIMAL
+    // abgezogen, also 3 × Reduktion.
+    const positionen = [
+      { kategorie: 'ERLOES', betragAktuell: 10000 },
+      { kategorie: 'ERLOES', betragAktuell: 20000 },
+      { kategorie: 'ERLOES', betragAktuell: 30000 },
+    ];
+    const vorher = 60000;
+    intern(service).reduziereKategorie(positionen, 'ERLOES', 6000);
+    const nachher = positionen.reduce((a, p) => a + p.betragAktuell, 0);
+    expect(nachher).toBe(vorher - 6000);
+    // Und die Verteilung bleibt proportional.
+    expect(positionen[2].betragAktuell).toBe(27000);
+  });
+
+  it('erhält das Vorzeichen der Kategorie', () => {
+    const { service } = svc();
+    const erloese = [{ kategorie: 'ERLOES', betragAktuell: 1000 }];
+    intern(service).reduziereKategorie(erloese, 'ERLOES', 5000);
+    expect(erloese[0].betragAktuell).toBeGreaterThanOrEqual(0);
+
+    const aufwand = [{ kategorie: 'MATERIAL', betragAktuell: -1000 }];
+    intern(service).reduziereKategorie(aufwand, 'MATERIAL', 5000);
+    expect(aufwand[0].betragAktuell).toBeLessThanOrEqual(0);
+  });
+
+  it('tut nichts, wenn die Kategorie nicht vorkommt', () => {
+    const { service } = svc();
+    const positionen = [{ kategorie: 'PERSONAL', betragAktuell: -1234 }];
+    intern(service).reduziereKategorie(positionen, 'ERLOES', 5000);
+    expect(positionen[0].betragAktuell).toBe(-1234);
+  });
+
+  it('AUFWAND_ERTRAG-Buchung trifft Erlöse UND Materialaufwand', () => {
+    const { service } = svc();
+    const positionen = [
+      { kategorie: 'ERLOES', betragAktuell: 100000, reihenfolge: 1 },
+      { kategorie: 'MATERIAL', betragAktuell: -40000, reihenfolge: 2 },
+      { kategorie: 'PERSONAL', betragAktuell: -20000, reihenfolge: 3 },
+    ];
+    intern(service).applyEliminationsToGuv(positionen, [
+      { buchungsArt: 'AUFWAND_ERTRAG', betrag: '10000' as unknown as { toString(): string } },
+    ]);
+    // Erloese sinken um 10.000 …
+    expect(positionen[0].betragAktuell).toBe(90000);
+    // … der Materialaufwand wird 10.000 kleiner (weniger negativ) …
+    expect(positionen[1].betragAktuell).toBe(-30000);
+    // … Personal bleibt unberuehrt.
+    expect(positionen[2].betragAktuell).toBe(-20000);
+  });
+});
+
+describe('Konsolidierung: Beteiligungsquote', () => {
+  it('normalisiert Prozent und Bruchteil', () => {
+    const { service } = svc();
+    const n = intern(service).normiereBeteiligungsquote.bind(intern(service));
+    expect(n(100)).toBe(1);
+    expect(n(60)).toBeCloseTo(0.6);
+    expect(n(0.6)).toBeCloseTo(0.6);
+    // Unplausibel oder fehlend: 100 %, NICHT 0. Eine Quote von 0
+    // wuerde die Tochter still aus dem Konzernabschluss entfernen.
+    expect(n(0)).toBe(1);
+    expect(n(-5)).toBe(1);
+    expect(n(Number.NaN)).toBe(1);
+    expect(n(500)).toBe(1);
+  });
+
+  it('skaliert Tochterpositionen, Mutterpositionen bleiben voll (BUG vor dem Fix)', () => {
+    const { service } = svc();
+    const map = [
+      {
+        mandantId: MUTTER,
+        bilanz: {
+          positionen: [
+            { seite: 'AKTIVA' as const, kontonummer: 'A.II.1.', bezeichnung: 'Grundstuecke', betragAktuell: 100000, reihenfolge: 1 },
+          ],
+        },
+      },
+      {
+        mandantId: TOCHTER,
+        bilanz: {
+          positionen: [
+            { seite: 'AKTIVA' as const, kontonummer: 'A.II.2.', bezeichnung: 'Maschinen', betragAktuell: 50000, reihenfolge: 2 },
+          ],
+        },
+      },
+    ];
+    const ergebnis = intern(service).aggregateBilanzPositionen(map, 60, MUTTER);
+    const mutter = ergebnis.find((p) => p.kontonummer === 'A.II.1.');
+    const tochter = ergebnis.find((p) => p.kontonummer === 'A.II.2.');
+    expect(mutter?.betragAktuell).toBe(100000);
+    // Vor dem Fix waere hier 50000 gestanden — die Quote wurde verworfen.
+    expect(tochter?.betragAktuell).toBe(30000);
+  });
+
+  it('bei 100 % wird die Tochter voll einbezogen', () => {
+    const { service } = svc();
+    const map = [
+      { mandantId: MUTTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 100, reihenfolge: 1 }] } },
+      { mandantId: TOCHTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 100, reihenfolge: 1 }] } },
+    ];
+    const ergebnis = intern(service).aggregateGuvPositionen(map, 100, MUTTER);
+    expect(ergebnis[0].betragAktuell).toBe(200);
+  });
+
+  it('GuV: Tochter wird gemäß Quote skaliert', () => {
+    const { service } = svc();
+    const map = [
+      { mandantId: MUTTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 1000, reihenfolge: 1 }] } },
+      { mandantId: TOCHTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 1000, reihenfolge: 1 }] } },
+    ];
+    const ergebnis = intern(service).aggregateGuvPositionen(map, 50, MUTTER);
+    // 1000 (Mutter) + 1000 × 0,5 (Tochter) = 1500
+    expect(ergebnis[0].betragAktuell).toBe(1500);
+  });
+});
+
+describe('Konsolidierung: Kanzlei-Filter im Repository', () => {
+  it('updateStatus filtert nach kanzleiId und meldet 0 Treffer als Fehler', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const findUnique = vi.fn().mockResolvedValue(null);
+    const prisma = {
+      konsolidierungsEinheit: { updateMany, findUnique },
+    };
+    const { KonsolidierungRepository } = await import(
+      '../../../common/repositories/konsolidierung.repository'
+    );
+    const repo = new KonsolidierungRepository(prisma as never);
+
+    await expect(
+      repo.updateStatus('fremde-einheit', 'kanzlei-eigen', { status: 'COMPLETED' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    // Entscheidend: der WHERE enthaelt die kanzleiId. Vor dem Fix war
+    // es `where: { id }`.
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fremde-einheit', kanzleiId: 'kanzlei-eigen' },
+      }),
+    );
+  });
+
+  it('updateStatus liefert den aktualisierten Satz zurück', async () => {
+    const satz = { id: 'e1', status: 'COMPLETED' };
+    const prisma = {
+      konsolidierungsEinheit: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUnique: vi.fn().mockResolvedValue(satz),
+      },
+    };
+    const { KonsolidierungRepository } = await import(
+      '../../../common/repositories/konsolidierung.repository'
+    );
+    const repo = new KonsolidierungRepository(prisma as never);
+    await expect(
+      repo.updateStatus('e1', 'k1', { status: 'COMPLETED' }),
+    ).resolves.toBe(satz);
+  });
+});

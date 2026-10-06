@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { NotFoundException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -132,6 +132,23 @@ export class KonsolidierungRepository {
 
   /**
    * Aktualisiert den Status und optional die Konzern-IDs einer Einheit.
+   *
+   * Bugfix 2026-10-06. `kanzleiId` wurde angenommen und NICHT verwendet:
+   * `where: { id }` filtrte nur nach der ID. Wer eine fremde
+   * Einheits-ID kannte, konnte deren Status setzen und Konzern-IDs
+   * eintragen.
+   *
+   * Der Filter sitzt jetzt auf der Datenbank-Seite, nicht nur im
+   * Controller-Kontext. `loadEinheitForUser()` im Service lud bereits
+   * kanzlei-gefiltert — das ist Kontext, aber kein Schutz. Ein
+   * Repository, das `kanzleiId` entgegennimmt und es ignoriert, ist
+   * eine Falle fuer jeden naechsten Aufrufer.
+   *
+   * Deshalb `updateMany` statt `update`: Prisma erlaubt in `where`
+   * von `update` ausschliesslich eindeutige Felder, mit `updateMany`
+   * dagegen beliebige zusaetzliche Bedingungen. Betroffen = 0 heisst
+   * „gehoert nicht zu dieser Kanzlei" und wird als Fehler gemeldet,
+   * nicht als stiller Erfolg.
    */
   async updateStatus(
     id: string,
@@ -144,8 +161,8 @@ export class KonsolidierungRepository {
       finalisiertVonId?: string | null;
     },
   ): Promise<KonsolidierungsEinheitWithoutBuchungen> {
-    return this.prismaService.konsolidierungsEinheit.update({
-      where: { id },
+    const result = await this.prismaService.konsolidierungsEinheit.updateMany({
+      where: { id, kanzleiId },
       data: {
         status: data.status ?? undefined,
         konzernBilanzId: data.konzernBilanzId ?? undefined,
@@ -154,6 +171,18 @@ export class KonsolidierungRepository {
         finalisiertVonId: data.finalisiertVonId ?? undefined,
       },
     });
+    if (result.count === 0) {
+      throw new NotFoundException(
+        'Konsolidierungseinheit nicht gefunden oder nicht freigegeben',
+      );
+    }
+    const updated = await this.prismaService.konsolidierungsEinheit.findUnique({
+      where: { id },
+    });
+    if (!updated) {
+      throw new NotFoundException('Konsolidierungseinheit nicht gefunden');
+    }
+    return updated as KonsolidierungsEinheitWithoutBuchungen;
   }
 
   /**

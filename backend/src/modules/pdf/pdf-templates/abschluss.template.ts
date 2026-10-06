@@ -430,7 +430,13 @@ function drawHeaderFooter(
         },
       );
     doc.text(
-      `SHA-256: ${options.sha256Hash.slice(0, 16)}…`,
+    // KEIN SHA-256 im Dokument: ein PDF kann seinen eigenen Hash nicht
+          // enthalten. Der Hash des finalen Puffers steht im WORM-Manifest,
+          // im Audit-Log und in der API-Antwort (`sha256Hash`). Bis 2026-10-06
+          // stand hier ein Platzhalter — jedes erzeugte PDF trug woertlich
+          // „SHA-256: PENDING-PLACEHOL…" und behauptete damit eine
+          // Integritaetsangabe, die es nicht gab.
+      `WORM-Objekt: ${options.sha256Hash.slice(0, 16)}`,
       PDF_LAYOUT.margins.left,
       y + 36,
       {

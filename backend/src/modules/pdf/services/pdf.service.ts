@@ -23,6 +23,7 @@ import {
 import { renderGuVPdf } from '../pdf-templates/guv.template';
 import { renderAnhangPdf } from '../pdf-templates/anhang.template';
 import { renderAbschlussPdf } from '../pdf-templates/abschluss.template';
+import { saldoStimmt } from '../../../common/utils/saldo';
 import type {
   PdfEntityType,
   PdfGenerationRequest,
@@ -78,6 +79,17 @@ export class PdfService {
     this.assertMandantAccess(mandantId, user);
     const bilanz = await this.bilanzRepository.findWithPositionen(bilanzId, mandantId);
     if (!bilanz) throw new NotFoundException('Bilanz nicht gefunden');
+
+    // Bugfix 2026-10-06: Saldo-Gate. Der E-Bilanz-XBRL-Pfad hat eines
+    // (`BILANZ_NICHT_SALDOSTIMMIG`), der PDF-Pfad hatte keines — der
+    // Saldo wurde lediglich als ROTER TEXT in das Dokument geschrieben.
+    // Empirisch belegt: Aktiva 100.000,00 / Passiva 99.995,00 ergab
+    // ein fertiges, WORM-archiviertes PDF mit dem Hinweis
+    // „Bilanz ist NICHT ausgeglichen!" — die Generierung lief durch.
+    // Das ist fuer den Bundesanzeiger die am schaedlichste Variante:
+    // Die Datei existiert und ist archiviert, bevor jemand sie prueft.
+    this.assertBilanzVollstaendigUndSaldostimmig(bilanz);
+
     const mandant = await this.loadMandant(mandantId);
     const branding = await this.loadBrandingSnapshot(mandantId, user);
 
@@ -391,8 +403,24 @@ export class PdfService {
     // → Wir rendern EINMAL, hashen den finalen Buffer, schreiben
     // den Hash ins Manifest UND in den Audit-Log. Im PDF-Footer
     // erscheint der erste Hash-Drittel als Korrelations-ID.
-    const placeholderHash = 'PENDING-PLACEHOLDER-BEFORE-RENDER-0';
-    const buffer = await renderer(objectKey, placeholderHash, erstelltAm);
+    // Bugfix 2026-10-06. Vorher stand hier der Platzhalter
+    // 'PENDING-PLACEHOLDER-BEFORE-RENDER-0' als `sha256Hash`, und die
+    // Templates schrieben `SHA-256: <erste 16 Zeichen>…` in den
+    // Footer. In ALLEN erzeugten PDFs stand damit woertlich
+    // „SHA-256: PENDING-PLACEHOL…". Der Kommentar darunter behauptete
+    // sogar, im Footer erscheine „der erste Hash-Drittel als
+    // Korrelations-ID" — es stand dort nie ein Hash.
+    //
+    // Ein PDF kann seinen eigenen SHA-256 nicht enthalten: der Hash
+    // aendert sich, sobald der Hash im Dokument steht (Self-Referenz).
+    // Die Behauptung war also in JEDER Ausfuehrung falsch.
+    //
+    // Korrekt und ueberpruefbar ist eine Korrelations-ID auf den
+    // WORM-Eintrag — sie ist VOR dem Rendern bekannt. Der echte
+    // SHA-256 des finalen Buffers steht weiterhin im Manifest, im
+    // Audit-Log und in der API-Antwort (`sha256Hash`), wo er hingehört.
+    const korrelationsId = this.buildKorrelationsId(objectKey);
+    const buffer = await renderer(objectKey, korrelationsId, erstelltAm);
     const sha256Hash = WormObjectRepository.sha256Of(buffer);
 
     // WORM-Upload (idempotent bei Re-Upload mit gleichem Hash).
@@ -482,6 +510,75 @@ export class PdfService {
     mandantId: string,
   ): string {
     return `/api/pdf/${entityType.toLowerCase()}/${entityId}/download?mandantId=${mandantId}`;
+  }
+
+  /**
+   * Gate vor der PDF-Erzeugung einer Bilanz.
+   *
+   * Zwei Pruefungen, beide aus derselben Fehlerklasse wie im
+   * E-Bilanz-Modul: der Schritt prueft nichts und die nachgelagerte
+   * Anzeige bestaetigt genau das.
+   *
+   * 1. LEERE BILANZ: mit null Positionen rendert das PDF
+   *    „Summe Aktiva 0,00 / Summe Passiva 0,00 / Aktiva = Passiva ✓ /
+   *    Bilanzsumme 0,00 €". Eine leere Position wird damit als
+   *    belegte Aussage gewertet.
+   * 2. SALDO: Aktiva ≠ Passiva wird lediglich rot angedruckt, die
+   *    Datei entsteht trotzdem.
+   *
+   * Beides wird VOR dem Rendern, vor dem WORM-Upload und vor dem
+   * Audit-Eintrag zurueckgewiesen — eine nicht saldostimmende
+   * Bilanz darf nicht archiviert und nicht veroeffentlicht werden.
+   */
+  private assertBilanzVollstaendigUndSaldostimmig(bilanz: {
+    positionen: Array<{ seite: string; betragAktuell: unknown }>;
+  }): void {
+    if (!Array.isArray(bilanz.positionen) || bilanz.positionen.length === 0) {
+      throw new BadRequestException(
+        'Die Bilanz enthaelt keine Positionen. Ohne Positionen ist keine ' +
+          'Aussage moeglich — es wurde kein PDF erzeugt.',
+      );
+    }
+
+    let aktiva = 0;
+    let passiva = 0;
+    for (const p of bilanz.positionen) {
+      const betrag = Number(String(p.betragAktuell));
+      if (p.seite === 'AKTIVA') aktiva += betrag;
+      else if (p.seite === 'PASSIVA') passiva += betrag;
+    }
+    aktiva = Number(aktiva.toFixed(2));
+    passiva = Number(passiva.toFixed(2));
+
+    // Dieselbe Regel wie in `ebilanz` und `bilanz.service` — das
+    // PDF-Template benutzte `saldo < 0.01` und urteilte bei exakt
+    // 0,01 EUR anders als die zentrale Regel.
+    if (!saldoStimmt(aktiva, passiva)) {
+      const differenz = Number((aktiva - passiva).toFixed(2));
+      throw new BadRequestException({
+        message:
+          `Die Bilanz ist nicht saldostimmig (Aktiva ${aktiva.toFixed(2)} EUR, ` +
+          `Passiva ${passiva.toFixed(2)} EUR, Differenz ${differenz.toFixed(2)} EUR). ` +
+          'Es wurde kein PDF erzeugt.',
+        code: 'BILANZ_NICHT_SALDOSTIMMIG',
+        aktivaSumme: aktiva,
+        passivaSumme: passiva,
+        differenz,
+      });
+    }
+  }
+
+  /**
+   * Korrelations-ID fuer den PDF-Footer: die ersten 16 Zeichen des
+   * WORM-Objektschluessels, ohne Sonderzeichen.
+   *
+   * Bewusst KEIN SHA-256 — siehe Kommentar an der Aufrufstelle. Der
+   * echte Hash des finalen Puffers steht im Manifest und in der
+   * API-Antwort.
+   */
+  private buildKorrelationsId(objectKey: string): string {
+    const bereinigt = objectKey.replace(/[^A-Za-z0-9]/g, '');
+    return bereinigt.slice(0, 16).padEnd(16, '0');
   }
 
   private buildFilename(

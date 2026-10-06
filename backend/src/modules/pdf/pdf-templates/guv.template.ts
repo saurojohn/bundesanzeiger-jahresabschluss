@@ -15,7 +15,7 @@ import { formatBetrag, guvKategorieLabel } from '../utils/pdf-format.utils';
  *   - Header
  *   - Positionen gruppiert nach Kategorie
  *   - Jahresergebnis
- *   - Footer (WORM, SHA-256)
+ *   - Footer (WORM, WORM-Objekt-ID)
  */
 export async function renderGuVPdf(
   guv: GuVEntity,

@@ -124,7 +124,14 @@ export function drawHeaderFooter(
       );
     doc
       .text(
-        `SHA-256: ${options.sha256Hash.slice(0, 16)}…`,
+        // KEIN SHA-256 im Dokument: ein PDF kann seinen eigenen Hash nicht
+        // enthalten — der Hash aendert sich, sobald er im Dokument steht.
+        // Der Hash des finalen Puffers steht im WORM-Manifest, im
+        // Audit-Log und in der API-Antwort (`sha256Hash`). Bis 2026-10-06
+        // stand hier ein Platzhalter: jedes erzeugte PDF trug woertlich
+        // „SHA-256: PENDING-PLACEHOL…" und behauptete damit eine
+        // Integritaetsangabe, die es nicht gab.
+        `WORM-Objekt: ${options.sha256Hash.slice(0, 16)}`,
         PDF_LAYOUT.margins.left,
         y + 36,
         {
@@ -210,7 +217,7 @@ export function drawHeaderFooter(
  *   - Header (Mandant, GJ, "Bilanz zum 31.12.YYYY")
  *   - Aktiva (links) und Passiva (rechts) parallel
  *   - Summen-Zeile + Saldo-Hinweis
- *   - Footer (WORM-Hinweis, SHA-256, BAnz-ID)
+ *   - Footer (WORM-Hinweis, WORM-Objekt-ID, BAnz-ID)
  *
  * @returns Buffer mit PDF-Bytes.
  */

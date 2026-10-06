@@ -496,6 +496,12 @@ export class XbrlGeneratorService {
         'xmlns:xbrldi': 'http://xbrl.org/2003/xbrldi-2003-12-31',
         'xmlns:link': 'http://www.xbrl.org/2003/linkbase',
         'xmlns:iso4217': 'http://www.xbrl.org/2003/iso4217',
+        // `xlink:type`/`xlink:href` in `link:schemaRef` (Bugfix 2026-10-06).
+        // Ohne diese Deklaration ist das Dokument namespace-invalid: jeder
+        // konforme Parser bricht mit "unbound prefix" ab. `XMLValidator` aus
+        // fast-xml-parser prueftPraefixe NICHT — die Datei galt deshalb als
+        // gueltig, obwohl kein XBRL-Prozessor sie lesen konnte.
+        'xmlns:xlink': 'http://www.w3.org/1999/xlink',
         'xmlns:bs': TAXONOMY_NAMESPACE_URIS.bs,
         'xmlns:pl': TAXONOMY_NAMESPACE_URIS.pl,
         'xmlns:genInfo': TAXONOMY_NAMESPACE_URIS.genInfo,

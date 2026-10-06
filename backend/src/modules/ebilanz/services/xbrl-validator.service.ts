@@ -59,7 +59,21 @@ export class XbrlValidatorService {
       return { valid: false, errors, warnings };
     }
 
-    // 2. Parsen + Facts extrahieren.
+    // 2. Namespace-Praefixe muessen gebunden sein (Bugfix 2026-10-06).
+    //
+    //    `XMLValidator` aus fast-xml-parser prueft die Wohlgeformtheit
+    //    OHNE Namespace-Aufloesung. Ein Dokument mit `xlink:href` ohne
+    //    `xmlns:xlink` gilt dort als gueltig, obwohl jeder konforme
+    //    Parser mit "unbound prefix" abbricht — und genau so liess sich
+    //    die eigene, tatsaechlich unlesbare Datei als gueltig melden.
+    for (const ungebunden of this.findeUngebundenePraefixe(xmlString)) {
+      errors.push({
+        code: 'UNBOUND_NAMESPACE_PREFIX',
+        message: `Namespace-Praefix "${ungebunden}" wird verwendet, aber nicht deklariert`,
+      });
+    }
+
+    // 3. Parsen + Facts extrahieren.
     const parser = new XMLParser({
       ignoreAttributes: false,
       parseAttributeValue: true,
@@ -77,7 +91,7 @@ export class XbrlValidatorService {
       return { valid: false, errors, warnings };
     }
 
-    // 3. Context-Refs V_D und V_Y vorhanden?
+    // 4. Context-Refs V_D und V_Y vorhanden?
     const contexts = Array.isArray(root['xbrli:context']) ? root['xbrli:context'] : [];
     const hasVD = contexts.some((c: { '@_id'?: string }) => c['@_id'] === 'V_D');
     const hasVY = contexts.some((c: { '@_id'?: string }) => c['@_id'] === 'V_Y');
@@ -88,17 +102,17 @@ export class XbrlValidatorService {
       errors.push({ code: 'MISSING_CONTEXT_V_Y', message: 'Context V_Y (Instant) fehlt' });
     }
 
-    // 4. Unit EUR vorhanden?
+    // 5. Unit EUR vorhanden?
     const units = Array.isArray(root['xbrli:unit']) ? root['xbrli:unit'] : [];
     const hasEUR = units.some((u: { '@_id'?: string }) => u['@_id'] === 'EUR');
     if (!hasEUR) {
       warnings.push({ code: 'MISSING_UNIT_EUR', message: 'Unit EUR fehlt' });
     }
 
-    // 5. Facts sammeln.
+    // 6. Facts sammeln.
     const facts = this.extractFacts(root);
 
-    // 6. Pflicht-GenInfo-Felder.
+    // 7. Pflicht-GenInfo-Felder.
     if (!facts.companyName || String(facts.companyName).trim() === '') {
       errors.push({
         code: 'MISSING_COMPANY_NAME',
@@ -124,7 +138,7 @@ export class XbrlValidatorService {
       });
     }
 
-    // 7. Bilanz-Saldo: Aktiva == Passiva.
+    // 8. Bilanz-Saldo: Aktiva == Passiva.
     const diff = Math.abs(facts.aktivaSumme - facts.passivaSumme);
     if (diff > SALDO_TOLERANZ_CENTS) {
       errors.push({
@@ -133,7 +147,7 @@ export class XbrlValidatorService {
       });
     }
 
-    // 8. Calculation-Check: Erlöse - Aufwände ≈ Jahresüberschuss.
+    // 9. Calculation-Check: Erlöse - Aufwände ≈ Jahresüberschuss.
     if (facts.netIncome !== null) {
       const expectedNetIncome = facts.erloeseSumme - facts.aufwandSumme;
       if (Math.abs(expectedNetIncome - facts.netIncome) > SALDO_TOLERANZ_CENTS) {
@@ -144,7 +158,7 @@ export class XbrlValidatorService {
       }
     }
 
-    // 9. Pflicht-Bilanzpositionen vorhanden.
+    // 10. Pflicht-Bilanzpositionen vorhanden.
     const requiredBilanz = ['bs.eqLiab.equity.subscribed', 'bs.ass.currAss.cashEquiv.bank'];
     for (const req of requiredBilanz) {
       if (!(req in facts.factMap)) {
@@ -156,7 +170,7 @@ export class XbrlValidatorService {
       }
     }
 
-    // 10. Pflicht-GuV-Positionen vorhanden.
+    // 11. Pflicht-GuV-Positionen vorhanden.
     const requiredGuv = ['pl.rev', 'pl.netIncome'];
     for (const req of requiredGuv) {
       if (!(req in facts.factMap)) {
@@ -173,6 +187,76 @@ export class XbrlValidatorService {
       errors,
       warnings,
     };
+  }
+
+  /**
+   * Findet Namespace-Praefixe, die im Dokument verwendet, aber nirgends
+   * gebunden werden.
+   *
+   * WICHTIG: Es wird bewusst NICHT geparst, sondern der Rohtext
+   * untersucht. Ein Parser kaeme an diesen Dateien nicht vorbei — er
+   * bricht genau an der ungebundenen Praefixverwendung ab, und die
+   * Pruefung waere damit nicht erreichbar. Der Check muss vor
+   * `XMLParser` laufen.
+   *
+   * Beruecksichtigt werden:
+   *   - Elementnamen      `<pl.netIncome>`
+   *   - Attributnamen     `xlink:href="…"`
+   *   - Werte, die selbst Praefixe enthalten (`scheme="xbrli:foo"`)
+   *
+   * Nicht beruecksichtigt: `xmlns:praefix`-Deklarationen, CDATA-Inhalte
+   * und Kommentare — dort kann ein Doppelpunkt ohne Namespace-Bedeutung
+   * auftreten und wuerde sonst faelschlich melden.
+   */
+  private findeUngebundenePraefixe(xml: string): string[] {
+    // CDATA und Kommentare entfernen: dort ist ein Doppelpunkt
+    // normaler Text (z.B. "Betrag: 1000 EUR").
+    const ohneTrailer = xml
+      .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+
+    // Gebundene Praefixe: alle xmlns:DECLARATIONEN im Dokument.
+    const gebunden = new Set<string>();
+    for (const m of ohneTrailer.matchAll(/xmlns:([A-Za-z_][\w.-]*)\s*=/g)) {
+      gebunden.add(m[1]);
+    }
+    // `xml` ist laut Spezifikation implizit gebunden.
+    gebunden.add('xml');
+
+    const verwendet = new Set<string>();
+
+    // Elementnamen: `<pl.netIncome …>` → `pl`
+    for (const m of ohneTrailer.matchAll(/<([A-Za-z_][\w.:-]*)/g)) {
+      const praefix = /^([A-Za-z_][\w.-]*):/.exec(m[1])?.[1];
+      if (praefix) verwendet.add(praefix);
+    }
+
+    // Attributnamen: `xlink:href="…"` → `xlink`.
+    // `xmlns:xlink="…"` ist selbst eine Deklaration, keine Verwendung —
+    // sonst meldet der Check "xmlns ist ungebunden".
+    for (const m of ohneTrailer.matchAll(/\s([A-Za-z_][\w.-]*):[\w.-]+\s*=\s*"/g)) {
+      if (m[1] === 'xmlns') continue;
+      verwendet.add(m[1]);
+    }
+
+    // Attribut-WERTE mit Praefix (z.B. `scheme="xbrli:…"`). Zwei
+    // Fehlalarme muessen hier raus:
+    //   - `xmlns:a="urn:a"` — der Wert IST die Deklaration, nicht eine
+    //     Verwendung eines Praefixes.
+    //   - `http://…` / `https://…` — eine URI, kein Praefix.
+    for (const m of ohneTrailer.matchAll(
+      /\s([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"/g,
+    )) {
+      const attrName = m[1];
+      if (/^xmlns(:|$)/.test(attrName)) continue;
+      const wert = m[2];
+      if (/^[A-Za-z][\w.+-]*:/.test(wert)) {
+        const praefix = wert.slice(0, wert.indexOf(':'));
+        if (!/^https?$/i.test(praefix)) verwendet.add(praefix);
+      }
+    }
+
+    return [...verwendet].filter((p) => !gebunden.has(p)).sort();
   }
 
   /**

@@ -4,8 +4,9 @@ import type {
   ValidationResultDto,
   ValidationIssue,
 } from '../dto/validation-result.dto';
+import { saldoStimmt } from '../../../common/utils/saldo';
 
-const SALDO_TOLERANZ_CENTS = 1; // 0.01 EUR Toleranz
+// Toleranz und Saldo-Regel liegen zentral in `common/utils/saldo.ts`.
 
 /**
  * Strukturelle XBRL-Validation (ohne XSD-Parsing).
@@ -140,7 +141,10 @@ export class XbrlValidatorService {
 
     // 8. Bilanz-Saldo: Aktiva == Passiva.
     const diff = Math.abs(facts.aktivaSumme - facts.passivaSumme);
-    if (diff > SALDO_TOLERANZ_CENTS) {
+    // Dieselbe Regel wie das Gate in `xbrl-generator.service.ts` — sonst
+    // wuerde im Grenzfall eine Datei erzeugt und gleichzeitig als nicht
+    // saldostimmig gemeldet.
+    if (!saldoStimmt(facts.aktivaSumme, facts.passivaSumme)) {
       errors.push({
         code: 'BILANCE_MISMATCH',
         message: `Aktiva-Summe (${facts.aktivaSumme}) ≠ Passiva-Summe (${facts.passivaSumme}); Differenz = ${diff.toFixed(2)} EUR`,
@@ -150,7 +154,7 @@ export class XbrlValidatorService {
     // 9. Calculation-Check: Erlöse - Aufwände ≈ Jahresüberschuss.
     if (facts.netIncome !== null) {
       const expectedNetIncome = facts.erloeseSumme - facts.aufwandSumme;
-      if (Math.abs(expectedNetIncome - facts.netIncome) > SALDO_TOLERANZ_CENTS) {
+      if (!saldoStimmt(expectedNetIncome, facts.netIncome)) {
         warnings.push({
           code: 'NET_INCOME_MISMATCH',
           message: `Erwarteter Jahresüberschuss (Σ Erlöse - Σ Aufwand = ${expectedNetIncome.toFixed(2)}) weicht vom ausgewiesenen Nettoergebnis (${facts.netIncome.toFixed(2)}) ab.`,

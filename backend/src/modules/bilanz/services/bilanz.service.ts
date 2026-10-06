@@ -28,6 +28,7 @@ import {
   BilanzValidierungDto,
   CreateBilanzResponse,
 } from '../dto/bilanz-validierung.dto';
+import { saldoStimmt } from '../../../common/utils/saldo';
 
 /**
  * Listenansicht: Skalarfelder, Salden-Summen (aktivaSumme/passivaSumme) und
@@ -43,7 +44,7 @@ export interface BilanzServiceContext {
   userAgent?: string | null;
 }
 
-const SALDO_TOLERANZ_CENTS = 1; // 0.01€ Toleranz für Rundungsdifferenzen.
+// Toleranz und Saldo-Regel liegen zentral in `common/utils/saldo.ts`.
 
 /**
  * Service für Bilanz-Operationen.
@@ -417,7 +418,7 @@ export class BilanzService {
     }
 
     const differenz = Math.abs(aktivaSumme - passivaSumme);
-    const saldostimmt = differenz < SALDO_TOLERANZ_CENTS;
+    const saldostimmt = saldoStimmt(aktivaSumme, passivaSumme);
 
     // Pflichtfelder-Check: Schlüsselpositionen aus dem HGB-Schema
     // müssen befüllt sein.

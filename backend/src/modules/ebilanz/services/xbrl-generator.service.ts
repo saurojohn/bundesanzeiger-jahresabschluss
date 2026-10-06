@@ -33,6 +33,7 @@ import {
   TAXONOMY_VERSION,
   UNIT_REF_EUR,
 } from '../mappings/hgb-kt-v6.types';
+import { saldoStimmt, SALDO_TOLERANZ_CENTS } from '../../../common/utils/saldo';
 
 export interface XbrlGeneratorContext {
   ip?: string | null;
@@ -47,7 +48,7 @@ interface GeneratorInput {
   preparer?: EbilanzPreparerDto;
 }
 
-const SALDO_TOLERANZ_CENTS = 1; // 0.01 EUR Toleranz
+// Toleranz und Saldo-Regel liegen zentral in `common/utils/saldo.ts`.
 
 /**
  * Service für die Generierung von E-Bilanz-XBRL-Dokumenten.
@@ -134,6 +135,33 @@ export class XbrlGeneratorService {
     const totals = this.computeTotalsFromBilanz(bilanz);
     const netIncome = Number(guv.ergebnis?.toString() ?? 0);
 
+    // Saldo-Gate VOR der XML-Erzeugung (Bugfix 2026-10-06).
+    //
+    // Bisher wurde `saldostimmt` nur berechnet und als Metadatum
+    // zurueckgegeben. Ein Abschluss mit Aktiva 0 / Passiva 30.000 erzeugte
+    // damit eine vollstaendige, 4.837 Byte grosse XBRL-Datei mit
+    // HTTP 200 — bei `saldostimmt: false` im Response. Die Steuerberater-
+    // Oberflaeche musste den Wert auswerten; ein direkter API-Aufruf tat
+    // es nicht. § 264 Abs. 2 HGB verlangt aber, dass die Bilanz
+    // stimmig ist — das gehoert vor die Dateierzeugung, nicht danach.
+    if (!this.saldoStimmt(totals)) {
+      const differenz =
+        Math.round((totals.aktivaSumme - totals.passivaSumme) * 100) / 100;
+      throw new BadRequestException({
+        message:
+          `Die Bilanz für ${bilanz.geschaeftsjahr} ist nicht saldostimmig ` +
+          `(Aktiva ${totals.aktivaSumme.toFixed(2)} EUR, ` +
+          `Passiva ${totals.passivaSumme.toFixed(2)} EUR, ` +
+          `Differenz ${differenz.toFixed(2)} EUR). ` +
+          'Es wurde keine E-Bilanz erzeugt.',
+        code: 'BILANZ_NICHT_SALDOSTIMMIG',
+        aktivaSumme: totals.aktivaSumme,
+        passivaSumme: totals.passivaSumme,
+        differenz,
+        toleranz: SALDO_TOLERANZ_CENTS / 100,
+      });
+    }
+
     const xbrlXml = this.buildXbrlXml({
       mandant,
       bilanz,
@@ -186,7 +214,7 @@ export class XbrlGeneratorService {
         geschaeftsjahr: bilanz.geschaeftsjahr,
         aktivaSumme: totals.aktivaSumme,
         passivaSumme: totals.passivaSumme,
-        saldostimmt: Math.abs(totals.aktivaSumme - totals.passivaSumme) < SALDO_TOLERANZ_CENTS,
+        saldostimmt: this.saldoStimmt(totals),
         netIncome,
         erloeseSumme,
         aufwandSumme,
@@ -201,7 +229,7 @@ export class XbrlGeneratorService {
       taxonomieVersion: TAXONOMY_VERSION,
       aktivaSumme: totals.aktivaSumme,
       passivaSumme: totals.passivaSumme,
-      saldostimmt: Math.abs(totals.aktivaSumme - totals.passivaSumme) < SALDO_TOLERANZ_CENTS,
+      saldostimmt: this.saldoStimmt(totals),
       netIncome,
       erloeseSumme,
       aufwandSumme,
@@ -386,6 +414,17 @@ export class XbrlGeneratorService {
    * Original-Bilanz-Summe verwendet (`bilanz.positionen`), um
    * Mapping-Lücken zu kompensieren.
    */
+  /**
+   * Durchreichung an die gemeinsame Saldo-Regel.
+   *
+   * Gate vor der XML-Erzeugung und das `saldostimmt`-Feld in den
+   * Metadaten muessen dieselbe Bedingung benutzen — siehe
+   * `src/common/utils/saldo.ts`, wo die Regel einmal definiert ist.
+   */
+  private saldoStimmt(totals: { aktivaSumme: number; passivaSumme: number }): boolean {
+    return saldoStimmt(totals.aktivaSumme, totals.passivaSumme);
+  }
+
   private computeTotalsFromBilanz(bilanz: {
     positionen: Array<{
       seite: string;

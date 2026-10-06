@@ -36,10 +36,6 @@ export interface KonsolidierungServiceContext {
   userAgent?: string | null;
 }
 
-/** Toleranz für Saldovergleich Konzern-Bilanz (1 Cent). */
-const SALDO_TOLERANZ_CENTS = 1;
-void SALDO_TOLERANZ_CENTS;
-
 /**
  * Service für Konzern-Konsolidierung (PublG §11, HGB §§ 301–306).
  *

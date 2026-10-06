@@ -216,7 +216,7 @@ export class WebhookService {
     });
 
     // Sofortige Delivery (fire-and-forget, aber wir geben die ID zurück)
-    void this.deliver(delivery.id);
+    this.startDelivery(delivery.id);
 
     return { deliveryId: delivery.id };
   }
@@ -257,7 +257,7 @@ export class WebhookService {
       });
 
       // Delivery starten — fire-and-forget
-      void this.deliver(delivery.id);
+      this.startDelivery(delivery.id);
     }
   }
 
@@ -276,6 +276,37 @@ export class WebhookService {
    *   5. Response non-2xx oder Fehler → status=FAILED + retry (1s, 5s, 30s)
    *   6. Nach 3 Fehlversuchen → DEAD_LETTER
    */
+  /**
+   * Startet eine Zustellung, ohne den Aufrufer zu blockieren.
+   *
+   * Bugfix 2026-10-06. Vorher stand hier `void this.deliver(id)`.
+   * `deliver()` sichert NUR den HTTP-Aufruf per try/catch ab; die
+   * drei nachfolgenden Datenbank-Schreibweisen (`updateDelivery`)
+   * lagen ungeschuetzt ausserhalb. Deren Repository-Methode hat
+   * keinen internen catch (webhook.repository.ts). Ein DB-Fehler
+   * schoss damit aus `deliver()` heraus in eine verwaiste Promise.
+   *
+   * Belegt: `node` auf dem gleichen Muster bricht mit Exit-Code 1 ab,
+   * waehrend der Aufrufer bereits regulaer geantwortet hat — der
+   * Prozess waere im Betrieb mitten im Kanzleibetrieb gestorben.
+   * (Dieselbe Fehlerklasse wie bei `assertKanzleiReadAccess`.)
+   *
+   * Der Aufrufer bekommt die Delivery-ID und kann nicht auf den
+   * Zustellverlauf warten, deshalb MUSS die Rejection hier
+   * aufgefangen werden. Der Fehler geht nicht verloren: er wird
+   * protokolliert, und der Delivery-Eintrag bleibt auf PENDING/FAILED
+   * stehen und wird beim naechsten Lauf erneut versucht.
+   */
+  private startDelivery(deliveryId: string): void {
+    void this.deliver(deliveryId).catch((err: unknown) => {
+      this.logger.error(
+        `Webhook-Delivery ${deliveryId} unerwartet abgebrochen: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+    });
+  }
+
   async deliver(deliveryId: string): Promise<void> {
     const delivery = await this.repository.findDeliveryById(deliveryId);
     if (!delivery) {

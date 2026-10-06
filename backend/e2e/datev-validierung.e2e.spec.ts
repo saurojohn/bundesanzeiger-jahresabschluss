@@ -19,6 +19,17 @@
 
 const BASE = 'http://localhost:3000';
 
+// Diese Datei hat bewusst keinen Import und wäre damit ein globales
+// Skript — ihre `const BASE` kollidierte im CI-Gesamtbaum-Typecheck
+// (`tsc -p tsconfig.test.json`) mit der gleichnamigen Konstante in
+// `pagination.e2e.spec.ts`:
+//   error TS2451: Cannot redeclare block-scoped variable 'BASE'
+// Der Import-freie Aufbau ist Absicht (nur fetch, keine Nest-Module),
+// deshalb wird die Datei hier explizit zum Modul gemacht — genau wie
+// bei den anderen 14 e2e-Dateien, die `import` haben und deshalb ihren
+// `BASE` nicht in den globalen Scope legen.
+export {};
+
 async function login(): Promise<string> {
   const res = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',

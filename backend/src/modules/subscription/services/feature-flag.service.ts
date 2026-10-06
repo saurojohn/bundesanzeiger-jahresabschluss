@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { SubscriptionTier, FeatureFlag } from '../constants/subscription-tier.constants';
+import type { SubscriptionTier, FeatureFlag, TierConfig } from '../constants/subscription-tier.constants';
 import { TIER_CONFIGS } from '../constants/subscription-tier.constants';
 
 /**
@@ -50,9 +50,26 @@ export class FeatureFlagService {
 
   /**
    * Liefert die Tier-Config (für UI-Anzeige: Preis, Limits, Features).
+   *
+   * Bugfix 2026-10-07. Vorher `return TIER_CONFIGS[tier]` — bei einem
+   * unbekannten Tier kam `undefined` zurueck, und der Aufrufer
+   * (`loadSubscriptionFromDb`) griff ungeschuetzt auf
+   * `tierConfig.maxMandanten` zu: TypeError, HTTP 500 fuer
+   * `GET /api/subscription/:kanzleiId`.
+   *
+   * Ein einziger unplausibler Datenbankwert — etwa aus
+   * Stripe-Metadaten, die niemand validiert — hat damit einen
+   * DoS-aehnlichen Effekt auf die Kanzlei. Jetzt wird auf den
+   * schlechtesten bekannten Tier zurueckgefallen (PILOT), und
+   * `has()` bleibt als zweite Verteidigungslinie fail-closed.
    */
-  getTierConfig(tier: SubscriptionTier) {
-    return TIER_CONFIGS[tier];
+  getTierConfig(tier: SubscriptionTier): TierConfig {
+    const config = TIER_CONFIGS[tier];
+    if (config) return config;
+    this.logger.warn(
+      `Unbekannter Tier: '${String(tier)}' — Default-Tier PILOT wird verwendet`,
+    );
+    return TIER_CONFIGS.PILOT;
   }
 
   /**

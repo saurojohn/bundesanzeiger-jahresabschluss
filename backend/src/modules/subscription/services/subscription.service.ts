@@ -13,7 +13,11 @@ import { BillingProviderService } from './billing-provider.service';
 import { FeatureFlagService } from './feature-flag.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import type { SubscriptionTier, SubscriptionStatus } from '../constants/subscription-tier.constants';
-import { ACTIVE_STATUSES } from '../constants/subscription-tier.constants';
+import {
+  ACTIVE_STATUSES,
+  SUBSCRIPTION_TIERS,
+  SUBSCRIPTION_STATUSES,
+} from '../constants/subscription-tier.constants';
 import type {
   SubscriptionResponseDto,
   CheckoutResponseDto,
@@ -302,8 +306,33 @@ export class SubscriptionService {
       subscriptionPeriodEnd?: Date | null;
       subscriptionCancelAtEnd?: boolean | null;
     };
-    const tier = (k.subscriptionTier ?? 'PILOT') as SubscriptionTier;
-    const status = (k.subscriptionStatus ?? 'TRIALING') as SubscriptionStatus;
+    // Bugfix 2026-10-07: reiner Typ-Cast ohne Pruefung gegen die
+    // Whitelist. `subscriptionTier` kommt aus der Datenbank und
+    // urspruenglich aus Stripe-Metadaten, die niemand validiert.
+    // Ein unbekannter Wert liess `getTierConfig` `undefined` liefern,
+    // woraufhin `tierConfig.maxMandanten` einen TypeError warf ->
+    // HTTP 500 fuer `GET /api/subscription/:kanzleiId`.
+    //
+    // Beide Werte werden jetzt gegen die tatsaechlich vorhandenen
+    // Werte normalisiert. Unbekannt -> PILOT / TRIALING, also
+    // bewusst der am wenigsten berechtigende Zustand.
+    const rohTier = k.subscriptionTier ?? 'PILOT';
+    const tier = (SUBSCRIPTION_TIERS as readonly string[]).includes(rohTier)
+      ? (rohTier as SubscriptionTier)
+      : 'PILOT';
+    if (tier !== rohTier) {
+      this.logger.warn(
+        `Kanzlei ${kanzleiId}: unplausibler subscriptionTier '${rohTier}' ` +
+          `— auf PILOT zurueckgefallen`,
+      );
+    }
+
+    const rohStatus = k.subscriptionStatus ?? 'TRIALING';
+    const status = (SUBSCRIPTION_STATUSES as readonly string[]).includes(
+      rohStatus,
+    )
+      ? (rohStatus as SubscriptionStatus)
+      : 'TRIALING';
     const tierConfig = this.featureFlags.getTierConfig(tier);
 
     return {

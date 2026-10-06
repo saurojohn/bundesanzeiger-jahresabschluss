@@ -128,7 +128,9 @@ export class XbrlGeneratorService {
     const fiscalYearEnd = `${bilanz.geschaeftsjahr}-12-31`;
 
     const bilanzMappings = this.mapBilanzPositionen(bilanz.positionen);
-    const guvMappings = this.mapGuVPositionen(guv.positionen);
+    // verfahren MUSS mitgegeben werden: GKV und UKV teilen sich
+    // 11 Concept-Codes (Bugfix 2026-10-06).
+    const guvMappings = this.mapGuVPositionen(guv.positionen, guv.verfahren);
     const totals = this.computeTotalsFromBilanz(bilanz);
     const netIncome = Number(guv.ergebnis?.toString() ?? 0);
 
@@ -245,7 +247,7 @@ export class XbrlGeneratorService {
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
 
     const bilanzAktiva = this.mapBilanzPositionen(bilanz.positionen);
-    const guvPos = this.mapGuVPositionen(guv.positionen);
+    const guvPos = this.mapGuVPositionen(guv.positionen, guv.verfahren);
 
     const bilanzAktivaMappings = bilanzAktiva
       .filter((m) => m.concept.conceptType === 'Aktiva' && m.source.seite === 'AKTIVA')
@@ -332,11 +334,17 @@ export class XbrlGeneratorService {
     return result;
   }
 
-  private mapGuVPositionen(positionen: Array<{
-    kontonummer: string;
-    bezeichnung: string;
-    betragAktuell: { toString(): string } | string | number;
-  }>): Array<{
+  private mapGuVPositionen(
+    positionen: Array<{
+      kontonummer: string;
+      bezeichnung: string;
+      betragAktuell: { toString(): string } | string | number;
+    }>,
+    // `string` statt der Union: `GuVEntity.verfahren` ist im Prisma-Modell
+    // ein String. Die Normalisierung (`GKV` als Default) passiert in
+    // `guvKonzepte()`.
+    verfahren?: string,
+  ): Array<{
     source: { kontonummer: string; bezeichnung: string; betragAktuell: number };
     concept: TaxonomyConcept;
   }> {
@@ -345,7 +353,7 @@ export class XbrlGeneratorService {
       concept: TaxonomyConcept;
     }> = [];
     for (const pos of positionen) {
-      const concept = mapKontonummerToConcept(pos.kontonummer);
+      const concept = mapKontonummerToConcept(pos.kontonummer, verfahren);
       if (!concept) continue;
       // Nur Erloes / Aufwand / Steuer / Ergebnis-Konzepte.
       if (

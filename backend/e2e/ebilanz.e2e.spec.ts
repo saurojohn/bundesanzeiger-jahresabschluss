@@ -512,4 +512,56 @@ describe('E-Bilanz E2E (M2 Sprint 1+2)', () => {
     expect(valBody.valid).toBe(false);
     expect(valBody.errors.some((e) => e.code === 'BILANCE_MISMATCH')).toBe(true);
   });
+
+  /**
+   * Bugfix 2026-10-06 — GKV/UKV-Kollision im GuV-Mapping.
+   *
+   * GKV und UKV teilen sich 11 Concept-Codes. Die flache
+   * `TAXONOMY_CONCEPT_BY_CODE` liess UKV gewinnen, dadurch wurde ein
+   * GKV-GuV mit UKV-BEDEUTungen gemappt: GKV-„14. Steuern vom
+   * Einkommen und vom Ertrag" (15.000 EUR) erschien als `pl.netIncome`.
+   *
+   * Der Abschluss wies damit 15.000 EUR Jahresueberschuss aus statt
+   * 35.100 EUR — HTTP 200, `saldostimmt: true`, Validator „gueltig".
+   *
+   * Der Seed-GuV der Demo GmbH ist GKV,GJ 2025:
+   *   14. Steuern vom Einkommen   = 15.000,00
+   *   15. Ergebnis nach Steuern    = 35.100,00
+   * Diese beiden Zahlen sind der eigentliche Befund — die Concept-Namen
+   * sind nur das Werkzeug, mit dem der Fehler sichtbar wird.
+   */
+  it('GuV-Mapping folgt dem Verfahren: GKV-Steuerzeile wird nicht zum Jahresergebnis', async () => {
+    const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
+    const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Demo GmbH');
+    if (!mandant) throw new Error('Demo GmbH nicht gefunden');
+    const headers = await authHeaders(loginRes.accessToken);
+    const { bilanzId, guvId, anhangId } = await findTriplet(mandant.id, 2025, headers);
+
+    const res = await fetch(`${BASE}/api/ebilanz/generate?mandantId=${mandant.id}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ bilanzId, guvId, anhangId }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as GenerateEbilanzResponse;
+    const xml = Buffer.from(body.xbrlBase64, 'base64').toString('utf-8');
+
+    // Der Jahresueberschuss MUSS das echte GuV-Ergebnis sein …
+    expect(body.metadata.netIncome).toBe(35100);
+    const netIncome = /<pl\.netIncome[^>]*>([^<]*)</.exec(xml)?.[1];
+    expect(netIncome, 'pl.netIncome muss im XML stehen').toBeTruthy();
+    expect(Number(netIncome)).toBe(35100);
+
+    // … und die Steuerzeile MUSS die 15.000 tragen, nicht das Ergebnis.
+    const incomeTax = /<pl\.tax\.incomeTax[^>]*>([^<]*)</.exec(xml)?.[1];
+    expect(incomeTax, 'pl.tax.incomeTax muss im XML stehen').toBeTruthy();
+    expect(Number(incomeTax)).toBe(15000);
+
+    // Gegenprobe: GKV-„8. Sonstige betriebliche Aufwendungen" (50.000 EUR)
+    // war als `pl.finResult.participationIncome` abgebildet — dieselbe
+    // Code-Familie, falsche Kontenrahmenzeile.
+    const otherCost = /<pl\.otherCost[^>]*>([^<]*)</.exec(xml)?.[1];
+    expect(otherCost).toBeTruthy();
+    expect(Number(otherCost)).toBe(50000);
+  });
 });

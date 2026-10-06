@@ -57,6 +57,15 @@ export const TAXONOMY_CONCEPT_BY_CODE: ReadonlyMap<string, TaxonomyConcept> = ((
   return all;
 })();
 
+/*
+ * Bugfix 2026-10-06: GKV und UKV teilen sich 11 Concept-Codes. Beide
+ * Listen sind hier importiert und werden bewusst getrennt verwendet, damit
+ * das Mapping verfahrensbewusst aufloesen kann (siehe `guvKonzepte()` in
+ * mapping-engine.ts). `TAXONOMY_CONCEPT_BY_CODE` bleibt aus
+ * Rueckwaertskompatibilitaet bestehen, ist fuer GuV-Positionen aber
+ * NICHT mehr die Wahrheit.
+ */
+
 /**
  * Liefert ein Taxonomie-Konzept per Code oder null.
  */

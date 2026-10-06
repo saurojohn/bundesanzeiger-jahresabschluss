@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -70,7 +71,7 @@ export class DomainVerificationService {
     manualInstructions: string;
     autoCreated: boolean;
   }> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
 
     // Domain-Format-Validierung
     if (!this.isValidDomain(customDomain)) {
@@ -161,7 +162,7 @@ export class DomainVerificationService {
     user: AuthUser,
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<{ verified: boolean; reason?: string; checkedAt: Date }> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
 
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
@@ -256,13 +257,29 @@ export class DomainVerificationService {
     return regex.test(domain);
   }
 
-  private assertKanzleiAdminAccess(kanzleiId: string, user: AuthUser): void {
+  private async assertKanzleiAdminAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
     const isAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
     if (!isAdmin) {
       throw new ForbiddenException(
         'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Custom-Domain verifizieren',
       );
+    }
+    // Bugfix 2026-10-06: `kanzleiId` wurde bisher gar nicht verwendet.
+    // Die Rollenpruefung bewies nur „Admin IRGENDWO" — der Admin von
+    // Kanzlei A konnte Domain-Verifikation fuer Kanzlei B starten und
+    // bestaetigen, also das Branding einer fremden Kanzlei uebernehmen.
+    //
+    // `user.mandanten[].id` ist eine MANDANT-UUID, nicht die kanzleiId.
+    const mandant = await this.prisma.mandant.findFirst({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+      select: { id: true },
+    });
+    if (!mandant) {
+      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
     }
   }
 
@@ -274,6 +291,10 @@ export class DomainVerificationService {
     kanzleiId: string,
     data: Record<string, unknown>,
   ): Promise<void> {
+    // Bugfix 2026-10-06: der Fehler wurde nur protokolliert und
+    // geschluckt. `startVerification`/`confirmVerification` meldeten
+    // danach Erfolg, waehrend `customDomainVerified` still nicht
+    // gesetzt war — der Aufrufer glaubte, die Domain sei eintragen.
     try {
       await this.prisma.kanzlei.update({
         where: { id: kanzleiId },
@@ -282,6 +303,9 @@ export class DomainVerificationService {
     } catch (err) {
       this.logger.error(
         `Kanzlei-Update fehlgeschlagen: ${(err as Error).message}`,
+      );
+      throw new InternalServerErrorException(
+        'Die Domain konnte nicht gespeichert werden. Bitte erneut versuchen.',
       );
     }
   }

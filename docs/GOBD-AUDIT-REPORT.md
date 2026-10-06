@@ -169,6 +169,116 @@ offizielle DATEV-Kontobezeichnungen.
 
 ---
 
+### Nachtrag 2026-10-06: E-Bilanz und DATEV systematisch geprüft
+
+Bei einer Durchsicht der E-Bilanz- und DATEV-Pfade fanden sich sechs
+Defekte, die alle dasselbe Muster tragen: **ein Schritt prüfte nichts,
+und die nachgelagerten Prüfungen bestätigten genau das.**
+
+#### 1. GuV-Mapping löste die GKV/UKV-Kollision nicht auf (kritisch)
+
+`TAXONOMY_CONCEPT_BY_CODE` ist eine flache Map über alle Konzepte; UKV
+wurde als letzter Import eingetragen und überschrieb dort GKV. Für den
+GKV-Seed-GuV der Demo GmbH (GJ 2025) bedeutete das:
+
+| Position | Betrag | Gemappt auf (vorher) | Richtig |
+|---|---|---|---|
+| 14. Steuern vom Einkommen | 15.000 € | `pl.netIncome` | `pl.tax.incomeTax` |
+| 8. Sonstige betr. Aufwendungen | 50.000 € | `pl.finResult.participationIncome` | `pl.otherCost` |
+
+Die eingereichte E-Bilanz wies damit **15.000 € Jahresüberschuss** aus
+statt der tatsächlichen **35.100 €** — bei HTTP 200, `saldostimmt: true`
+und einem Validator, der die Datei als gültig meldete. Für § 264 HGB ist
+das eine falsche Jahresabschluss-Erklärung.
+
+Der Fehler hatte zwei Ebenen: die Mapping-Engine löste die Kollision
+nicht auf **und** `generateEbilanzXbrl()` reichte `guv.verfahren` nicht
+durch. Beide Ebenen sind getestet — ein Mapping-Engine-Test allein
+sieht den Aufrufer-Fehler nicht.
+
+#### 2. Jede erzeugte XBRL-Datei war namespace-invalid
+
+`buildXbrlXml()` schrieb `xlink:type` und `xlink:href` in
+`link:schemaRef`, ohne `xmlns:xlink` zu deklarieren. Belege gegen die
+echte API-Antwort:
+
+- `xml.etree.ElementTree`: `ParseError: unbound prefix: line 1`
+- `xmllint`: `Namespace prefix xlink for href on schemaRef is not defined`
+
+`XbrlValidatorService` meldete die Datei als gültig, weil
+`XMLValidator` aus fast-xml-parser **ohne Namespace-Auflösung** prüft.
+Die Datei konnte weder gelesen noch geprüft werden — der eigene
+Validator bestätigte die Unlesbarkeit. Der Validator prüft jetzt
+`UNBOUND_NAMESPACE_PREFIX`, und zwar **vor** dem Parser: ein Parser käme
+an solchen Dateien nicht vorbei, die Prüfung wäre unerreichbar.
+
+#### 3. Kein Saldo-Gate: nicht saldostimmende Bilanz erzeugte eine Datei
+
+Aktiva 0 / Passiva 30.000 → HTTP 200, **4.837 Byte XBRL**,
+`metadata.saldostimmt: false`. Das Gate lag im Response, nicht vor der
+Datei. Jetzt: 400 `BILANZ_NICHT_SALDOSTIMMIG`, kein Audit-Eintrag für
+eine Datei, die es nicht gibt.
+
+#### 4. Die Saldo-Toleranz war in Cent benannt und in Euro angewendet
+
+```ts
+const SALDO_TOLERANZ_CENTS = 1; // 0.01 EUR Toleranz
+Math.abs(aktivaSumme - passivaSumme) < SALDO_TOLERANZ_CENTS  // Summen in EUR
+```
+
+Wirksame Toleranz: **1,00 € statt 0,01 €**. Im E-Bilanz-Validator stand
+`differenz > SALDO_TOLERANZ_CENTS`, sodass dort sogar genau 1,00 €
+durchging. Betroffen: `xbrl-generator`, `xbrl-validator`,
+`bilanz.service`. In `konsolidierung` stand
+`const SALDO_TOLERANZ_CENTS = 1; void SALDO_TOLERANZ_CENTS;` — eine
+deklarierte, nie benutzte Toleranz. Die Regel liegt jetzt einmal in
+`src/common/utils/saldo.ts`; Gate und Prüfung teilen sie sich, damit im
+Grenzfall nicht eine Datei entsteht und zugleich als nicht
+saldostimmig gemeldet wird.
+
+#### 5. Stiller Positionsverlust — fünf Passiva-Zeilen fehlten in jeder Datei
+
+`previewMapping()` gab `unMapped: []` hart zurück. Der Mapper verwarf
+Positionen per `continue`. Die Ursache war eine Mehrdeutigkeit im
+Kontenrahmen: `A.III.1.`–`A.III.6.` und `D.` existieren auf **beiden**
+Bilanzseiten.
+
+| Schlüssel | Aktiva | Passiva |
+|---|---|---|
+| `A.III.1.` | Anteile an verbundenen Unternehmen | Gesetzliche Rücklage |
+| `D.` | Aktive latente Steuern | Rechnungsabgrenzungsposten |
+
+Der Mapper kannte die Seite nicht und lieferte den ersten Treffer —
+Aktiva war zuerst registriert. Ergebnis: **fünf Passiva-Positionen
+(Jahresabschluss GJ 2025, Demo GmbH) fehlten in jeder generierten
+E-Bilanz.** Die Passiva-Konzepte existierten und trugen die passenden
+Kontenrahmenzeilen; sie wurden nur nie erreicht. Nach dem Fix:
+`unMapped: 0`, Datei 9.289 → 9.859 Byte, sechs zusätzliche Concepts im
+XML. `metadata.unMapped` und ein Audit-Feld machen den Verlust künftig
+sichtbar — bewusst **kein** harter Block, weil beides falsch wäre.
+
+#### 6. Sachkonto-Export prüfte seine Eingaben nicht
+
+`GenerateSachkontenDto` hatte nur Typprüfungen. Belegt, alle HTTP 200:
+
+| Eingabe | Ergebnis vorher |
+|---|---|
+| `usedKonten: []` | `anzahlKonten: 0`, nur Kopfzeile |
+| `usedKonten: '0400'` | 4 Zeilen: `"0"`, `"4"`, `"0"`, `"0"` |
+| `usedKonten: ['HACKER; DROP TABLE', …]` | wörtlich in der CSV |
+| `beraternummer: ''` | `EXTF_Sachkontobeschriftungen__7654321.csv` |
+| `beraternummer: '../etc/passwd'` | landet im Dateinamen |
+
+#### Lehre für den Audit
+
+Ein Test, der prüft, dass ein Feld *vorkommt*, prüft nicht, dass es
+*richtig* ist. Drei der sechs Defekte fielen durch, weil ein vorhandener
+Test die Anwesenheit eines Wertes bestätigte und niemand seinen Inhalt
+fragte. Für die externe Prüfung heißt das: „`saldostimmt: true`" und
+„`valid: true`" sind ohne Gegenprobe kein Nachweis.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

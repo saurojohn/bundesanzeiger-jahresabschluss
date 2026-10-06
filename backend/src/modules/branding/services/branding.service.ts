@@ -343,11 +343,26 @@ export class BrandingService {
     kanzleiId: string,
     user: AuthUser,
   ): Promise<{ buffer: Buffer; contentType: string } | null> {
+    // Bugfix 2026-10-06: die Pruefung stand (a) ohne `await` und (b)
+    // NACH dem Kanzlei-Lookup.
+    //
+    //   (a) Ohne `await` warf `assertKanzleiReadAccess()` in eine
+    //       verwaiste Promise: die Ablehnung griff nicht UND Node
+    //       beendete den Prozess an der `unhandledRejection`. Ein
+    //       normaler Logo-Abruf einer fremden Kanzlei lieferte damit
+    //       das fremde Logo aus WORM — und legte den Dienst still.
+    //       (Identische Fehlerklasse wie `assertKanzleiReadAccess` in
+    //       Zeile 115, das korrekt awaited wird.)
+    //
+    //   (b) Nach dem Lookup konnte ein fremder User zusaetzlich
+    //       unterscheiden, ob eine Kanzlei existiert (404) und ob sie
+    //       ein Logo hat (200 mit `null`) — beides vor der Pruefung.
+    //       Die Pruefung gehoert vor jede Existenz-Auskunft.
+    await this.assertKanzleiReadAccess(kanzleiId, user);
+
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
     if (!kanzlei.logoWormKey) return null;
-
-    this.assertKanzleiReadAccess(kanzleiId, user);
 
     const buffer = await this.storageService.downloadFromWorm(kanzlei.logoWormKey);
     // Content-Type wird per Metadata gespeichert — wir leiten ihn aus dem

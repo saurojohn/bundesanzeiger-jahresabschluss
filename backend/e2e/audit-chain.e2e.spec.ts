@@ -96,7 +96,52 @@ describe('Audit-Hash-Chain (e2e, zwei Kanzleien)', () => {
       });
     }
     // Die Hash-Berechnung laeuft ueber eine Queue.
-    await new Promise((r) => setTimeout(r, 400));
+    //
+    // Bugfix 2026-10-07. Vorher stand hier ein FESTER Sleep von 400 ms.
+    // Das ist der Grund fuer die beobachtete Flakiness: unter Last ist
+    // die Queue nach 400 ms nicht fertig, und die Pruefungen unten
+    // schlagen fehl, obwohl der Produktivcode korrekt ist. In drei
+    // aufeinanderfolgenden Gesamtläufen schwankte die Fehlerzahl
+    // zwischen 1 und 3 — und in anderen Läufen war alles gruen.
+    //
+    // Stattdessen wird jetzt gepollt, bis die erwartete Anzahl
+    // Eintraege mit gesetztem entryHash tatsaechlich in der DB liegt.
+    // Deterministisch statt zeitabhängig — mit grosszuegigem Timeout,
+    // damit ein echter Defekt weiterhin rot wird statt in einen Timeout
+    // zu laufen.
+    await warteBisAlleEintraegeVerarbeitet(
+      prisma,
+      kanzleiId,
+      anzahl,
+      5000,
+    );
+  }
+
+  /**
+   * Wartet, bis fuer `kanzleiId` mindestens `erwartet` Audit-Eintraege
+   * mit gesetztem `entryHash` vorliegen.
+   */
+  async function warteBisAlleEintraegeVerarbeitet(
+    client: PrismaService,
+    kanzleiId: string,
+    erwartet: number,
+    timeoutMs: number,
+  ): Promise<void> {
+    const start = Date.now();
+    for (;;) {
+      const anzahlGeschrieben = await client.auditLog.count({
+        where: { kanzleiId, entryHash: { not: null } },
+      });
+      if (anzahlGeschrieben >= erwartet) return;
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(
+          `Audit-Queue nicht abgeschlossen: ${String(anzahlGeschrieben)}/${String(
+            erwartet,
+          )} Eintraege mit entryHash nach ${String(timeoutMs)}ms`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
   }
 
   it('schreibt kanzleiId und verkettet die Eintraege', async () => {
@@ -139,7 +184,7 @@ describe('Audit-Hash-Chain (e2e, zwei Kanzleien)', () => {
       where: { entityId: 'ohne-kanzlei' },
       orderBy: { createdAt: 'desc' },
     });
-    expect(eintrag, 'der Eintrag muss geschrieben worden sein').toBeTruthy();
+    expect(eintrag, 'der Eintrag muss anzahlGeschrieben worden sein').toBeTruthy();
     expect(
       eintrag?.kanzleiId,
       'kanzleiId muss aus der mandantId abgeleitet werden',

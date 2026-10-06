@@ -33,6 +33,8 @@ export const PDF_LAYOUT = {
     accent: '#003366', // HGB-Blau
     zebra: '#f4f6f8',
     rule: '#cccccc',
+    // Warnfarbe fuer Saldo-/Abweichungshinweise (Bugfix 2026-10-06).
+    danger: '#c0392b',
   },
 } as const;
 

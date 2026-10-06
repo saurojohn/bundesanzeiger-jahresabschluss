@@ -338,7 +338,15 @@ export class PdfService {
     });
 
     const mandant = await this.loadMandant(mandantId);
-    const filename = this.buildFilename(entityType, mandant, manifest.entityType);
+    // Das Geschaeftsjahr aus dem WORM-Objektschluessel
+    // (`mandant/<id>/<typ>/<jahr>/<suffix>.pdf`), nicht das laufende Jahr.
+    const jahrAusKey = /\/(\d{4})\//.exec(manifest.objectKey)?.[1];
+    const filename = this.buildFilename(
+      entityType,
+      mandant,
+      manifest.entityType,
+      jahrAusKey ? Number(jahrAusKey) : undefined,
+    );
 
     return {
       buffer,
@@ -581,16 +589,27 @@ export class PdfService {
     return bereinigt.slice(0, 16).padEnd(16, '0');
   }
 
+  /**
+   * Download-Dateiname.
+   *
+   * `geschaeftsjahr` statt `new Date().getUTCFullYear()` (Bugfix
+   * 2026-10-06): ein Abschluss fuer 2025, der im Januar 2026 geladen
+   * wird, hiess zuvor „bilanz-demo-gmbh-2026.pdf" — der Dateiname
+   * behauptete ein Geschaeftsjahr, das nicht dem Abschluss entspricht.
+   * Fuer ein Pflichtdokument mit Aufbewahrungspflicht ist der
+   * Dateiname Teil der Ablage.
+   */
   private buildFilename(
     entityType: PdfEntityType,
     mandant: Mandant,
     _wormEntityType: string,
+    geschaeftsjahr?: number,
   ): string {
     const slug = mandant.firmenname
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
-    const year = new Date().getUTCFullYear();
+    const year = geschaeftsjahr ?? new Date().getUTCFullYear();
     return `${entityType.toLowerCase()}-${slug}-${year}.pdf`;
   }
 

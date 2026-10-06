@@ -113,11 +113,22 @@ export function createAbschlussPdfDoc(
   doc.text('• Anhang (§§ 284–289 HGB)', { align: 'center' });
   doc.moveDown(2);
 
+  // Bugfix 2026-10-06. Vorher stand hier woertlich
+  // „PDF/A-3-konform". Das erzeugte PDF enthielt nachweislich KEIN
+  // /Metadata (XMP), KEIN /OutputIntent, KEIN /ICCProfile, KEIN
+  // /StructTreeRoot, und die Schriften (Helvetica) waren nicht
+  // eingebettet. Die Konformitaetsaussage auf dem Titelblatt eines
+  // veroeffentlichungspflichtigen Dokuments war damit falsch.
+  //
+  // Bewusst ERSETZT und nicht ergaenzt: eine zusaetzliche Einschraenkung
+  // („PDF/A-3 angestrebt") waere eine Behauptung, die wir nicht belegen
+  // koennen. Was wir tatsaechlich tun, steht hier jetzt.
   doc
     .fontSize(9)
     .fillColor(PDF_LAYOUT.colors.rule)
     .text(
-      'PDF/A-3-konform · WORM-archiviert (S3 Object Lock, COMPLIANCE, 3650 Tage)',
+      'WORM-archiviert (S3 Object Lock, COMPLIANCE, 3650 Tage) · ' +
+        'Integritaet ueber SHA-256 im WORM-Manifest',
       { align: 'center' },
     );
 
@@ -158,8 +169,43 @@ export function createAbschlussPdfDoc(
   doc.font('Helvetica');
   doc.moveDown(0.5);
 
+  // Bugfix 2026-10-06. Diese Schleife hatte KEINE Umbruchpruefung:
+  // `const y = doc.y; doc.y = y + 14;` laeuft einfach durch. Empirisch
+  // belegt: 60 Positionen ergaben Zeilen bis y=90 — unterhalb des
+  // Satzspiegels (A4 841,9 hoch, Textbereich endet ~714). Die Inhalte
+  // landeten in der Fuss-/Unterseitenzone. Sie wurden nicht
+  // abgeschnitten, aber aus dem Seitenraster gedraengt — fuer ein
+  // veroeffentlichungspflichtiges Dokument eine unvollstaendige
+  // Darstellung.
+  //
+  // `bilanz.template.ts` und `guv.template.ts` fuehren genau diese
+  // Pruefung seit 2026-10-01; das Abschluss-Template blieb zurueck.
+  const pageBottom = doc.page.height - PDF_LAYOUT.margins.bottom - 30;
+  const drawColumnHeader = () => {
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(PDF_LAYOUT.colors.accent);
+    doc.text('AKTIVA', tableLeft, doc.y, {
+      width: colWidthAktiva,
+      align: 'left',
+    });
+    doc.text('PASSIVA', tableLeft + colWidthAktiva + 20, doc.y - 12, {
+      width: colWidthPassiva,
+      align: 'left',
+    });
+    doc.font('Helvetica');
+    doc.moveDown(0.5);
+  };
+
   const maxLen = Math.max(aktiva.length, passiva.length);
   for (let i = 0; i < maxLen; i += 1) {
+    // Umbruch, BEVOR die Zeile gesetzt wird. Feste Zeilenhoehe 14 —
+    // wie bisher, deshalb bleibt das Layout identisch, nur die
+    // Seitenverteilung ist jetzt korrekt.
+    if (doc.y + 14 + 6 > pageBottom) {
+      doc.addPage();
+      doc.fontSize(PDF_LAYOUT.font.size);
+      drawColumnHeader();
+      doc.fontSize(9);
+    }
     const y = doc.y;
     if (i % 2 === 0) {
       doc
@@ -211,9 +257,35 @@ export function createAbschlussPdfDoc(
 
   doc.moveDown(0.5);
   doc.fontSize(11).font('Helvetica-Bold').fillColor(PDF_LAYOUT.colors.accent);
-  doc.text(`Bilanzsumme: ${formatBetrag(Math.max(aktivaSumme, passivaSumme))} €`, {
-    align: 'center',
-  });
+  // Bugfix 2026-10-06. Vorher stand hier `Math.max(aktivaSumme,
+  // passivaSumme)`: bei Aktiva ≠ Passiva wurde die GROESSERE Summe
+  // als „Bilanzsumme" ausgegeben — ohne Saldo-Hinweis und ohne
+  // Differenzangabe. Das Einzel-Bilanz-PDF wies dieselbe Differenz
+  // rot aus; das eigentlich veroeffentlichungsrelevante
+  // Gesamtdokument verschwieg sie. Eine Ausgleichsposition von 5,00
+  // war damit unsichtbar.
+  const saldoDifferenz = Number((aktivaSumme - passivaSumme).toFixed(2));
+  const saldoStimmig = Math.abs(saldoDifferenz) <= 0.01;
+  doc.text(
+    `Bilanzsumme: ${formatBetrag(
+      saldoStimmig ? aktivaSumme : Math.max(aktivaSumme, passivaSumme),
+    )} €`,
+    { align: 'center' },
+  );
+  if (!saldoStimmig) {
+    doc
+      .fontSize(9)
+      .fillColor(PDF_LAYOUT.colors.danger)
+      .text(
+        `Achtung: Bilanz nicht ausgeglichen — Aktiva ${formatBetrag(
+          aktivaSumme,
+        )} € / Passiva ${formatBetrag(passivaSumme)} €, ` +
+          `Differenz ${formatBetrag(saldoDifferenz)} €`,
+        { align: 'center' },
+      )
+      .font('Helvetica')
+      .fillColor(PDF_LAYOUT.colors.primary);
+  }
   doc.font('Helvetica').fillColor(PDF_LAYOUT.colors.primary);
 
   // ============== GuV-Seite ==============

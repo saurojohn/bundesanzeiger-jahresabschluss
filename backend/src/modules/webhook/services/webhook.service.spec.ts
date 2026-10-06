@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ForbiddenException } from '@nestjs/common';
 import { WebhookService } from './webhook.service';
 
 const KANZLEI_ID = 'aaaaaaaa-5555-4555-8555-aaaaaaaaaaaa';
@@ -49,13 +50,28 @@ function buildService(opts: { updateDeliveryThrows: boolean }) {
     updateSubscriptionDeliveryStatus: vi.fn().mockResolvedValue(undefined),
   };
 
+  // Prisma-Stub: die Zugriffspruefung loest ueber den Mandanten auf
+  // (`kanzleiId` + Mandant-UUID des Users). Standardmaessig gehoert der
+  // Mandant zur gesuchten Kanzlei.
+  const prisma = {
+    mandant: {
+      findFirst: vi.fn().mockImplementation(
+        async ({ where }: { where: { kanzleiId: string; id: { in: string[] } } }) =>
+          where.id.in.includes('mandant-1') && where.kanzleiId === KANZLEI_ID
+            ? { id: 'mandant-1' }
+            : null,
+      ),
+    },
+  };
+
   const service = new WebhookService(
+    prisma as never,
     repository as never,
     { record: vi.fn().mockResolvedValue(undefined) } as never,
     { signWebhookPayload: vi.fn().mockReturnValue('sig') } as never,
   );
 
-  return { service, repository };
+  return { service, repository, prisma };
 }
 
 /**
@@ -173,5 +189,123 @@ describe('WebhookService: Zustellung darf den Prozess nicht beenden', () => {
 
     expect(code).toMatch(/this\.startDelivery\(/);
     expect(code).not.toMatch(/void\s+this\.deliver\((?![^)]*\)\s*\.catch\()/);
+  });
+});
+
+describe('WebhookService: Kanzlei-Trennung der Zugriffsprüfung', () => {
+  const KANZLEI_A = 'aaaaaaaa-5555-4555-8555-aaaaaaaaaaaa';
+  const KANZLEI_B = 'bbbbbbbb-6666-4666-8666-bbbbbbbbbbbb';
+
+  /** User mit einem Mandanten, der zu KANZLEI_A gehoert. */
+  const userVonA = (rolle: string) =>
+    ({
+      id: 'e'.repeat(8) + '-5555-4555-8555-555555555555',
+      globalRole: null,
+      mandanten: [
+        { id: 'mandant-1', firmenname: 'A GmbH', rolle },
+      ],
+    }) as never;
+
+  function svc() {
+    const repository = {
+      findSubscriptionsByKanzlei: vi.fn().mockResolvedValue([]),
+      findDeliveriesBySubscription: vi.fn().mockResolvedValue([]),
+      findSubscriptionById: vi.fn().mockResolvedValue(null),
+      deleteSubscription: vi.fn().mockResolvedValue(undefined),
+    };
+    const prisma = {
+      mandant: {
+        // Mandant gehoert NUR zu KANZLEI_A.
+        findFirst: vi.fn().mockImplementation(
+          async ({ where }: { where: { kanzleiId: string; id: { in: string[] } } }) =>
+            where.kanzleiId === KANZLEI_A && where.id.in.includes('mandant-1')
+              ? { id: 'mandant-1' }
+              : null,
+        ),
+      },
+    };
+    const service = new WebhookService(
+      prisma as never,
+      repository as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { signWebhookPayload: vi.fn().mockReturnValue('sig') } as never,
+    );
+    return { service, repository, prisma };
+  }
+
+  it('liest die eigene Kanzlei', async () => {
+    const { service } = svc();
+    await expect(
+      service.listSubscriptions(KANZLEI_A, userVonA('STEUERBERATER')),
+    ).resolves.toBeDefined();
+  });
+
+  it('liest NICHT die Kanzlei eines anderen (BUG vor dem Fix)', async () => {
+    const { service } = svc();
+    // KANZLEI_ADMIN von A, aber kanzleiId zeigt auf B.
+    await expect(
+      service.listSubscriptions(KANZLEI_B, userVonA('KANZLEI_ADMIN')),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('verwaltet NICHT die Kanzlei eines anderen (BUG vor dem Fix)', async () => {
+    const { service } = svc();
+    await expect(
+      service.deleteSubscription('sub-x', KANZLEI_B, userVonA('KANZLEI_ADMIN'), {}),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('loest kein test-delivery gegen eine fremde Kanzlei aus (SSRF-Vektor)', async () => {
+    const { service, repository } = svc();
+    await expect(
+      service.testDelivery('sub-x', KANZLEI_B, userVonA('KANZLEI_ADMIN')),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    // Es darf keine Delivery erzeugt und kein HTTP-Request abgesetzt werden.
+    expect(repository.findSubscriptionById).not.toHaveBeenCalled();
+  });
+
+  it('verwaltet die eigene Kanzlei weiterhin (kein false positive)', async () => {
+    const { service, repository } = svc();
+    repository.findSubscriptionById.mockResolvedValue({
+      id: 'sub-1',
+      kanzleiId: KANZLEI_A,
+      url: 'https://example.invalid/hook',
+      secret: 's',
+      events: [],
+      isActive: true,
+      createdAt: new Date(),
+      lastDeliveryAt: null,
+      lastDeliveryStatus: null,
+    });
+    // Der eigentliche Aufruf darf die Kanzlei-Pruefung passieren.
+    // (Der nachfolgende Delivery-Pfad wird hier nicht weiter verfolgt.)
+    await service
+      .testDelivery('sub-1', KANZLEI_A, userVonA('KANZLEI_ADMIN'))
+      .catch(() => undefined);
+    expect(repository.findSubscriptionById).toHaveBeenCalled();
+  });
+
+  it('SYSTEM_ADMIN darf weiterhin jede Kanzlei', async () => {
+    const { service } = svc();
+    const sysadmin = {
+      id: 's'.repeat(8) + '-5555-4555-8555-555555555555',
+      globalRole: 'SYSTEM_ADMIN',
+      mandanten: [],
+    } as never;
+    await expect(
+      service.listSubscriptions(KANZLEI_B, sysadmin),
+    ).resolves.toBeDefined();
+  });
+
+  it('ein User ganz ohne Mandant kommt nirgends durch', async () => {
+    const { service } = svc();
+    const keiner = {
+      id: 'k'.repeat(8) + '-5555-4555-8555-555555555555',
+      globalRole: null,
+      mandanten: [],
+    } as never;
+    await expect(
+      service.listSubscriptions(KANZLEI_A, keiner),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

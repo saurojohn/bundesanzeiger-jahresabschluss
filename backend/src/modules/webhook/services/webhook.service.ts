@@ -27,6 +27,7 @@ import {
   WebhookSubscriptionDto,
 } from '../dto/webhook-subscription.dto';
 import type { AuthUser } from '../../auth/types/auth-user.types';
+import { PrismaService } from '../../../prisma/prisma.service';
 
 /**
  * Kontext für Webhook-Mutationen (Audit).
@@ -54,6 +55,7 @@ export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
 
   constructor(
+    private readonly prisma: PrismaService,
     private readonly repository: WebhookRepository,
     private readonly auditService: AuditService,
     private readonly apiKeyService: ApiKeyService,
@@ -72,7 +74,7 @@ export class WebhookService {
     user: AuthUser,
     context: WebhookContext,
   ): Promise<CreateWebhookSubscriptionResponseDto> {
-    this.assertKanzleiAdminAccess(args.kanzleiId, user);
+    await this.assertKanzleiAdminAccess(args.kanzleiId, user);
 
     // Event-Validierung
     for (const e of args.events) {
@@ -121,7 +123,7 @@ export class WebhookService {
     kanzleiId: string,
     user: AuthUser,
   ): Promise<WebhookSubscriptionDto[]> {
-    this.assertKanzleiAccess(kanzleiId, user);
+    await this.assertKanzleiAccess(kanzleiId, user);
     const subs = await this.repository.findSubscriptionsByKanzlei(kanzleiId);
     return subs.map((s) => this.toSubscriptionDto(s));
   }
@@ -135,7 +137,7 @@ export class WebhookService {
     user: AuthUser,
     context: WebhookContext,
   ): Promise<void> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
 
     const before = await this.repository.findSubscriptionById(id, kanzleiId);
     if (!before) throw new NotFoundException('Subscription nicht gefunden');
@@ -173,7 +175,7 @@ export class WebhookService {
       kanzleiId,
     );
     if (!sub) throw new NotFoundException('Subscription nicht gefunden');
-    this.assertKanzleiAccess(kanzleiId, user);
+    await this.assertKanzleiAccess(kanzleiId, user);
 
     const deliveries = await this.repository.findDeliveriesBySubscription(
       subscriptionId,
@@ -190,7 +192,7 @@ export class WebhookService {
     kanzleiId: string,
     user: AuthUser,
   ): Promise<{ deliveryId: string }> {
-    this.assertKanzleiAdminAccess(kanzleiId, user);
+    await this.assertKanzleiAdminAccess(kanzleiId, user);
 
     const sub = await this.repository.findSubscriptionById(
       subscriptionId,
@@ -489,9 +491,26 @@ export class WebhookService {
   // ===========================================================================
 
   /**
-   * KANZLEI_ADMIN-/SYSTEM_ADMIN-Check (für Mutation).
+   * KANZLEI_ADMIN-/SYSTEM_ADMIN-Check (fuer Mutation), ausschliesslich
+   * fuer die EIGENE Kanzlei.
+   *
+   * Bugfix 2026-10-06. Davor stand hier:
+   *
+   *   const isKanzleiAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+   *   ...
+   *   void kanzleiId;
+   *
+   * `kanzleiId` wurde also verworfen. Die Rollenpruefung ist strikt
+   * (`===`), beweist aber nur "Admin IRGENDWO". Folge: der
+   * KANZLEI_ADMIN von Kanzlei A konnte Subscriptions von Kanzlei B
+   * anlegen, loeschen und testen — inklusive `testDelivery`, das einen
+   * echten HTTP-Request auf eine selbst gewaehlte URL ausloest
+   * (Cross-Tenant + SSRF-Vektor).
    */
-  private assertKanzleiAdminAccess(kanzleiId: string, user: AuthUser): void {
+  private async assertKanzleiAdminAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
     const isKanzleiAdmin = user.mandanten.some(
       (m) => m.rolle === 'KANZLEI_ADMIN',
@@ -501,19 +520,38 @@ export class WebhookService {
         'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Webhooks verwalten',
       );
     }
-    void kanzleiId;
+    await this.assertKanzleiAccess(kanzleiId, user);
   }
 
   /**
    * Read-Check: Jeder User der Kanzlei darf Subscriptions lesen.
+   *
+   * Bugfix 2026-10-06. Davor:
+   *
+   *   const hasAccess = user.mandanten.some((m) => m.rolle !== undefined);
+   *   ...
+   *   void kanzleiId;
+   *
+   * `rolle !== undefined` ist fuer JEDEN Mandanten wahr. Die Pruefung
+   * bestaetigte damit nur, dass der User irgendwo ein Mandant hat —
+   * nicht, dass dieser Mandant zur angefragten Kanzlei gehoert.
+   * `listSubscriptions` und `listDeliveries` lieferten dadurch die
+   * Webhook-Ziele inklusive Ziel-URL fremder Kanzleien.
    */
-  private assertKanzleiAccess(kanzleiId: string, user: AuthUser): void {
+  private async assertKanzleiAccess(
+    kanzleiId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const hasAccess = user.mandanten.some((m) => m.rolle !== undefined);
-    if (!hasAccess) {
+    // `user.mandanten[].id` ist eine MANDANT-UUID, NICHT die kanzleiId.
+    // Deshalb wird ueber den Mandanten aufgeloest statt verglichen.
+    const mandant = await this.prisma.mandant.findFirst({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+      select: { id: true },
+    });
+    if (!mandant) {
       throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
     }
-    void kanzleiId;
   }
 
   private toSubscriptionDto(entity: {

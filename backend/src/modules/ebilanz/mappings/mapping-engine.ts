@@ -11,6 +11,8 @@ import {
   getTaxonomyConcept,
   HGB_KT_V6_GUV_GKV,
   HGB_KT_V6_GUV_UKV,
+  HGB_KT_V6_BILANZ_AKTIVA,
+  HGB_KT_V6_BILANZ_PASSIVA,
 } from '../mappings/hgb-kt-v6';
 
 /** GuV-Verfahrensvariante (GKV = Gesamtvollkosten, UKV = Umsatzkosten). */
@@ -37,6 +39,41 @@ function guvKonzepte(verfahren?: GuVVerfahren | string): TaxonomyConcept[] {
   return (verfahren ?? '').toUpperCase() === 'UKV'
     ? HGB_KT_V6_GUV_UKV
     : HGB_KT_V6_GUV_GKV;
+}
+
+/**
+ * Mappt eine Bilanz-Kontenrahmenzeile SEITENBEWUSST.
+ *
+ * Bugfix 2026-10-06. `A.III.1.` bis `A.III.6.` und `D.` existieren in
+ * BEIDEN Bilanz-Halften mit unterschiedlicher Bedeutung:
+ *
+ *   Aktiva  A.III.1.  Anteile an verbundenen Unternehmen
+ *   Passiva A.III.1.  Gesetzliche Ruecklage
+ *   Aktiva  D.        Aktive latente Steuern
+ *   Passiva D.        Rechnungsabgrenzungsposten
+ *
+ * `mapKontonummerToConcept()` kennt die Seite nicht und lieferte immer
+ * den ERSTEN Treffer — Aktiva ist zuerst registriert. Fuenf
+ * Passiva-Positionen (A.III.1.-A.III.4. und D.) wurden dadurch nie
+ * gemappt und fielen stillschweigend aus der E-Bilanz-Datei. Die
+ * Passiva-Konzepte existieren und tragen die passenden
+ * Kontenrahmenzeilen — sie wurden nur nie erreicht.
+ *
+ * Deshalb wird fuer die Bilanz ausschliesslich diese Funktion
+ * verwendet.
+ */
+export function mapBilanzKontonummerToConcept(
+  hgbKontenraheezeile: string,
+  seite: 'AKTIVA' | 'PASSIVA',
+): TaxonomyConcept | null {
+  const konzepte =
+    seite === 'AKTIVA' ? HGB_KT_V6_BILANZ_AKTIVA : HGB_KT_V6_BILANZ_PASSIVA;
+  for (const concept of konzepte) {
+    if (concept.hgbKontenraheezeile.includes(hgbKontenraheezeile)) {
+      return concept;
+    }
+  }
+  return null;
 }
 
 /**

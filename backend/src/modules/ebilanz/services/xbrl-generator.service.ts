@@ -23,6 +23,7 @@ import {
 } from '../mappings/hgb-kt-v6';
 import {
   mapKontonummerToConcept,
+  mapBilanzKontonummerToConcept,
   getTotalConcept,
 } from '../mappings/mapping-engine';
 import type { EbilanzPreparerDto } from '../dto/ebilanz-preparer.dto';
@@ -64,6 +65,42 @@ interface GeneratorInput {
  *   - Audit-Trail via AuditService.record
  *   - RBAC: nur Mandant-Owner (außer SYSTEM_ADMIN)
  */
+/**
+ * Ergebnis eines Mapping-Durchlaufs.
+ *
+ * Bugfix 2026-10-06: das Mapping hat Positionen previously per
+ * `continue` stillschweigend verworfen. `previewMapping()` meldete
+ * daraufhin `unMapped: []` — die Vorschau versprach Vollstaendigkeit,
+ * die es nicht gab. Beide Durchlaeufe melden jetzt, WAS und WARUM
+ * gefallen ist.
+ */
+type UnMappedEintrag = {
+  source: string;
+  kontonummer: string;
+  bezeichnung: string;
+  betragAktuell: number;
+  reason: string;
+};
+
+/**
+ * `S` traegt die bilanzspezifischen Felder (`seite`) — beim GuV gibt es
+ * keine Seite, dort bleibt `S` auf `unknown`. So bleibt der
+ * Rueckgabetyp je Aufrufstelle praezise, statt `seite` optional zu
+ * machen und damit `buildXbrlXml` seinen Vertrag zu entwerten.
+ */
+
+type MappingErgebnis<S = unknown> = {
+  mappings: Array<{
+    source: S & {
+      kontonummer: string;
+      bezeichnung: string;
+      betragAktuell: number;
+    };
+    concept: TaxonomyConcept;
+  }>;
+  unMapped: UnMappedEintrag[];
+};
+
 @Injectable()
 export class XbrlGeneratorService {
   private readonly logger = new Logger(XbrlGeneratorService.name);
@@ -128,10 +165,24 @@ export class XbrlGeneratorService {
     const fiscalYearBegin = `${bilanz.geschaeftsjahr}-01-01`;
     const fiscalYearEnd = `${bilanz.geschaeftsjahr}-12-31`;
 
-    const bilanzMappings = this.mapBilanzPositionen(bilanz.positionen);
+    const bilanzErgebnis = this.mapBilanzPositionen(bilanz.positionen);
     // verfahren MUSS mitgegeben werden: GKV und UKV teilen sich
     // 11 Concept-Codes (Bugfix 2026-10-06).
-    const guvMappings = this.mapGuVPositionen(guv.positionen, guv.verfahren);
+    const guvErgebnis = this.mapGuVPositionen(guv.positionen, guv.verfahren);
+    const bilanzMappings = bilanzErgebnis.mappings;
+    const guvMappings = guvErgebnis.mappings;
+    const unMapped = [...bilanzErgebnis.unMapped, ...guvErgebnis.unMapped];
+
+    // Positionsverluste sind jetzt sichtbar. Ohne diesen Hinweis war ein
+    // unvollstaendiger Abschluss nicht von einem vollstaendigen zu
+    // unterscheiden — die Datei entstand, die Zahl fehlte einfach.
+    if (unMapped.length > 0) {
+      this.logger.warn(
+        `E-Bilanz ${bilanz.geschaeftsjahr}: ${unMapped.length} Position(en) ohne ` +
+          `Taxonomie-Zuordnung und damit nicht in der XBRL-Datei: ` +
+          unMapped.map((u) => `${u.kontonummer} (${u.reason})`).join('; '),
+      );
+    }
     const totals = this.computeTotalsFromBilanz(bilanz);
     const netIncome = Number(guv.ergebnis?.toString() ?? 0);
 
@@ -220,6 +271,10 @@ export class XbrlGeneratorService {
         aufwandSumme,
         validationErrors: validation.errors.length,
         validationWarnings: validation.warnings.length,
+        // Positionsverluste mitprotokollieren: sonst ist spaeter nicht
+        // mehr erkennbar, dass die Datei unvollstaendig war.
+        unMappedAnzahl: unMapped.length,
+        unMappedPositionen: unMapped.map((u) => `${u.kontonummer}: ${u.reason}`),
       } as Prisma.JsonValue,
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,
@@ -237,6 +292,7 @@ export class XbrlGeneratorService {
       anzahlFacts: bilanzMappings.length + guvMappings.length + 1,
       geschaeftsjahr: bilanz.geschaeftsjahr,
       firmenname: mandant.firmenname,
+      unMapped,
     };
 
     return {
@@ -274,8 +330,10 @@ export class XbrlGeneratorService {
     );
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
 
-    const bilanzAktiva = this.mapBilanzPositionen(bilanz.positionen);
-    const guvPos = this.mapGuVPositionen(guv.positionen, guv.verfahren);
+    const bilanzErgebnis = this.mapBilanzPositionen(bilanz.positionen);
+    const guvErgebnis = this.mapGuVPositionen(guv.positionen, guv.verfahren);
+    const bilanzAktiva = bilanzErgebnis.mappings;
+    const guvPos = guvErgebnis.mappings;
 
     const bilanzAktivaMappings = bilanzAktiva
       .filter((m) => m.concept.conceptType === 'Aktiva' && m.source.seite === 'AKTIVA')
@@ -301,7 +359,7 @@ export class XbrlGeneratorService {
           calculationSign: '+1' as const,
         },
       })),
-      unMapped: [],
+      unMapped: [...bilanzErgebnis.unMapped, ...guvErgebnis.unMapped],
     };
   }
 
@@ -322,44 +380,63 @@ export class XbrlGeneratorService {
     kontonummer: string;
     bezeichnung: string;
     betragAktuell: { toString(): string } | string | number;
-  }>): Array<{
-    source: {
-      seite: 'AKTIVA' | 'PASSIVA';
-      kontonummer: string;
-      bezeichnung: string;
-      betragAktuell: number;
-    };
-    concept: TaxonomyConcept;
-  }> {
-    const result: Array<{
-      source: {
-        seite: 'AKTIVA' | 'PASSIVA';
-        kontonummer: string;
-        bezeichnung: string;
-        betragAktuell: number;
-      };
-      concept: TaxonomyConcept;
-    }> = [];
+  }>): MappingErgebnis<{ seite: 'AKTIVA' | 'PASSIVA' }> {
+    const mappings: MappingErgebnis<{ seite: 'AKTIVA' | 'PASSIVA' }>['mappings'] = [];
+    const unMapped: UnMappedEintrag[] = [];
 
     for (const pos of positionen) {
-      if (pos.seite !== 'AKTIVA' && pos.seite !== 'PASSIVA') continue;
-      const concept = mapKontonummerToConcept(pos.kontonummer);
-      if (!concept) continue;
+      const betragAktuell = Number(pos.betragAktuell.toString());
+      const verwerfen = (reason: string) => {
+        unMapped.push({
+          source: pos.bezeichnung,
+          kontonummer: pos.kontonummer,
+          bezeichnung: pos.bezeichnung,
+          betragAktuell,
+          reason,
+        });
+      };
+
+      if (pos.seite !== 'AKTIVA' && pos.seite !== 'PASSIVA') {
+        verwerfen(`Unbekannte Bilanzseite "${pos.seite}"`);
+        continue;
+      }
+      // Seitenbewusst: A.III.1.-A.III.6. und D. existieren auf beiden
+      // Bilanzseiten mit unterschiedlicher Bedeutung (Bugfix 2026-10-06).
+      const concept = mapBilanzKontonummerToConcept(pos.kontonummer, pos.seite);
+      if (!concept) {
+        // Bugfix 2026-10-06: dieser Pfad war ein stiller Datenverlust —
+        // die Position fiel aus der XBRL-Datei, ohne dass irgendwo
+        // sichtbar wurde, dass sie fehlt.
+        verwerfen(
+          `Kein Taxonomie-Konzept für HGB-Bilanzkonto "${pos.kontonummer}"`,
+        );
+        continue;
+      }
       // Nur Konzepte passend zur Seite.
-      if (pos.seite === 'AKTIVA' && concept.conceptType !== 'Aktiva') continue;
-      if (pos.seite === 'PASSIVA' && concept.conceptType !== 'Passiva') continue;
-      result.push({
+      if (pos.seite === 'AKTIVA' && concept.conceptType !== 'Aktiva') {
+        verwerfen(
+          `Konzept ${concept.code} ist ein ${concept.conceptType}-Konzept, steht aber auf der Aktivseite`,
+        );
+        continue;
+      }
+      if (pos.seite === 'PASSIVA' && concept.conceptType !== 'Passiva') {
+        verwerfen(
+          `Konzept ${concept.code} ist ein ${concept.conceptType}-Konzept, steht aber auf der Passivseite`,
+        );
+        continue;
+      }
+      mappings.push({
         source: {
           seite: pos.seite,
           kontonummer: pos.kontonummer,
           bezeichnung: pos.bezeichnung,
-          betragAktuell: Number(pos.betragAktuell.toString()),
+          betragAktuell,
         },
         concept,
       });
     }
 
-    return result;
+    return { mappings, unMapped };
   }
 
   private mapGuVPositionen(
@@ -372,17 +449,28 @@ export class XbrlGeneratorService {
     // ein String. Die Normalisierung (`GKV` als Default) passiert in
     // `guvKonzepte()`.
     verfahren?: string,
-  ): Array<{
-    source: { kontonummer: string; bezeichnung: string; betragAktuell: number };
-    concept: TaxonomyConcept;
-  }> {
-    const result: Array<{
-      source: { kontonummer: string; bezeichnung: string; betragAktuell: number };
-      concept: TaxonomyConcept;
-    }> = [];
+  ): MappingErgebnis {
+    const mappings: MappingErgebnis['mappings'] = [];
+    const unMapped: UnMappedEintrag[] = [];
     for (const pos of positionen) {
+      const betragAktuell = Number(pos.betragAktuell.toString());
+      const verwerfen = (reason: string) => {
+        unMapped.push({
+          source: pos.bezeichnung,
+          kontonummer: pos.kontonummer,
+          bezeichnung: pos.bezeichnung,
+          betragAktuell,
+          reason,
+        });
+      };
+
       const concept = mapKontonummerToConcept(pos.kontonummer, verfahren);
-      if (!concept) continue;
+      if (!concept) {
+        verwerfen(
+          `Kein ${(verfahren ?? 'GKV').toUpperCase()}-Taxonomie-Konzept für HGB-GuV-Konto "${pos.kontonummer}"`,
+        );
+        continue;
+      }
       // Nur Erloes / Aufwand / Steuer / Ergebnis-Konzepte.
       if (
         concept.conceptType !== 'Erloes' &&
@@ -390,18 +478,21 @@ export class XbrlGeneratorService {
         concept.conceptType !== 'Steuer' &&
         concept.conceptType !== 'Ergebnis'
       ) {
+        verwerfen(
+          `Konzept ${concept.code} ist ein ${concept.conceptType}-Konzept und kein GuV-Fakt`,
+        );
         continue;
       }
-      result.push({
+      mappings.push({
         source: {
           kontonummer: pos.kontonummer,
           bezeichnung: pos.bezeichnung,
-          betragAktuell: Number(pos.betragAktuell.toString()),
+          betragAktuell,
         },
         concept,
       });
     }
-    return result;
+    return { mappings, unMapped };
   }
 
   /**

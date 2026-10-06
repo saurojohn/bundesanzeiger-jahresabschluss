@@ -45,6 +45,20 @@ export interface EbilanzMetadata {
   geschaeftsjahr: number;
   /** Firmenname. */
   firmenname: string;
+  /**
+   * Positionen, die KEINEM Taxonomie-Konzept zugeordnet werden konnten
+   * und deshalb nicht in der XBRL-Datei stehen (Bugfix 2026-10-06).
+   *
+   * Nicht optional: eine leere Liste ist eine Aussage („nichts fiel
+   * aus"). Wer die Datei erzeugt, muss sehen koennen, ob sie stimmt.
+   */
+  unMapped: Array<{
+    source: string;
+    kontonummer: string;
+    bezeichnung: string;
+    betragAktuell: number;
+    reason: string;
+  }>;
 }
 
 /**

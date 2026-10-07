@@ -77,32 +77,74 @@ test('Neue GuV: Formular zeigt die GuV-Positionen (nicht leer)', async ({ page }
 
 test('Gesperrte GuV: Betragsfelder sind deaktiviert (kein stiller Datenverlust)', async ({ page }) => {
   await anmelden(page);
+  // BUGFIX 2026-10-07: Dieser Test hat sein Fixture GESUCHT statt es
+  // anzulegen — und dabei bei jedem Lauf still uebersprungen.
+  //
+  // Der Seed legt genau EINE GuV an, Status DRAFT. Gesucht wurde eine
+  // GuV mit `status !== 'DRAFT'` UND Positionen. Die gibt es nicht,
+  // also war `ziel === null`, also `test.skip(...)`. Der Pfad
+  // "gesperrte Datensaetze sind nicht bearbeitbar" wurde also NIE
+  // getestet — bei jedem Lauf, ohne Fehlermeldung.
+  //
+  // Das Fixture wird jetzt selbst erzeugt: die vorhandene GuV wird per
+  // PATCH auf einen gesperrten Status gesetzt. Damit haengt der Test
+  // nicht mehr am Seed und der Skip verschwindet.
   const ziel = await page.evaluate(async () => {
     const t = localStorage.getItem('accessToken');
     const l = (await (await fetch('/api/mandant', {
       headers: { Authorization: `Bearer ${t}` },
     })).json()) as Array<{ id: string }>;
+
     for (const m of l) {
+      const auth = {
+        Authorization: `Bearer ${t}`,
+        'x-mandant-id': m.id,
+        'content-type': 'application/json',
+      };
       const g = (await (await fetch(`/api/guv?mandantId=${m.id}`, {
-        headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': m.id },
+        headers: auth,
       })).json()) as Array<{ id: string; geschaeftsjahr: number; status: string }>;
-      // Nur einen gesperrten GuV MIT Positionen nehmen: ohne Positionen
-      // gibt es keine Betragsfelder, und der Test liefe leerlich grün
-      // (im Bestand existiert ein VALIDATED GuV mit 0 Positionen).
+
+      // Nur eine GuV MIT Positionen taugt — ohne Positionen gibt es
+      // keine Betragsfelder und der Test liefe leerlich gruen.
       for (const x of g) {
-        if (x.status === 'DRAFT') continue;
         const d = (await (await fetch(`/api/guv/${x.id}?mandantId=${m.id}`, {
-          headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': m.id },
+          headers: auth,
         })).json()) as { positionen?: unknown[] };
-        if ((d.positionen?.length ?? 0) > 0) {
-          return { mandantId: m.id, jahr: x.geschaeftsjahr, positionen: d.positionen!.length };
+        if ((d.positionen?.length ?? 0) === 0) continue;
+
+        // Auf einen gesperrten Status setzen. Ist sie schon gesperrt,
+        // bleibt sie unveraendert (idempotent).
+        if (x.status === 'DRAFT') {
+          const patch = await fetch(`/api/guv/${x.id}?mandantId=${m.id}`, {
+            method: 'PATCH',
+            headers: auth,
+            body: JSON.stringify({ status: 'VALIDATED' }),
+          });
+          if (!patch.ok) {
+            return { grund: `Statuswechsel auf VALIDATED → ${String(patch.status)}` } as const;
+          }
         }
+        return {
+          mandantId: m.id,
+          jahr: x.geschaeftsjahr,
+          positionen: d.positionen!.length,
+        };
       }
     }
-    return null;
+    return { grund: 'keine GuV mit Positionen im Datenbestand' } as const;
   });
-  test.skip(ziel === null, 'kein gesperrter GuV im Datenbestand');
-  await page.evaluate((m) => localStorage.setItem('activeMandantId', m), ziel!.mandantId);
+
+  // Kein stiller Skip mehr: fehlt das Fixture, ist das ein FEHLER.
+  if ('grund' in ziel) {
+    throw new Error(
+      `Sperrpfad-Fixture konnte nicht gebaut werden: ${String(ziel.grund)}. ` +
+        'Ohne diesen Test ist der Pfad "gesperrte Datensaetze sind nicht ' +
+        'bearbeitbar" ungeprueft — er wurde zuvor bei jedem Lauf ' +
+        'stillschweigend uebersprungen.',
+    );
+  }
+  await page.evaluate((m) => localStorage.setItem('activeMandantId', m), ziel.mandantId);
 
   await page.goto('http://localhost:3001/de-DE/guv');
   await page.waitForTimeout(2000);

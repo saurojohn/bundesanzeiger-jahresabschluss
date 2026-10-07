@@ -63,6 +63,32 @@ test('API-Schlüssel anlegen und widerrufen', async ({ page }) => {
   const seite = await page.locator('main').first().innerText();
   console.log('SEITE NACH ANLEGEN:', seite.replace(/\n+/g, ' | ').slice(0, 260));
 
+  // BUGFIX 2026-10-07: Das Modal MUSS geschlossen werden.
+  //
+  // `ApiKeysView` laedt die Liste erst in `onClose` des
+  // `PlaintextSecretModal` (`void loadKeys()`). Vorher wird gar keine
+  // Tabelle gerendert — bei `keys.length === 0` steht dort
+  // `apiKeys.empty`. Dieser Test hat das Modal nie geschlossen und
+  // ist trotzdem oft genug durchgelaufen: In der Datenbank lag aus
+  // einem VORHERIGEN Lauf noch ein Key, also war `keys.length > 0`
+  // und die Tabelle samt „Widerrufen" stand schon da.
+  //
+  // Sobald die Suite die Datenbank zuruecksetzt (mein `globalSetup`),
+  // gibt es keinen Rest-Key mehr — und der Test schlaegt zuverlaessig
+  // fehl. Er war also nie gruen, sondern nur zufaellig gruen.
+  const modalFertig = page.getByRole('button', { name: /verstanden|fertig|ok/i });
+  await expect(
+    modalFertig,
+    'die Token-Anzeige muss sich schliessen lassen',
+  ).toBeVisible();
+  await modalFertig.click();
+
+  // Jetzt erst existiert die Liste.
+  await expect(
+    page.getByRole('button', { name: 'Widerrufen' }).first(),
+    'nach dem Schliessen der Token-Anzeige muss die Liste erscheinen',
+  ).toBeVisible({ timeout: 15_000 });
+
   // --- Widerrufen
   const widerrufen = page.getByRole('button', { name: 'Widerrufen' }).first();
   await expect(widerrufen, 'der neue Schlüssel muss eine Widerruf-Aktion haben').toBeVisible();

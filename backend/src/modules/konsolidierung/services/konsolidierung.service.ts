@@ -392,6 +392,70 @@ export class KonsolidierungService {
       einheit.geschaeftsjahr,
     );
 
+    // BUGFIX 2026-10-07 — fail-closed statt stillschweigend falsch.
+    //
+    // Bis hierher war jeder Teilnehmer optional: `loadBilanzen…` und
+    // `loadGuVs…` haben fehlende Saetze per `continue` verworfen, ohne
+    // Log und ohne Warnung (`this.logger` war in der Datei deklariert
+    // und NIE benutzt). `apply` lief trotzdem durch und meldete Erfolg
+    // inklusive Salden.
+    //
+    // Der schlimmste Fall: `assertZieljahrFrei` VERLANGT, dass die Mutter
+    // fuer das Jahr KEINE Bilanz und KEINE GuV hat. Zwei Zeilen spaeter
+    // werden genau diese Saetze geladen — es gibt sie also nie. Die
+    // Konzern-Bilanz enthielt folglich ausschliesslich die Toechter.
+    // Eine Konzernrechnung ohne Muttergesellschaft ist keine
+    // Konzernrechnung, und sie sah vollstaendig aus.
+    //
+    // Beide Zweige des alten Verhaltens waren falsch:
+    //   Mutter HAT einen Satz  -> 400 „bitte erst loeschen"
+    //   Mutter HAT KEINEN      -> 201 mit einer报表 ohne die Mutter
+    //
+    // Welches Modell fachlich richtig ist (Konzernsatz ERSETZT den
+    // Einzelsatz der Mutter, oder der Konzernsatz braucht eine eigene
+    // Identitaet), ist eine Produktentscheidung und wird hier NICHT
+    // erfunden. Korrekt und entscheidbar ist nur: Ohne die Angaben der
+    // Mutter laeuft keine Konsolidierung.
+    const fehlendeMutterBilanz = !bilanzMap.some(
+      (e) => e.mandantId === einheit.mutterMandantId,
+    );
+    const fehlendeMutterGuv = !guvMap.some(
+      (e) => e.mandantId === einheit.mutterMandantId,
+    );
+    if (fehlendeMutterBilanz || fehlendeMutterGuv) {
+      throw new BadRequestException({
+        message:
+          `Konsolidierung nicht anwendbar: fuer die Muttergesellschaft fehlt ` +
+          `${fehlendeMutterBilanz && fehlendeMutterGuv ? 'die Jahresbilanz und die GuV' : fehlendeMutterBilanz ? 'die Jahresbilanz' : 'die GuV'} ` +
+          `fuer ${String(einheit.geschaeftsjahr)}. Ohne die Einzelabschluesse der ` +
+          'Mutter kann keine Konzernrechnung erstellt werden — die Konzern-Bilanz ' +
+          'wuerde ausschliesslich die Tochtergesellschafte enthalten und damit ' +
+          'voellig falsch sein.\n\nHinweis: `assertZieljahrFrei` verlangt zur Zeit, ' +
+          'dass die Mutter fuer das Jahr KEINE Saetze hat. Das widerspricht der ' +
+          'hier benoetigten Eingangsdatenlage und ist als bekannt offene ' +
+          'Spezifikationsluecke dokumentiert.',
+        code: 'MUTTER_OHNE_EINZELABSCHLUSS',
+        fehlendeMutterBilanz,
+        fehlendeMutterGuv,
+      });
+    }
+
+    const fehlendeToechter = [
+      ...new Set(
+        teilnehmerIds.filter((id) => !bilanzMap.some((e) => e.mandantId === id)),
+      ),
+      ...new Set(
+        teilnehmerIds.filter((id) => !guvMap.some((e) => e.mandantId === id)),
+      ),
+    ].filter((id) => id !== einheit.mutterMandantId);
+    if (fehlendeToechter.length > 0) {
+      this.logger.warn(
+        `Konsolidierung: ${String(fehlendeToechter.length)} Tochtergesellschaft(en) ` +
+          `haben keine Einzelabschluesse fuer ${String(einheit.geschaeftsjahr)} und ` +
+          `gehen unvollstaendig ein: ${fehlendeToechter.join(', ')}`,
+      );
+    }
+
     // 3. Konsolidierte Bilanz-Positionen erzeugen.
     const konsBilanzPositionen = this.aggregateBilanzPositionen(
       bilanzMap,
@@ -831,13 +895,27 @@ export class KonsolidierungService {
         geschaeftsjahr,
       );
       const target = allBilanzen[0];
-      if (!target) continue;
+      if (!target) {
+        // Bugfix 2026-10-07: fehlende Eingangsdaten wurden hier
+        // stillschweigend per `continue` verworfen. `this.logger` war in
+        // der gesamten Datei deklariert und NIE benutzt. Jetzt wird
+        // protokolliert, WER fehlt — eine unvollstaendige
+        // Konzern-Bilanz sieht sonst aus wie eine vollstaendige.
+        this.logger.warn(
+          `Konsolidierung: keine Bilanz fuer ${String(geschaeftsjahr)} bei ${mandantId}`,
+        );
+        continue;
+      }
       const withPos = await this.bilanzRepository.findWithPositionen(
         target.id,
         mandantId,
       );
       if (withPos) {
         result.push({ mandantId, bilanz: withPos });
+      } else {
+        this.logger.warn(
+          `Konsolidierung: Bilanz ${target.id} ohne Positionen ladbar fuer ${mandantId}`,
+        );
       }
     }
     return result;
@@ -857,13 +935,23 @@ export class KonsolidierungService {
         geschaeftsjahr,
       );
       const target = allGuVs[0];
-      if (!target) continue;
+      if (!target) {
+        // Siehe Kommentar im Bilanz-Loader.
+        this.logger.warn(
+          `Konsolidierung: keine GuV fuer ${String(geschaeftsjahr)} bei ${mandantId}`,
+        );
+        continue;
+      }
       const withPos = await this.guvRepository.findWithPositionen(
         target.id,
         mandantId,
       );
       if (withPos) {
         result.push({ mandantId, guv: withPos });
+      } else {
+        this.logger.warn(
+          `Konsolidierung: GuV ${target.id} ohne Positionen ladbar fuer ${mandantId}`,
+        );
       }
     }
     return result;

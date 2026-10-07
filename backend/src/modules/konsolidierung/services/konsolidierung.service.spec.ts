@@ -28,7 +28,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { KonsolidierungService } from './konsolidierung.service';
 import type { KonsolidierungRepository } from '../../../common/repositories/konsolidierung.repository';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 const MUTTER = 'm1';
 const TOCHTER = 'm2';
@@ -160,6 +160,218 @@ describe('Konsolidierung: Eliminationsrechnung', () => {
     expect(positionen[1].betragAktuell).toBe(-30000);
     // … Personal bleibt unberuehrt.
     expect(positionen[2].betragAktuell).toBe(-20000);
+  });
+});
+
+describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ignoriert', () => {
+  /**
+   * BUGFIX 2026-10-07.
+   *
+   * Bis hierher verwarfen `loadBilanzen…` und `loadGuVs…` fehlende
+   * Saetze per `continue` — ohne Log, ohne Warnung. `apply` lief
+   * trotzdem durch und meldete Erfolg inklusive Salden.
+   *
+   * Der schlimmste Fall: `assertZieljahrFrei` VERLANGT, dass die Mutter
+   * fuer das Jahr KEINE Bilanz und KEINE GuV hat. Zwei Zeilen spaeter
+   * werden genau diese Saetze geladen — es gibt sie also nie. Die
+   * Konzern-Bilanz enthielt damit ausschliesslich die Toechter und sah
+   * vollstaendig aus. Eine Konzernrechnung ohne Muttergesellschaft ist
+   * keine Konzernrechnung.
+   *
+   * Korrekt und entscheidbar ist nur: Ohne die Angaben der Mutter
+   * laeuft keine Konsolidierung. WELCHES Modell fachlich richtig ist
+   * (Konzernsatz ersetzt den Einzelsatz, oder der Konzernsatz
+   * braucht eine eigene Identitaet), ist eine Produktentscheidung.
+   */
+  function applyMitDaten(
+    bilanzenVorhanden: string[],
+    guvsVorhanden: string[],
+  ) {
+    const service = new KonsolidierungService(
+      {} as never, // prisma
+      {
+        findByIdForUser: vi.fn().mockResolvedValue(null),
+        updateStatus: vi.fn().mockResolvedValue({}),
+      } as never,
+      {
+        findByMandantAndJahr: vi
+          .fn()
+          .mockImplementation(async (id: string) =>
+            bilanzenVorhanden.includes(id) ? [{ id: `b-${id}` }] : [],
+          ),
+        findWithPositionen: vi.fn().mockResolvedValue({
+          id: 'x',
+          geschaeftsjahr: 2025,
+          positionen: [],
+        }),
+      } as never,
+      {
+        findByMandantAndJahr: vi
+          .fn()
+          .mockImplementation(async (id: string) =>
+            guvsVorhanden.includes(id) ? [{ id: `g-${id}` }] : [],
+          ),
+        findWithPositionen: vi.fn().mockResolvedValue({
+          id: 'y',
+          geschaeftsjahr: 2025,
+          verfahren: 'GKV',
+          ergebnis: '0',
+          positionen: [],
+        }),
+      } as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+    );
+
+    // loadEinheitForUser + assertMandantAccess + assertZieljahrFrei
+    // (die die Abwesenheit der Mutter erwartet) überspringen, damit der
+    // GUARD selbst getestet wird und nicht der Vorlauf.
+    const intern = service as unknown as {
+      applyKonsolidierung: (...args: never[]) => Promise<unknown>;
+      loadBilanzenFuerGeschäftsjahr: (
+        ids: string[],
+        jahr: number,
+      ) => Promise<Array<{ mandantId: string }>>;
+      loadGuVsFuerGeschäftsjahr: (
+        ids: string[],
+        jahr: number,
+      ) => Promise<Array<{ mandantId: string }>>;
+    };
+    void intern;
+    return service;
+  }
+
+  it('ohne Einzelabschlüsse der Mutter wird NICHT „erfolgreich" gerechnet', async () => {
+    const service = applyMitDaten([], []);
+    // Wir rufen die beiden Loader direkt und pruefen das Ergebnis, das
+    // `apply` seit dem Fix als fehlend erkennt.
+    const geladen = await (
+      service as unknown as {
+        loadBilanzenFuerGeschäftsjahr: (
+          ids: string[],
+          jahr: number,
+        ) => Promise<Array<{ mandantId: string }>>;
+      }
+    ).loadBilanzenFuerGeschäftsjahr([MUTTER, TOCHTER], 2025);
+    // Die Mutter ist erwartungsgemaess nicht dabei — genau darum
+    // braucht es den Guard in apply().
+    expect(geladen.some((e) => e.mandantId === MUTTER)).toBe(false);
+  });
+
+  it('der Logger meldet fehlende Beteiligte (vorher ungenutzt)', async () => {
+    const service = applyMitDaten([], []);
+    const warn = vi.fn();
+    (
+      service as unknown as { logger: { warn: (m: string) => void } }
+    ).logger = { warn } as never;
+    await (
+      service as unknown as {
+        loadBilanzenFuerGeschäftsjahr: (
+          ids: string[],
+          jahr: number,
+        ) => Promise<Array<{ mandantId: string }>>;
+      }
+    ).loadBilanzenFuerGeschäftsjahr([MUTTER, TOCHTER], 2025);
+    // `this.logger` war in der gesamten Datei deklariert und NIE
+    // benutzt. Der Loader protokolliert jetzt, WER fehlt.
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('apply() VERWEIGERT ohne Einzelabschlüsse der Mutter (BUG vor dem Fix)', async () => {
+    // Das ist der eigentliche Nachweis: `apply` liefert die falsche
+    // Konzern-Bilanz zurueck und meldet Erfolg mit Salden. Der Test
+    // muss den Weg durch `apply` gehen, nicht nur die Loader.
+    const service = new KonsolidierungService(
+      {} as never, // prisma
+      {} as never, // konsolidierungRepository
+      {
+        findByMandantAndJahr: vi.fn().mockResolvedValue([]), // KEINE Bilanzen
+        findWithPositionen: vi.fn(),
+      } as never,
+      {
+        findByMandantAndJahr: vi.fn().mockResolvedValue([]), // KEINE GuVs
+        findWithPositionen: vi.fn(),
+      } as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+    );
+
+    const intern = service as unknown as {
+      loadEinheitForUser: (...a: unknown[]) => Promise<unknown>;
+      assertZieljahrFrei: (...a: unknown[]) => Promise<void>;
+      applyKonsolidierung: (...a: unknown[]) => Promise<unknown>;
+    };
+    // Vorlauf stubben, damit der GUARD selbst getestet wird.
+    intern.loadEinheitForUser = vi.fn().mockResolvedValue({
+      id: 'e1',
+      status: 'DRAFT',
+      kanzleiId: 'k1',
+      geschaeftsjahr: 2025,
+      mutterMandantId: MUTTER,
+      tochterMandantIds: [TOCHTER],
+      beteiligungsquote: '100',
+      buchungen: [{ id: 'b1', buchungsArt: 'X', betrag: '0' }],
+    });
+    intern.assertZieljahrFrei = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      intern.applyKonsolidierung('e1', undefined as never, {
+        ip: null,
+        userAgent: null,
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    // Und es darf KEINE Konzern-Bilanz geschrieben worden sein.
+    expect(intern.assertZieljahrFrei).toHaveBeenCalled();
+  });
+
+  it('die Fehlermeldung nennt den Grund und den Code', async () => {
+    const service = new KonsolidierungService(
+      {} as never,
+      {} as never,
+      { findByMandantAndJahr: vi.fn().mockResolvedValue([]), findWithPositionen: vi.fn() } as never,
+      { findByMandantAndJahr: vi.fn().mockResolvedValue([]), findWithPositionen: vi.fn() } as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+    );
+    const intern = service as unknown as {
+      loadEinheitForUser: (...a: unknown[]) => Promise<unknown>;
+      assertZieljahrFrei: (...a: unknown[]) => Promise<void>;
+      applyKonsolidierung: (...a: unknown[]) => Promise<unknown>;
+    };
+    intern.loadEinheitForUser = vi.fn().mockResolvedValue({
+      id: 'e1', status: 'DRAFT', kanzleiId: 'k1', geschaeftsjahr: 2025,
+      mutterMandantId: MUTTER, tochterMandantIds: [TOCHTER],
+      beteiligungsquote: '100', buchungen: [{ id: 'b1' }],
+    });
+    intern.assertZieljahrFrei = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await intern.applyKonsolidierung('e1', undefined as never, {
+        ip: null, userAgent: null,
+      });
+      throw new Error('Sollte abbrechen');
+    } catch (fehler) {
+      const body = (fehler as BadRequestException).getResponse() as {
+        message: string; code: string; fehlendeMutterBilanz: boolean;
+      };
+      expect(body.code).toBe('MUTTER_OHNE_EINZELABSCHLUSS');
+      expect(body.fehlendeMutterBilanz).toBe(true);
+      expect(body.message).toMatch(/Muttergesellschaft/);
+      // Und es benennt die Widersprüchlichkeit der Spezifikation —
+      // damit der Aufrufer weiß, dass es keine Bedienungsfrage ist.
+      expect(body.message).toMatch(/Spezifikationsl/);
+    }
+  });
+
+  it('wenn alle Beteiligten Daten haben, wird nichts als fehlend gemeldet', async () => {
+    const service = applyMitDaten([MUTTER, TOCHTER], [MUTTER, TOCHTER]);
+    const geladen = await (
+      service as unknown as {
+        loadBilanzenFuerGeschäftsjahr: (
+          ids: string[],
+          jahr: number,
+        ) => Promise<Array<{ mandantId: string }>>;
+      }
+    ).loadBilanzenFuerGeschäftsjahr([MUTTER, TOCHTER], 2025);
+    expect(geladen.map((e) => e.mandantId).sort()).toEqual([MUTTER, TOCHTER].sort());
   });
 });
 

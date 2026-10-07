@@ -149,7 +149,19 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
     const postBody = (await post.json().catch(() => ({}))) as { message?: string };
     expect(post.status(), `Anlegen schlug fehl: ${postBody.message ?? ''}`).toBe(201);
 
-    // --- Anwenden
+    // --- Anwenden: die UI muss die Ablehnung SAUBER anzeigen.
+    //
+    // Bugfix 2026-10-07: Bis hierher erwartete der Test `status < 400`
+    // und ging dann zu „Finalisieren" weiter. Tatsaechlich lieferte
+    // `apply` HTTP 201 MIT `konzernBilanzId` und `salden` — obwohl die
+    // Konzernrechnung ausschliesslich die Tochtergesellschaften
+    // enthielt. `assertZieljahrFrei` verlangt, dass die Mutter fuer das
+    // Jahr KEINE Bilanz hat; die Ladung zwei Schritte spaeter fand sie
+    // deshalb nie.
+    //
+    // Der Test hat damit die Oberflaeche geprueft, die einen fachlich
+    // unbrauchbaren Abschluss als Erfolg darstellte. Er war nicht zu
+    // streng — er pruefte das Falsche.
     const anwenden = page.getByRole('button', { name: 'Anwenden' });
     await expect(anwenden, 'nach dem Berechnen muss "Anwenden" verfügbar sein').toBeVisible();
     await anwenden.click();
@@ -157,30 +169,55 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
       (r) => r.request().method() === 'POST' && r.url().includes('/apply'),
       { timeout: 20_000 },
     );
-    const applyBody = (await applyResp.json().catch(() => ({}))) as { message?: string };
-    expect(
-      applyResp.status(),
-      `Anwenden schlug fehl: ${applyBody.message ?? ''}`,
-    ).toBeLessThan(400);
-    expect(applyResp.status(), 'kein 5xx beim Anwenden').toBeLessThan(500);
+    const applyBody = (await applyResp.json().catch(() => ({}))) as {
+      message?: string;
+      code?: string;
+      konzernBilanzId?: string;
+    };
     await page.waitForTimeout(2500);
 
-    // --- Finalisieren
-    const finalisieren = page.getByRole('button', { name: 'Finalisieren' });
-    await expect(
-      finalisieren,
-      'nach dem Anwenden muss "Finalisieren" verfügbar sein',
-    ).toBeVisible();
-    await finalisieren.click();
-    const fin = await page.waitForResponse(
-      (r) => r.request().method() === 'POST' && r.url().includes('/finalize'),
-      { timeout: 20_000 },
-    );
-    const finBody = (await fin.json().catch(() => ({}))) as { message?: string };
-    expect(fin.status(), `Finalisieren schlug fehl: ${finBody.message ?? ''}`).toBeLessThan(400);
+    // 1. Kein 5xx — die Oberflaeche darf nicht abstuerzen.
+    expect(applyResp.status(), 'kein 5xx beim Anwenden').toBeLessThan(500);
 
+    // 2. Es darf KEINE Konzern-Bilanz entstehen. Das ist die eigentliche
+    //    Zusicherung, nicht der Statuscode: ein 400 koennte auch aus
+    //    einem voellig anderen Grund kommen.
+    expect(
+      applyBody.konzernBilanzId,
+      'es darf keine Konzern-Bilanz entstehen, die die Mutter nicht enthaelt',
+    ).toBeUndefined();
+
+    // 3. Die Ablehnung muss fuer den Anwender erklaerbar sein — deutscher
+    //    Text, kein "Internal server error", kein leerer Bildschirm.
+    //    Erwartet wird ausdruecklich 400: das ist die ABLEHNUNG, kein
+    //    Fehler der Oberflaeche.
+    expect(applyResp.status()).toBe(400);
+    expect(
+      String(applyBody.message ?? ''),
+      'die Ablehnung muss benennen, dass die Mutter fehlt',
+    ).toMatch(/Muttergesellschaft/i);
+
+    // 4. Nach der Ablehnung bleibt die Einheit unangetastet — es darf
+    //    kein „Finalisieren" geben, weil es nichts zu finalisieren gibt.
+    await expect(
+      page.getByRole('button', { name: 'Finalisieren' }),
+      'ohne Konzern-Bilanz darf die Einheit nicht finalisierbar sein',
+    ).toHaveCount(0);
+
+    // 5. Die Seite steht nicht im Fehlerzustand.
+    await expect(
+      page.getByRole('heading', { name: /konsolidierung/i }).first(),
+      'die Fachseite muss weiterhin gerendert werden',
+    ).toBeVisible();
+
+    // Der Schreibpfad-Sweep bleibt bestehen — mit einer Ausnahme: der
+    // `/apply`-Aufruf DARF 400 liefern, weil das jetzt die dokumentierte
+    // Ablehnung ist. Anlegen und Berechnen muessen weiterhin 2xx sein,
+    // und NICHTS darf 5xx werden.
     const schreibzugriffe = aufrufe.filter((a) => a.methode !== 'GET');
     for (const a of schreibzugriffe) {
+      expect(a.status, `${a.methode} ${a.url} → ${a.status} (kein 5xx erlaubt)`).toBeLessThan(500);
+      if (a.url.endsWith('/apply')) continue;
       expect(a.status, `${a.methode} ${a.url} → ${a.status}`).toBeLessThan(400);
     }
   });

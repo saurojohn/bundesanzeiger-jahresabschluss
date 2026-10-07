@@ -18,6 +18,13 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // DB vor jedem Lauf in einen definierten Ausgangszustand versetzen.
+  //
+  // Ohne das ist die Suite NICHT wiederholbar: `konsolidierung.spec.ts`
+  // beansprucht ein freies Geschäftsjahr und gibt es nie wieder frei —
+  // nach ~20 Läufen war der Lauf dauerhaft rot. Siehe
+  // `e2e/global-setup.ts` für die Belege.
+  globalSetup: './e2e/global-setup.ts',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

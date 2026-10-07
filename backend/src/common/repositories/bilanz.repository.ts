@@ -82,9 +82,19 @@ export class BilanzRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<BilanzWithoutPositionen[]> {
+    // Bugfix 2026-10-07: Seit der Konzernsatz ein eigener Datensatz ist
+    // (`konzernEinheitId`), liefert diese Abfrage auch die
+    // KONZERN-Bilanz der Mutter. Jeder Aufrufer, der "die Jahresbilanz"
+    // erwartet, bekam damit unter Umstaenden den Konzernabschluss —
+    // inklusive beim Speichern, wo es zu einem Fehler kam.
+    //
+    // Diese Methode liefert deshalb ausschliesslich EINZELSAETZE. Der
+    // Konzernsatz ist ueber die Konsolidierungseinheit erreichbar und
+    // wird dort bewusst geladen.
     const bilanzen = await this.prismaService.bilanz.findMany({
       where: {
         mandantId,
+        konzernEinheitId: null,
         ...(typeof jahr === 'number' ? { geschaeftsjahr: jahr } : {}),
       },
       orderBy: { geschaeftsjahr: 'desc' },
@@ -179,6 +189,11 @@ export class BilanzRepository {
   > {
     const where: Prisma.BilanzWhereInput = {
       mandantId: args.mandantId,
+      // Bugfix 2026-10-07: Der Konzernsatz ist ein eigener Datensatz.
+      // In der Mandantenliste ist er ein fremdes Objekt — er gehoert
+      // zur Konsolidierungseinheit, nicht in die Liste der
+      // Jahresabschluesse des Mandanten.
+      konzernEinheitId: null,
       ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
     };
 

@@ -74,9 +74,13 @@ export class GuVRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<GuVWithoutPositionen[]> {
+    // Bugfix 2026-10-07: siehe `bilanz.repository.ts` — nur EINZELSAETZE.
+    // Die Konzern-GuV ist ein eigener Datensatz (`konzernEinheitId`)
+    // und wird ueber die Konsolidierungseinheit geladen.
     return this.prismaService.guV.findMany({
       where: {
         mandantId,
+        konzernEinheitId: null,
         ...(typeof jahr === 'number' ? { geschaeftsjahr: jahr } : {}),
       },
       orderBy: { geschaeftsjahr: 'desc' },
@@ -126,6 +130,11 @@ export class GuVRepository {
   }): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null }>> {
     const where: Prisma.GuVWhereInput = {
       mandantId: args.mandantId,
+      // Bugfix 2026-10-07: Der Konzernsatz ist ein eigener Datensatz.
+      // In der Mandantenliste ist er ein fremdes Objekt — er gehoert
+      // zur Konsolidierungseinheit, nicht in die Liste der
+      // Jahresabschluesse des Mandanten.
+      konzernEinheitId: null,
       ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
     };
 

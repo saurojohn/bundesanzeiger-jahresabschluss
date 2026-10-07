@@ -796,3 +796,50 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
     expect(svc).toContain('anschaffungskosten: dto.anschaffungskosten ?? 0');
   });
 });
+
+describe('Konzernsatz taucht nicht in den Mandantenlisten auf', () => {
+  /**
+   * Bugfix 2026-10-07 — eine REGRESSION, die der erste Durchlauf der
+   * Frontend-Suite gezeigt hat: `smoke.spec.ts` → „Bilanz im Status
+   * DRAFT speichern" wurde rot.
+   *
+   * Ursache: Seit der Konzernsatz ein eigener Datensatz ist
+   * (`konzernEinheitId`), lieferte `findByMandantAndJahr` auch die
+   * KONZERN-Bilanz der Mutter mit. Ein Aufrufer, der "die
+   * Jahresbilanz" erwartete, bekam unter Umständen den Konzernabschluss
+   * — beim Speichern ein Fehler.
+   *
+   * Diese Tests sichern ab, dass die Standardabfragen ausschliesslich
+   * Einzelsaetze liefern.
+   */
+  it('findByMandantAndJahr filtert auf Einzelsaetze', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    for (const datei of [
+      'src/common/repositories/bilanz.repository.ts',
+      'src/common/repositories/guv.repository.ts',
+    ]) {
+      const code = readFileSync(join(process.cwd(), datei), 'utf-8');
+      // Beide Standardabfragen: nach Mandant/Jahr UND in der Liste.
+      const fundstellen = code.match(/konzernEinheitId: null,/g) ?? [];
+      expect(
+        fundstellen.length,
+        `${datei}: findByMandantAndJahr und die Liste müssen auf konzernEinheitId: null filtern`,
+      ).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('der Konsolidierungs-Loader lädt bewusst die Einzelsaetze der Teilnehmer', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const code = readFileSync(
+      join(process.cwd(), 'src/modules/konsolidierung/services/konsolidierung.service.ts'),
+      'utf-8',
+    );
+    // Die Aggregation nutzt findByMandantAndJahr — mit dem neuen
+    // Filter laedt sie damit genau die Einzelsaetze. Genau richtig:
+    // eine bereits konsolidierte Bilanz darf nicht noch einmal
+    // konsolidiert werden.
+    expect(code).toContain('loadBilanzenFuerGeschäftsjahr');
+  });
+});

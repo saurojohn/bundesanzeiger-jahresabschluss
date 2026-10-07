@@ -646,3 +646,153 @@ describe('Konsernmodell: Einzelsatz und Konzernsatz koexistieren', () => {
     expect(code).not.toMatch(/await this\.assertZieljahrFrei\(/);
   });
 });
+
+describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => {
+  /**
+   * Bugfix 2026-10-07. Die bisherige Buchung war:
+   *
+   *   PASSIVA A.I.  -= betrag
+   *   AKTIVA  A.I.3. += betrag
+   *
+   * Aktiva +betrag, Passiva -betrag → Differenz 2 × betrag. Die
+   * Konzern-Bilanz war nach dem Buchen NICHT mehr ausgeglichen,
+   * wurde aber als Konzern-Bilanz gespeichert und als `VALIDATED`
+   * gemeldet. Eine falsche Bilanz ist schlimmer als gar keine.
+   *
+   * Korrekt: anteiliges Tochter-EK aus dem Konzern-EK eliminieren,
+   * Geschäfts-/Firmenwert als Aktivposten ansetzen, Rest als
+   * Kapitalkonsolidierungsdifferenz ausweisen — damit die Gleichung
+   * aufgeht und der Betrag für die Wirtschaftsprüfung sichtbar ist.
+   */
+  type Pos = {
+    seite: 'AKTIVA' | 'PASSIVA';
+    kontonummer: string;
+    bezeichnung: string;
+    betragAktuell: number;
+    bemerkung?: string;
+  };
+
+  const summe = (p: Pos[], seite: 'AKTIVA' | 'PASSIVA') =>
+    Number(
+      p.filter((x) => x.seite === seite)
+        .reduce((acc, x) => acc + Number(x.betragAktuell), 0)
+        .toFixed(2),
+    );
+
+  function anwenden(
+    positionen: Pos[],
+    ctx: {
+      anschaffungskosten: number;
+      eigenkapitalTochter: number;
+      beteiligungsquote: number;
+    },
+  ) {
+    const { service } = (() => {
+      const s = new KonsolidierungService(
+        {} as never, {} as never, {} as never, {} as never,
+        { record: vi.fn() } as never,
+      );
+      return { service: s };
+    })();
+    const intern = service as unknown as {
+      applyEliminationsToBilanz: (
+        p: Pos[],
+        b: Array<{ buchungsArt: string; betrag: unknown }>,
+        k: typeof ctx,
+      ) => void;
+    };
+    // Der Buchungsbetrag MUSS dem tatsaechlichen Unterschied
+    // entsprechen (|AK - anteil EK|), so wie `calculateBuchungenInputs`
+    // ihn erzeugt. Mit Betrag 0 waere die alte, gleichungsbrechende
+    // Logik nicht auffallbar gewesen — der Test waere wertlos.
+    const kapBuchung = {
+      buchungsArt: 'KAPITAL_KONSOLIDIERUNG',
+      betrag: {
+        toString: () =>
+          String(
+            Math.abs(
+              ctx.anschaffungskosten -
+                (ctx.eigenkapitalTochter * ctx.beteiligungsquote) / 100,
+            ),
+          ),
+      } as never,
+    };
+    intern.applyEliminationsToBilanz(positionen, [kapBuchung], ctx);
+    return positionen;
+  }
+
+  const start = (): Pos[] => [
+    { seite: 'AKTIVA', kontonummer: 'A.II.1.', bezeichnung: 'Anlagen', betragAktuell: 200000 },
+    { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Gezeichnetes Kapital', betragAktuell: 150000 },
+    { seite: 'PASSIVA', kontonummer: 'A.IV.', bezeichnung: 'Gewinnvortrag', betragAktuell: 50000 },
+  ];
+
+  it('AK > anteiliges EK → Goodwill als Aktivposten', () => {
+    const p = anwenden(start(), {
+      anschaffungskosten: 120000,
+      eigenkapitalTochter: 100000,
+      beteiligungsquote: 100,
+    });
+    const goodwill = p.find((x) => x.kontonummer === 'A.I.3.');
+    expect(goodwill, 'Goodwill muss ausgewiesen werden').toBeTruthy();
+    expect(goodwill!.betragAktuell).toBe(20000);
+  });
+
+  it('AK < anteiliges EK → Badwill mindert das EK', () => {
+    const p = anwenden(start(), {
+      anschaffungskosten: 60000,
+      eigenkapitalTochter: 100000,
+      beteiligungsquote: 100,
+    });
+    expect(p.find((x) => x.kontonummer === 'A.I.3.')).toBeUndefined();
+    const diff = p.find((x) => x.kontonummer === 'A.V.');
+    expect(diff, 'die Differenz muss ausgewiesen werden').toBeTruthy();
+  });
+
+  it('die Bilanzgleichung hält in JEDEM Fall (KRITISCH)', () => {
+    // Der eigentliche Nachweis: vorher 2 × betrag Differenz.
+    const faelle = [
+      { anschaffungskosten: 0, eigenkapitalTochter: 0, beteiligungsquote: 100 },
+      { anschaffungskosten: 60000, eigenkapitalTochter: 100000, beteiligungsquote: 100 },
+      { anschaffungskosten: 100000, eigenkapitalTochter: 100000, beteiligungsquote: 100 },
+      { anschaffungskosten: 120000, eigenkapitalTochter: 100000, beteiligungsquote: 100 },
+      { anschaffungskosten: 300000, eigenkapitalTochter: 100000, beteiligungsquote: 60 },
+      { anschaffungskosten: 200000, eigenkapitalTochter: 250000, beteiligungsquote: 100 },
+    ];
+    for (const f of faelle) {
+      const p = anwenden(start(), f);
+      const differenz = Number((summe(p, 'AKTIVA') - summe(p, 'PASSIVA')).toFixed(2));
+      expect(
+        Math.abs(differenz),
+        `Bilanz ungleich bei ${JSON.stringify(f)}: Aktiva ${summe(p, 'AKTIVA')} / Passiva ${summe(p, 'PASSIVA')}`,
+      ).toBeLessThan(0.01);
+    }
+  });
+
+  it('ohne Angaben findet keine Kapitalkonsolidierung statt', () => {
+    const p = start();
+    // Kontext mit 0 = die Default-Werte einer ohne Angaben
+    // angelegten Einheit.
+    anwenden(p, { anschaffungskosten: 0, eigenkapitalTochter: 0, beteiligungsquote: 100 });
+    expect(p.find((x) => x.kontonummer === 'A.I.3.')).toBeUndefined();
+    expect(Math.abs(summe(p, 'AKTIVA') - summe(p, 'PASSIVA'))).toBeLessThan(0.01);
+  });
+
+  it('der DTO nimmt die §-301-Eingaben entgegen (vorher fest 0)', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const dto = readFileSync(
+      join(process.cwd(), 'src/modules/konsolidierung/dto/create-konsolidierung-einheit.dto.ts'),
+      'utf-8',
+    );
+    expect(dto).toContain('anschaffungskosten');
+    expect(dto).toContain('eigenkapitalTochter');
+    expect(dto).toContain('jahresueberschussTochter');
+    // Und der Service darf sie nicht mehr auf 0 festnageln.
+    const svc = readFileSync(
+      join(process.cwd(), 'src/modules/konsolidierung/services/konsolidierung.service.ts'),
+      'utf-8',
+    );
+    expect(svc).toContain('anschaffungskosten: dto.anschaffungskosten ?? 0');
+  });
+});

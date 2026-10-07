@@ -115,11 +115,14 @@ export class KonsolidierungService {
         geschaeftsjahr: dto.geschaeftsjahr,
         konsolidierungsArt: dto.konsolidierungsArt,
         beteiligungsquote: dto.beteiligungsquote,
-        // Initial: AK und EK werden vom Pilot-User nachgetragen oder beim
-        // Apply aus den Bilanz-Positionen automatisch ermittelt.
-        anschaffungskosten: 0,
-        eigenkapitalTochter: 0,
-        jahresueberschussTochter: 0,
+        // Kapitalkonsolidierung (§ 301 HGB). Vor 2026-10-07 stand hier
+        // fest  und es gab keinen Schreibpfad — damit konnte die
+        // Kapitalkonsolidierung NIE ausloesen. Ohne Angaben bleibt es
+        // bei 0 (keine Kapitalkonsolidierung); mit Angaben wird sie
+        // beim Apply durchgefuehrt und Goodwill/Badwill ausgewiesen.
+        anschaffungskosten: dto.anschaffungskosten ?? 0,
+        eigenkapitalTochter: dto.eigenkapitalTochter ?? 0,
+        jahresueberschussTochter: dto.jahresueberschussTochter ?? 0,
         createdById: user.id,
       });
 
@@ -464,7 +467,14 @@ export class KonsolidierungService {
       einheit.mutterMandantId,
     );
     // Eliminations-Buchungen auf Bilanz anwenden (Soll-/Haben-Korrektur).
-    this.applyEliminationsToBilanz(konsBilanzPositionen, buchungen);
+    this.applyEliminationsToBilanz(konsBilanzPositionen, buchungen, {
+      // Bugfix 2026-10-07 (§ 301 HGB): die Kapitalkonsolidierung
+      // braucht Beteiligungsbuchwert und Tochter-EK. Sie stehen in
+      // der Einheit, nicht in der Buchung — deshalb als Kontext.
+      anschaffungskosten: Number(einheit.anschaffungskosten),
+      eigenkapitalTochter: Number(einheit.eigenkapitalTochter),
+      beteiligungsquote: Number(einheit.beteiligungsquote),
+    });
 
     // 4. Konsolidierte GuV-Positionen erzeugen.
     const konsGuvPositionen = this.aggregateGuvPositionen(
@@ -1176,6 +1186,11 @@ export class KonsolidierungService {
       bemerkung?: string;
     }>,
     buchungen: Array<{ buchungsArt: string; betrag: Prisma.Decimal }>,
+    kapitalKonsolidierung?: {
+      anschaffungskosten: number;
+      eigenkapitalTochter: number;
+      beteiligungsquote: number;
+    },
   ): void {
     for (const b of buchungen) {
       const betrag = Number(b.betrag);
@@ -1190,27 +1205,81 @@ export class KonsolidierungService {
           }
         }
       } else if (b.buchungsArt === 'KAPITAL_KONSOLIDIERUNG') {
-        // Goodwill als zusätzliche Aktiva-Position; Badwill reduziert EK.
-        // Vereinfacht: EK (A.I.) der Mutter um AK-Anteil reduzieren.
-        for (const p of positionen) {
-          if (p.seite === 'PASSIVA' && p.kontonummer === 'A.I.') {
-            p.betragAktuell = Math.max(p.betragAktuell - betrag, 0);
+        // Bugfix 2026-10-07: DIE BISHERIGE IMPLEMENTIERUNG ZERSTOERTE
+        // DIE BILANZGLEICHUNG.
+        //
+        //   for (p of positionen) if (PASSIVA && A.I.) p -= betrag;
+        //   for (p of positionen) if (AKTIVA  && A.I.3.) p += betrag;
+        //
+        // Aktiva +betrag, Passiva -betrag → Differenz 2 × betrag. Die
+        // Konzern-Bilanz war damit nach dem Buchen NICHT mehr
+        // ausgeglichen, obwohl das Ergebnis als Konzern-Bilanz
+        // gespeichert und als `VALIDATED` gemeldet wurde. Eine
+        // falsche Bilanz ist schlimmer als gar keine.
+        //
+        // Korrekt und gleichungserhaltend:
+        //   1. Der anteilige Eigenkapitalanteil der Tochter wird aus
+        //      dem Konzern-EK eliminiert  → Passiva −anteilEK
+        //   2. Der Geschäfts- oder Firmenwert wird als Aktivposten
+        //      angesetzt, wenn AK > anteilEK             → Aktiva +goodwill
+        //      andernfalls (Badwill) mindert er das EK   → Passiva −anteilEK
+        //   3. Der RIEStbetrag wird ausdruecklich als
+        //      Kapitalkonsolidierungsdifferenz ausgewiesen, damit die
+        //      Gleichung aufgeht und der Betrag fuer die
+        //      Wirtschaftspruefung sichtbar ist statt zu
+        //      verschwinden.
+        const quote = kapitalKonsolidierung?.beteiligungsquote ?? 100;
+        const anschaffung = kapitalKonsolidierung?.anschaffungskosten ?? 0;
+        const eigenkapital = kapitalKonsolidierung?.eigenkapitalTochter ?? 0;
+        const anteilEK = (eigenkapital * quote) / 100;
+        const goodwill = Math.max(anschaffung - anteilEK, 0);
+        const badwill = Math.max(anteilEK - anschaffung, 0);
+
+        // (1) Anteiliges EK eliminieren (Ausschüttung ans Konzern-EK)
+        this.reduzierePositionen(positionen, 'PASSIVA', anteilEK);
+        // (2) Goodwill als Aktivposten
+        if (goodwill > 0) {
+          const vorhanden = positionen.find(
+            (p) => p.seite === 'AKTIVA' && p.kontonummer === 'A.I.3.',
+          );
+          if (vorhanden) {
+            vorhanden.betragAktuell += goodwill;
+          } else {
+            positionen.push({
+              seite: 'AKTIVA',
+              kontonummer: 'A.I.3.',
+              bezeichnung: 'Geschäfts- oder Firmenwert (Konsolidierung)',
+              betragAktuell: goodwill,
+              bemerkung: 'Goodwill aus Kapitalkonsolidierung (§ 301 HGB)',
+            });
           }
         }
-        // Aktiva-Seite: Goodwill als immaterieller Vermögensgegenstand.
-        const existingGoodwill = positionen.find(
-          (p) => p.seite === 'AKTIVA' && p.kontonummer === 'A.I.3.',
-        );
-        if (existingGoodwill) {
-          existingGoodwill.betragAktuell += betrag;
-        } else {
-          positionen.push({
-            seite: 'AKTIVA',
-            kontonummer: 'A.I.3.',
-            bezeichnung: 'Geschäfts- oder Firmenwert (Konsolidierung)',
-            betragAktuell: betrag,
-            bemerkung: 'Goodwill aus Kapitalkonsolidierung',
-          });
+        if (badwill > 0) {
+          // Badwill mindert das Eigenkapital des Konzerns.
+          this.reduzierePositionen(positionen, 'PASSIVA', badwill);
+        }
+        // (3) Rest ausweisen, damit die Bilanz aufgeht.
+        const istAktiva = summeSeite(positionen, 'AKTIVA');
+        const istPassiva = summeSeite(positionen, 'PASSIVA');
+        const differenz = Number((istAktiva - istPassiva).toFixed(2));
+        if (Math.abs(differenz) >= 0.01) {
+          const vorhanden = positionen.find(
+            (p) => p.seite === 'PASSIVA' && p.kontonummer === 'A.V.',
+          );
+          if (vorhanden) {
+            vorhanden.betragAktuell += differenz;
+          } else {
+            positionen.push({
+              seite: 'PASSIVA',
+              kontonummer: 'A.V.',
+              bezeichnung: 'Kapitalkonsolidierungsdifferenz (§ 301 HGB)',
+              betragAktuell: differenz,
+              bemerkung:
+                'Ausgleichsposten: Saldo aus Beteiligungsbuchwert, anteiligem ' +
+                'Tochter-EK und Geschäfts-/Firmenwert. Von der ' +
+                'Wirtschaftsprüfung zu erläutern.',
+            });
+          }
         }
       }
     }
@@ -1232,6 +1301,39 @@ export class KonsolidierungService {
    * getan — es wird KEINE Ersatzposition erfunden, weil wir nicht
    * wissen, auf welche HGB-Position eine Eliminationsbuchung gehoert.
    */
+  /**
+   * Reduziert die SUMME aller Positionen einer Bilanzseite um `betrag`,
+   * anteilig und proportional — mit Vorzeichenerhalt.
+   *
+   * Von der Kapitalkonsolidierung (§ 301) benoetigt: dort wird das
+   * anteilige Eigenkapital der Tochter aus dem Konzern-EK eliminiert,
+   * und zwar ueber die SUMME, nicht ueber eine einzelne Position (die
+   * Mutter hat mehrere EK-Positionen, und welche erwischt wuerde, waere
+   * willkuerlich).
+   *
+   * Klemmung auf der Aktivseite: ein Aktivposten, der durch eine
+   * Elimination negativ wuerde, waere kein gueltiger Bilanzposten mehr
+   * — das waere eine stille Vermischung von Aktiva und Passiva.
+   */
+  private reduzierePositionen(
+    positionen: Array<{
+      seite: 'AKTIVA' | 'PASSIVA';
+      betragAktuell: number;
+    }>,
+    seite: 'AKTIVA' | 'PASSIVA',
+    betrag: number,
+  ): void {
+    if (betrag === 0) return;
+    const betroffen = positionen.filter((p) => p.seite === seite);
+    const summe = betroffen.reduce((acc, p) => acc + Number(p.betragAktuell), 0);
+    if (summe === 0) return;
+    const faktor = betrag / Math.abs(summe);
+    for (const p of betroffen) {
+      const neu = Number(p.betragAktuell) - Number(p.betragAktuell) * faktor;
+      p.betragAktuell = seite === 'AKTIVA' ? Math.max(neu, 0) : neu;
+    }
+  }
+
   private reduziereKategorie(
     positionen: Array<{
       kategorie: string;
@@ -1404,4 +1506,17 @@ export class KonsolidierungService {
       })),
     } as unknown as Prisma.JsonValue;
   }
+}
+
+/** Summe einer Bilanzseite — fuer die Bilanzgleichung (§ 264 Abs. 2 HGB). */
+function summeSeite(
+  positionen: Array<{ seite: string; betragAktuell: number }>,
+  seite: 'AKTIVA' | 'PASSIVA',
+): number {
+  return Number(
+    positionen
+      .filter((p) => p.seite === seite)
+      .reduce((acc, p) => acc + Number(p.betragAktuell), 0)
+      .toFixed(2),
+  );
 }

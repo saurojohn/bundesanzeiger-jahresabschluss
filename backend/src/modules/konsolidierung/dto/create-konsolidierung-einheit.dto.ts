@@ -1,4 +1,5 @@
 import {
+  IsOptional,
   ArrayMinSize,
   IsArray,
   IsIn,
@@ -60,4 +61,44 @@ export class CreateKonsolidierungEinheitDto {
     message: `konsolidierungsArt muss eine der folgenden Werte sein: ${KONSOLIDIERUNGS_AR.join(', ')}`,
   })
   konsolidierungsArt!: 'VOLLKONSOLIDIERUNG' | 'QUOTAL' | 'AT_EQUITY';
+
+  // ------------------------------------------------------------------------
+  // Kapitalkonsolidierung (§ 301 HGB)
+  //
+  // Bugfix 2026-10-07: Diese drei Felder existierten im Schema, wurden
+  // aber fest auf 0 geschrieben und hatten keinen Schreibpfad. Damit
+  // konnte `if (ak > 0 || ekTochter > 0)` nie zutreffen, es wurde nie
+  // eine Kapitalkonsolidierungsbuchung erzeugt und der Geschäfts- oder
+  // Firmenwert blieb immer 0. Das Eigenkapital der Tochter blieb
+  // uneliminiert im Konzern-EK, die Beteiligung stand doppelt.
+  //
+  // Sie sind jetzt OPTIONAL: ohne Angaben findet keine
+  // Kapitalkonsolidierung statt (Differenzrechnung über Konzern-EK),
+  // mit Angaben wird sie durchgeführt und der Goodwill/Badwill
+  // ausgewiesen.
+
+  /** Anschaffungskosten der Beteiligung (§ 301 Abs. 1 HGB). */
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'anschaffungskosten muss eine Zahl sein (max 2 Nachkommastellen)' },
+  )
+  @Min(0, { message: 'anschaffungskosten muss >= 0 sein' })
+  anschaffungskosten?: number;
+
+  /** Eigenkapital der Tochter zum Stichtag (§ 301 Abs. 1 HGB). */
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'eigenkapitalTochter muss eine Zahl sein (max 2 Nachkommastellen)' },
+  )
+  eigenkapitalTochter?: number;
+
+  /** Jahresüberschuss/-fehlbetrag der Tochter für das Geschäftsjahr. */
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'jahresueberschussTochter muss eine Zahl sein (max 2 Nachkommastellen)' },
+  )
+  jahresueberschussTochter?: number;
 }

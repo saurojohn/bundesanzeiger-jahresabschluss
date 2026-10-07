@@ -239,12 +239,48 @@ export class SubscriptionService {
     _providerSubscriptionId: string | null,
     _periodEnd?: Date | null,
   ): Promise<void> {
+    // Bugfix 2026-10-07. `tier` und `status` kommen UNGEPRÜFT aus dem
+    // Billing-Provider (`mapStripeEventToBillingEvent` macht
+    // `meta.tier as SubscriptionTier`) und wurden hier ungeprueft in die
+    // Datenbank geschrieben. Ein unplausibler Wert landete damit
+    // dauerhaft in `kanzlei.subscriptionTier`. Der Lesepfad
+    // normalisiert das zwar inzwischen — aber warum einen Fehler erst
+    // speichern, wenn man ihn beim Schreiben kennt?
+    //
+    // Quelle und Senke muessen beide stimmen: hier die Quelle.
+    const rohTier = tier as string;
+    if (!(SUBSCRIPTION_TIERS as readonly string[]).includes(rohTier)) {
+      this.logger.warn(
+        `Kanzlei ${kanzleiId}: unplausibler Tier '${rohTier}' aus dem ` +
+          `Billing-Provider — auf PILOT zurueckgefallen`,
+      );
+    }
+    const rohStatus = status as string;
+    if (!(SUBSCRIPTION_STATUSES as readonly string[]).includes(rohStatus)) {
+      this.logger.warn(
+        `Kanzlei ${kanzleiId}: unplausibler Status '${rohStatus}' aus dem ` +
+          `Billing-Provider — auf TRIALING zurueckgefallen`,
+      );
+    }
+    const gepruefterTier = (SUBSCRIPTION_TIERS as readonly string[]).includes(
+      rohTier,
+    )
+      ? (rohTier as SubscriptionTier)
+      : 'PILOT';
+    const gepruefterStatus = (
+      SUBSCRIPTION_STATUSES as readonly string[]
+    ).includes(rohStatus)
+      ? (rohStatus as SubscriptionStatus)
+      : 'TRIALING';
+
     // Graceful degradation: wenn Status nicht aktiv, fallen wir auf PILOT zurück
     // (User behält Read-Zugriff, aber keine Premium-Features mehr)
     const effectiveTier: SubscriptionTier =
-      status === 'CANCELED' || status === 'UNPAID' || status === 'INCOMPLETE_EXPIRED'
+      gepruefterStatus === 'CANCELED' ||
+      gepruefterStatus === 'UNPAID' ||
+      gepruefterStatus === 'INCOMPLETE_EXPIRED'
         ? 'PILOT'
-        : tier;
+        : gepruefterTier;
 
     await this.prisma.kanzlei.update({
       where: { id: kanzleiId },
@@ -260,7 +296,10 @@ export class SubscriptionService {
         // siehe das weiter unten liegende `KanzleiSubscriptionData`, das die
         // Logik in der Domäne abbildet, nicht den DB-Spaltennamen.
         subscriptionTier: effectiveTier,
-        subscriptionStatus: status,
+        // Bugfix 2026-10-07: hier stand der UNGEPRUEFTE `status`. Ein
+        // unbekannter Wert aus dem Billing-Provider landete dadurch
+        // dauerhaft in der Datenbank.
+        subscriptionStatus: gepruefterStatus,
         subscriptionProvider: providerName,
         subscriptionProviderId: _providerSubscriptionId,
         ...( _periodEnd !== undefined

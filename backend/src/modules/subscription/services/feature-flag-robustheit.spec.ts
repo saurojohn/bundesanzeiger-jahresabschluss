@@ -113,3 +113,114 @@ describe('Abo-Werte: Whitelist', () => {
     expect(String(spy.mock.calls[0][0])).toMatch(/Unbekannter Tier/);
   });
 });
+describe('Billing-Provider-Quelle: unplausible Werte nie in die DB', () => {
+  /**
+   * `applyTierChange()` bekommt Tier und Status aus dem
+   * Billing-Provider (`mapStripeEventToBillingEvent` macht
+   * `meta.tier as SubscriptionTier`). Vor dem Fix wurde
+   * `subscriptionStatus: status` UNGEPRUEFT geschrieben — der
+   * unplausible Wert landete dauerhaft in `kanzlei.subscriptionTier`
+   * bzw. `.subscriptionStatus`.
+   *
+   * Der Lesepfad normalisiert inzwischen ebenfalls; Quelle und Senke
+   * muessen aber beide stimmen. Sonst speichert das System weiterhin
+   * Fehler, die es beim Lesen nur versteckt.
+   */
+  it('schreibt einen unbekannten Status nicht in die Datenbank', async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const prisma = {
+      kanzlei: { update },
+      mandant: { findFirst: vi.fn().mockResolvedValue({ kanzleiId: 'k1' }) },
+    };
+    const cache = { invalidate: vi.fn().mockResolvedValue(undefined) };
+    const { SubscriptionService } = await import('./subscription.service');
+    const service = new SubscriptionService(
+      prisma as never,
+      cache as never,
+      {} as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { getProviderName: () => 'mock' } as never,
+      new FeatureFlagService(),
+    );
+
+    await service.applyTierChange(
+      'k1',
+      'PREMIUM' as never,
+      'GIBT-ES-NICHT' as never,
+      'mock',
+      null,
+    );
+
+    expect(update).toHaveBeenCalledTimes(1);
+    const geschrieben = update.mock.calls[0][0].data as {
+      subscriptionTier: string;
+      subscriptionStatus: string;
+    };
+    expect(geschrieben.subscriptionStatus).toBe('TRIALING');
+    expect(SUBSCRIPTION_STATUSES).toContain(geschrieben.subscriptionStatus);
+  });
+
+  it('schreibt einen unbekannten Tier nicht in die Datenbank', async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const prisma = {
+      kanzlei: { update },
+      mandant: { findFirst: vi.fn().mockResolvedValue({ kanzleiId: 'k1' }) },
+    };
+    const cache = { invalidate: vi.fn().mockResolvedValue(undefined) };
+    const { SubscriptionService } = await import('./subscription.service');
+    const service = new SubscriptionService(
+      prisma as never,
+      cache as never,
+      {} as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { getProviderName: () => 'mock' } as never,
+      new FeatureFlagService(),
+    );
+
+    await service.applyTierChange(
+      'k1',
+      'GOLD' as never,
+      'ACTIVE' as never,
+      'mock',
+      null,
+    );
+
+    const geschrieben = update.mock.calls[0][0].data as {
+      subscriptionTier: string;
+    };
+    expect(geschrieben.subscriptionTier).toBe('PILOT');
+    expect(SUBSCRIPTION_TIERS).toContain(geschrieben.subscriptionTier);
+  });
+
+  it('ein gültiger Wert wird unverändert übernommen', async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const prisma = {
+      kanzlei: { update },
+      mandant: { findFirst: vi.fn().mockResolvedValue({ kanzleiId: 'k1' }) },
+    };
+    const cache = { invalidate: vi.fn().mockResolvedValue(undefined) };
+    const { SubscriptionService } = await import('./subscription.service');
+    const service = new SubscriptionService(
+      prisma as never,
+      cache as never,
+      {} as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { getProviderName: () => 'mock' } as never,
+      new FeatureFlagService(),
+    );
+
+    await service.applyTierChange(
+      'k1',
+      'PREMIUM' as never,
+      'ACTIVE' as never,
+      'mock',
+      null,
+    );
+    const geschrieben = update.mock.calls[0][0].data as {
+      subscriptionTier: string;
+      subscriptionStatus: string;
+    };
+    expect(geschrieben.subscriptionTier).toBe('PREMIUM');
+    expect(geschrieben.subscriptionStatus).toBe('ACTIVE');
+  });
+});

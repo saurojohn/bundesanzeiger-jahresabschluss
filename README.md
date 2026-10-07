@@ -33,7 +33,7 @@ im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne D
 | Punkt | Status |
 |---|---|
 | **Git-Tags** (`m1-pilot-ready`, `m2-pilot-ready`, `m3-kanzlei-ready`, `m4-production-ready`) | 🟡 vorhanden, aber **kein Abnahmenachweis** — die Tags markieren den *Code-Stand* der jeweiligen Runde. `m4-production-ready` wurde am 2026-10-02 von `95dd932` auf den tatsächlichen Stand verschoben, weil der ursprüngliche Commit 30 Commits zurücklag und u. a. einen RCE enthielt; die Tag-Annotation listet die Befunde. „production-ready" im Tag-Namen ist eine historische Bezeichnung, **keine** Aussage über Produktionsreife. |
-| **Frontend-E2E-Coverage** | 🟡 57 Tests. Abgedeckt: alle 13 Fachseiten mit mandantenstärkstem Bestand (vollständiges Laden, kein Hängenbleiben), Speichern bestehender GuV-/Anhang-/Bilanzsätze, Speichern je Status (DRAFT + nicht-DRAFT), Branding-/Webhook-Mutationen je Rolle, die komplette PDF-Strecke (erzeugen → anzeigen → laden), die Konsolidierungs-Zustandskette (anlegen → berechnen → anwenden → finalisieren) samt Konfliktpfad, die vollständige WP-Kette (Prüfung starten → Plausi-Regeln → Notiz → Vier-Augen-Freigabe → Abschluss) inklusive Rollenprüfung, statische Wächter gegen falsche API-Pfade. **Noch ohne Abdeckung**: API-Keys (anlegen + widerrufen) und Subscription (Tarifwechsel). den Custom-Domain-Assistenten (Verifikation starten + Status prüfen). Mandant-Stammdaten (anlegen + löschen) und die qeS-Signatur (P12 prüfen + signieren) sind jetzt ebenfalls abgedeckt — damit sind alle 43 Schreibpfade der Oberfläche durch Tests abgedeckt. `AGENTS.md §6` fordert 90 % für M4. |
+| **Frontend-E2E-Coverage** | 🟡 62 Tests in 15 Spec-Dateien. Abgedeckt: alle 13 Fachseiten mit mandantenstärkstem Bestand (vollständiges Laden, kein Hängenbleiben), Speichern bestehender GuV-/Anhang-/Bilanzsätze, Speichern je Status (DRAFT + nicht-DRAFT), Branding-/Webhook-Mutationen je Rolle, die komplette PDF-Strecke (erzeugen → anzeigen → laden), die Konsolidierungs-Zustandskette (anlegen → berechnen → anwenden → finalisieren) samt Konfliktpfad, die vollständige WP-Kette (Prüfung starten → Plausi-Regeln → Notiz → Vier-Augen-Freigabe → Abschluss) inklusive Rollenprüfung, statische Wächter gegen falsche API-Pfade. **Noch ohne Abdeckung**: API-Keys (anlegen + widerrufen) und Subscription (Tarifwechsel). den Custom-Domain-Assistenten (Verifikation starten + Status prüfen). Mandant-Stammdaten (anlegen + löschen) und die qeS-Signatur (P12 prüfen + signieren) sind jetzt ebenfalls abgedeckt — damit sind alle 43 Schreibpfade der Oberfläche durch Tests abgedeckt. `AGENTS.md §6` fordert 90 % für M4. |
 | **`next@15.0.3` / `react@19.0.0-rc`** | ✅ behoben (2026-10-01): CVE-2025-66478 (RCE, CVSS 10.0) und die Nachfolge-Advisories CVE-2025-55183 / -55184 / -67779 sind mit **`next@15.5.27`** und **`react@19.0.8`** gepatcht. Zusätzlich `next-intl` 3.25.1 → **4.14.8** (Open Redirect + Prototype Pollution) und `outputFileTracingRoot` in `next.config.ts` gesetzt. Verifiziert mit 10/10 Playwright gegen den Production-Build. |
 | **Restliche Advisories** | 🟡 2 offen, beide nur per Next-Major löschen: `next` (moderate, DoS) und `postcss` (high, transitiv). `npm audit fix --force` will dafür **Next 16.3.8** — das ist ein eigener, getesteter Migrations-Schritt und wurde hier bewusst nicht als Nebenwirkung gemacht. |
 | **Dokumente*| ~~`docs/rollen-rbac.md`, `docs/gobd-architektur.md`, `docs/datenmodell.md`~~ | ✅ ergänzt (aus dem tatsächlichen Code abgeleitet) |
@@ -164,7 +164,7 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Auth + Audit-Trail (vollständig, unveränderlich)
 - WORM-Storage (S3 Object Lock, 10 Jahre)
 - Pilot: 1 Steuerberater mit 3 Mandanten
-- **Status**: 🟡 Code implementiert, e2e-abgedeckt (137/137). „Pilot-Ready“ im Sinne eines durchgeführten Piloten mit echten Kanzleien ist **nicht** belegt — siehe Verifikationsstand.
+- **Status**: 🟡 Code implementiert, e2e-abgedeckt (471/471 Backend). „Pilot-Ready“ im Sinne eines durchgeführten Piloten mit echten Kanzleien ist **nicht** belegt — siehe Verifikationsstand.
 
 ### M2 (Monate 4-6) — BAnz-Submission-Pipeline 🟡
 - **Marktanpassung (Sep 2026)**: BAnz-Verlag hat keine externe XML/XBRL-Submission-API mehr
@@ -173,7 +173,7 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Qualifizierte elektronische Signatur (qeS) via P12-Token + signpdf + TSA
 - Frontend-Integration: E-Bilanz/DATEV/Signatur-UI
 - Pilot-Phase-2: 3 Kanzleien + 15 Mandanten
-- **Status**: 🟡 Backend e2e-abgedeckt; Frontend baut, 31 Playwright-Tests grün (Fachseiten + Formular-Speicherpfade), aber weiterhin ohne Abdeckung für PDF-Download, Signatur und die Einstellungsformulare.
+- **Status**: 🟡 Backend e2e-abgedeckt (471/471); Frontend baut, 62/62 Playwright-Tests grün. PDF-Strecke, Signatur und die Einstellungsformulare sind seit 2026-10-04 e2e-abgedeckt (`pdf-strecke`, `signatur`, `subscription`, `custom-domain`, `api-keys`).
 
 ### M3 (Monate 7-9) — DATEV-Import & Konzernabschluss 🟡
 - DATEV-ASCII-Import (Buchführungsdaten → Bilanz/GuV Mapping, reverse direction) ✅
@@ -192,7 +192,7 @@ Das Produkt ist kein Buchhaltungs-Tool — es ist eine **Veröffentlichungs- und
 - Subscription-Modell (Pilot/Standard/Premium via Stripe, Mock-Fallback)
 - Mobile-Responsiveness (Tablet-Layout + PWA-Modus)
 - GoBD-Zertifizierung (IDW PS 880 Vorbereitung, Hash-Chain-Audit)
-- **Status**: 🔴 **Nicht production-ready.** Kein durchgeführtes Deployment, kein IDW-PS-880-Audit, Signaturprüfung teilweise offen, keine E2E-Abdeckung für die Einstellungsformulare und den PDF-Download. ~~`next@15.0.3` mit bekannter CVE~~ — behoben 2026-10-01 (`next@15.5.27`). Formular-Speicherpfade sind seit 2026-10-04 e2e-abgedeckt. Details im Verifikationsstand.
+- **Status**: 🔴 **Nicht production-ready.** Kein durchgeführtes Deployment, kein IDW-PS-880-Audit, Signaturprüfung teilweise offen (TSA-Anbindung an externe Zeitstempeldienste ist im Pilot nicht durchgeführt). Die Einstellungsformulare und der PDF-Download sind seit 2026-10-04 e2e-abgedeckt. ~~`next@15.0.3` mit bekannter CVE~~ — behoben 2026-10-01 (`next@15.5.27`). Formular-Speicherpfade sind seit 2026-10-04 e2e-abgedeckt. Details im Verifikationsstand.
 - Pilot-Phase-3 (Skalierung auf 5–8 Kanzleien): siehe [`docs/PILOT-PHASE-3-PLAN.md`](docs/PILOT-PHASE-3-PLAN.md)
 
 > **Zum CI-Status (Stand 2026-10-05):** In den letzten Läufen schlug

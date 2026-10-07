@@ -12,6 +12,7 @@ import { KanzleiRepository } from '../../../common/repositories/kanzlei.reposito
 import { AuditService } from '../../audit/services/audit.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
+import { assertFeatureEntitled } from '../../../common/utils/entitlements';
 
 /**
  * Domain-Verifikations-Service (M4 Sprint 3).
@@ -72,6 +73,11 @@ export class DomainVerificationService {
     autoCreated: boolean;
   }> {
     await this.assertKanzleiAdminAccess(kanzleiId, user);
+
+    // Tarifpruefung: `custom-domain` ist Premium.
+    // Bisher nirgends durchgesetzt — jede Kanzlei konnte eine
+    // Custom-Domain verifizieren.
+    await assertFeatureEntitled(this.prisma, kanzleiId, 'custom-domain');
 
     // Domain-Format-Validierung
     if (!this.isValidDomain(customDomain)) {

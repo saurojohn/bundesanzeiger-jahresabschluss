@@ -29,6 +29,9 @@ const KANZLEI_B = 'bbbbbbbb-0000-4000-8000-bbbbbbbbbbbb';
 
 function buildService(opts: { updateWirft?: boolean } = {}) {
   const prisma = {
+    // Bugfix 2026-10-07: `custom-domain` ist Premium und wird in
+    // `startVerification` durchgesetzt. Der Stub muss den Tarif also
+    // kennen — sonst scheitert der Aufruf an `kanzlei.findUnique`.
     mandant: {
       findFirst: vi.fn().mockImplementation(
         async ({ where }: { where: { kanzleiId: string; id: { in: string[] } } }) =>
@@ -38,6 +41,9 @@ function buildService(opts: { updateWirft?: boolean } = {}) {
       ),
     },
     kanzlei: {
+      findUnique: vi
+        .fn()
+        .mockResolvedValue({ id: KANZLEI_A, subscriptionTier: 'PREMIUM' }),
       update: opts.updateWirft
         ? vi.fn().mockRejectedValue(new Error('P2022: column not found'))
         : vi.fn().mockResolvedValue({}),

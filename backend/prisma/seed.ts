@@ -77,9 +77,29 @@ async function main(): Promise<void> {
         land: 'DE',
       },
       ustId: 'DE123456789',
+
+      // Bugfix 2026-10-07: Der Tarif war nie gesetzt, es galt der
+      // DB-Default `PILOT`. Seit die Premium-Funktionen tatsaechlich
+      // durchgesetzt werden (custom-domain, public-api,
+      // white-label-branding — siehe `common/utils/entitlements.ts`),
+      // koennte die Demo- und Pilotumgebung ihre eigene Public API,
+      // ihre Custom-Domain und ihr Branding nicht mehr ausprobieren.
+      //
+      // Eine Demonstrationsumgebung, die genau die Funktionen sperrt,
+      // die sie verkaufen soll, demonstriert nichts. Deshalb steht der
+      // Seed auf PREMIUM/ACTIVE.
+      //
+      // Nachweis der Sperre: `src/common/utils/entitlements.spec.ts`
+      // prueft, dass PILOT abgewiesen wird — diese Umgebung darf die
+      // Premium-Pfade also nur nutzen, weil sie PREMIUM gebucht hat.
+      subscriptionTier: 'PREMIUM',
+      subscriptionStatus: 'ACTIVE',
+      subscriptionProvider: 'mock',
     },
   });
-  console.log(`[seed] Kanzlei angelegt: ${kanzlei.name} (${kanzlei.id})`);
+  console.log(
+    `[seed] Kanzlei angelegt: ${kanzlei.name} (${kanzlei.id}) — Tarif PREMIUM`,
+  );
 
   // ----------------------------------------------------------------------------
   // Mandanten

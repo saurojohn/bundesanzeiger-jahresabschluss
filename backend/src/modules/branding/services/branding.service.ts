@@ -15,6 +15,7 @@ import { StorageService } from '../../storage/services/storage.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import type { UpdateBrandingDto } from '../dto/update-branding.dto';
 import { ALLOWED_LOGO_MIME_TYPES } from '../dto/upload-logo.dto';
+import { assertFeatureEntitled } from '../../../common/utils/entitlements';
 
 /**
  * Default-Branding (Backwards-Compat).
@@ -153,6 +154,22 @@ export class BrandingService {
     context: BrandingContext,
   ): Promise<KanzleiBrandingDto> {
     await this.assertKanzleiAccess(kanzleiId, user);
+
+    // Tarifpruefung (Bugfix 2026-10-07). Beide Flags sind Premium-only
+    // und wurden nirgends ausgewertet.
+    //
+    // Nur bei tatsaechlicher Aenderung geprueft: ein GET darf nie an
+    // einem Tarif scheitern, sonst waere die Branding-Seite fuer
+    // PILOT-Kanzleien unbenutzbar, obwohl sie ihr Branding anzeigt.
+    if (dto.customDomain !== undefined) {
+      await assertFeatureEntitled(this.prisma, kanzleiId, 'custom-domain');
+    }
+    if (
+      dto.primaryColor !== undefined ||
+      dto.accentColor !== undefined
+    ) {
+      await assertFeatureEntitled(this.prisma, kanzleiId, 'white-label-branding');
+    }
 
     // Vorher-Snapshot für Audit
     const before = await this.kanzleiRepository.findById(kanzleiId);

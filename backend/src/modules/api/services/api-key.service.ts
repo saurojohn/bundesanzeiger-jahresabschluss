@@ -29,6 +29,7 @@ import {
   CreateApiKeyResponseDto,
 } from '../dto/api-key.dto';
 import type { AuthUser } from '../../auth/types/auth-user.types';
+import { assertFeatureEntitled } from '../../../common/utils/entitlements';
 
 /**
  * Kontext für einen authentifizierten API-Key.
@@ -124,6 +125,11 @@ export class ApiKeyService {
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<CreateApiKeyResponseDto> {
     await this.assertKanzleiAdminAccess(args.kanzleiId, user);
+
+    // Tarifpruefung: die Public API ist Premium. Ohne diese Sperre
+    // konnte jede Kanzlei beliebig viele API-Schluessel mit fein
+    // granularen Scopes ausstellen (Bugfix 2026-10-07).
+    await assertFeatureEntitled(this.prisma, args.kanzleiId, 'public-api');
 
     // Scopes validieren
     const validScopes: APIScope[] = [];

@@ -220,6 +220,10 @@ model Bilanz {
   createdById    String?   @db.Uuid
   updatedById    String?   @db.Uuid
 
+  /// Konzernsatz (`null` = Einzelsatz). Siehe Kommentar beim
+  /// partiellen Unique-Index.
+  konzernEinheitId       String?   @db.Uuid
+
   mandant                Mandant                 @relation(fields: [mandantId], references: [id], onDelete: Cascade)
   positionen             BilanzPosition[]
   jahresabschluesse      Jahresabschluss[]
@@ -227,7 +231,23 @@ model Bilanz {
   wpNotizen              WPNotiz[]
   wpPruefungsAbschluesse WPPruefungsAbschluss[]
 
-  @@unique([mandantId, geschaeftsjahr])
+  // Bugfix 2026-10-07 (Konzernmodell): `@@unique([mandantId,
+  // geschaeftsjahr])` verhinderte, dass Einzelsatz und Konzernsatz der
+  // MUTTER gleichzeitig existieren. Der Konzernabschluss wurde unter
+  // `mutterMandantId` gespeichert und verdraengte den Einzelsatz — oder
+  // `apply` scheiterte an genau diesem Constraint.
+  //
+  // Nach HGB §301 / IDW RS 11 ist der Konzernabschluss ein EIGENER
+  // Abschluss neben dem Einzelsatz. Beide muessen bestehen koennen.
+  //
+  // Loesung: `konzernEinheitId` (nullable) + zwei partielle
+  // Unique-Indizes in der Migration:
+  //   UNIQUE (mandantId, geschaeftsjahr) WHERE konzernEinheitId IS NULL
+  //   UNIQUE (kanzleiId, geschaeftsjahr, konzernEinheitId) WHERE ... IS NOT NULL
+  //
+  // Ein Spalten-Default wie `coalesce(...)` waere NICHT ausreichend:
+  // Postgres-Zeilenscans vergleichen auch COALESCE-Ausdruecke — es
+  // braucht echte partielle Indizes.
   @@index([mandantId])
   @@index([status])
   @@index([mandantId, status, geschaeftsjahr(sort: Desc)])
@@ -277,6 +297,10 @@ model GuV {
   createdById    String?  @db.Uuid
   updatedById    String?  @db.Uuid
 
+  /// Konzernsatz (`null` = Einzelsatz). Siehe Kommentar beim
+  /// partiellen Unique-Index.
+  konzernEinheitId       String?   @db.Uuid
+
   mandant                Mandant                 @relation(fields: [mandantId], references: [id], onDelete: Cascade)
   positionen             GuVPosition[]
   jahresabschluesse      Jahresabschluss[]
@@ -284,7 +308,23 @@ model GuV {
   wpNotizen              WPNotiz[]
   wpPruefungsAbschluesse WPPruefungsAbschluss[]
 
-  @@unique([mandantId, geschaeftsjahr])
+  // Bugfix 2026-10-07 (Konzernmodell): `@@unique([mandantId,
+  // geschaeftsjahr])` verhinderte, dass Einzelsatz und Konzernsatz der
+  // MUTTER gleichzeitig existieren. Der Konzernabschluss wurde unter
+  // `mutterMandantId` gespeichert und verdraengte den Einzelsatz — oder
+  // `apply` scheiterte an genau diesem Constraint.
+  //
+  // Nach HGB §301 / IDW RS 11 ist der Konzernabschluss ein EIGENER
+  // Abschluss neben dem Einzelsatz. Beide muessen bestehen koennen.
+  //
+  // Loesung: `konzernEinheitId` (nullable) + zwei partielle
+  // Unique-Indizes in der Migration:
+  //   UNIQUE (mandantId, geschaeftsjahr) WHERE konzernEinheitId IS NULL
+  //   UNIQUE (kanzleiId, geschaeftsjahr, konzernEinheitId) WHERE ... IS NOT NULL
+  //
+  // Ein Spalten-Default wie `coalesce(...)` waere NICHT ausreichend:
+  // Postgres-Zeilenscans vergleichen auch COALESCE-Ausdruecke — es
+  // braucht echte partielle Indizes.
   @@index([mandantId])
   @@index([mandantId, status, geschaeftsjahr(sort: Desc)])
   @@index([mandantId, geschaeftsjahr(sort: Desc)])

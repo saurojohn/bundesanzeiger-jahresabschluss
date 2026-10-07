@@ -40,6 +40,8 @@ export interface GuVCreateInput {
   bilanzId?: string | null;
   ergebnis?: string | number;
   createdById?: string | null;
+  /** Konzernsatz (null = Einzelsatz). Siehe Migration 20261007230000. */
+  konzernEinheitId?: string | null;
   positionen?: GuVPositionInput[];
 }
 
@@ -209,6 +211,8 @@ export class GuVRepository {
           bilanzId: input.bilanzId ?? null,
           ergebnis: this.toDecimal(input.ergebnis) ?? new Prisma.Decimal(0),
           createdById: input.createdById ?? null,
+          // Bugfix 2026-10-07: Konzernsatz markieren (null = Einzelsatz).
+          konzernEinheitId: input.konzernEinheitId ?? null,
         },
       });
       const positionen = await this.createPositionenInTx(

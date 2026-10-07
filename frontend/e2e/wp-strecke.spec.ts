@@ -276,8 +276,77 @@ test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließe
   await page.getByRole('button', { name: 'Prüfung abschließen' }).last().click();
   const fin = await finPost;
   const finBody = (await fin.json().catch(() => ({}))) as { message?: string };
-  expect(fin.status(), `Abschließen schlug fehl: ${finBody.message ?? ''}`).toBeLessThan(400);
-  await page.waitForTimeout(2000);
+
+  // Bugfix 2026-10-07 (Vier-Augen-Prinzip): Hier wird jetzt 403
+  // erwartet. Der angemeldete WP hat die Prüfung selbst begonnen und
+  // darf sie deshalb nicht selbst freigeben (IDW PS 880, § 11 Abs. 2
+  // WPO). Vorher stand hier `toBeLessThan(400)` — und genau diese
+  // Erwartung hielt einen Self-Approval für gültig.
+  expect(
+    fin.status(),
+    `Selbstfreigabe muss abgewiesen werden, nicht nur kein 5xx: ${finBody.message ?? ''}`,
+  ).toBe(403);
+  expect(String(finBody.message ?? '')).toMatch(/Vier-Augen-Prinzip/i);
+  await page.waitForTimeout(1500);
+
+  // --- 5b) Zweite Person gibt frei (echter Vier-Augen-Nachweis)
+  //
+  // `wp2@kanzlei.de` ist der im Seed neu angelegte zweite
+  // Wirtschaftsprüfer. Ohne ihn wäre die erzwungene Sperre wieder eine
+  // Abschaltung des Freigabewegs.
+  const zweiter = await page.evaluate(async () => {
+    const t = localStorage.getItem('accessToken');
+    const l = await (
+      await fetch('/api/mandant', { headers: { Authorization: `Bearer ${t}` } })
+    ).json();
+    // `/api/mandant` liefert je nach Aufrufer ein Array oder ein Objekt
+    // mit `mandanten`. Beide Formen muessen funktionieren.
+    const arr = Array.isArray(l) ? l : (l.mandanten ?? []);
+    const m = arr.find((x: { firmenname: string }) => x.firmenname === 'Demo GmbH') ?? arr[0];
+    if (!m) return { bilanzId: '', mandantId: '' };
+    const bl = (await (
+      await fetch(`/api/bilanz?mandantId=${m.id}`, {
+        headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': m.id },
+      })
+    ).json()) as Array<{ id: string; geschaeftsjahr: number }>;
+    const b = bl.find((x) => x.geschaeftsjahr === 2025) ?? bl[0];
+    return { bilanzId: b.id, mandantId: m.id };
+  }, { mandantId: '' });
+
+  const zweite = await page.evaluate(async ({ bilanzId: bId, mandantId: mId }: { bilanzId: string; mandantId: string }) => {
+    const login = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'wp2@kanzlei.de', password: 'Demo123!' }),
+    });
+    if (!login.ok) return { status: 0, message: 'WP2-Login fehlgeschlagen' } as const;
+    const { accessToken } = await login.json();
+
+    const pruefungen = (await (
+      await fetch(`/api/wp/bilanz/${bId}/pruefungen?mandantId=${mId}`, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'x-mandant-id': mId },
+      })
+    ).json()) as Array<{ id: string; status: string }>;
+    const offen = (pruefungen ?? []).find((p) => p.status === 'IN_PROGRESS');
+    if (!offen) return { status: 0, message: 'keine offene Prüfung' } as const;
+
+    const r = await fetch(`/api/wp/pruefungen/${offen.id}/finalize?mandantId=${mId}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'x-mandant-id': mId,
+      },
+      body: JSON.stringify({
+        status: 'APPROVED',
+        zusammenfassung: 'Vier-Augen-Freigabe durch die zweite Person.',
+      }),
+    });
+    return { status: r.status, body: await r.json() } as const;
+  }, zweiter);
+
+  console.log('VIER-AUGEN-FREIGABE:', JSON.stringify(zweite));
+  expect(zweite.status, `Freigabe durch WP2: ${JSON.stringify(zweite)}`).toBe(200);
 
   const schreibzugriffe = aufrufe.filter((a) => a.methode !== 'GET');
   console.log('ALLE SCHREIBZUGRIFFE:', JSON.stringify(schreibzugriffe));
@@ -293,8 +362,23 @@ test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließe
     'der Self-Acknowledgement-Versuch muss genau einmal mit 403 gekommen sein',
   ).toBe(1);
 
+  // Auch der Vier-Augen-Versuch ist ein BEABSICHTIGTER 403 und darf
+  // nicht in die Fehlerschleife fallen — sonst scheitert der Test an
+  // seiner eigenen Probe.
+  const vierAugen = schreibzugriffe.filter(
+    (a) => a.methode === 'POST' && a.url.includes('/finalize') && a.status === 403,
+  );
+  expect(
+    vierAugen.length,
+    'die Selbstfreigabe muss genau einmal mit 403 gekommen sein',
+  ).toBe(1);
+
   const echteFehler = schreibzugriffe.filter(
-    (a) => !(a.methode === 'PATCH' && a.url.includes('/wp/notizen/') && a.status === 403),
+    (a) =>
+      !(
+        (a.methode === 'PATCH' && a.url.includes('/wp/notizen/') && a.status === 403) ||
+        (a.methode === 'POST' && a.url.includes('/finalize') && a.status === 403)
+      ),
   );
   for (const a of echteFehler) {
     expect(a.status, `${a.methode} ${a.url} → ${a.status}`).toBeLessThan(400);

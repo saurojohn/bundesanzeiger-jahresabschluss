@@ -296,6 +296,28 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
         return { grund: `Bilanz-Anlage ${bilanzAnlegen.status}` } as const;
       }
 
+      // Bugfix 2026-10-07: Die Fixture legte nur eine BILANZ an. Die
+      // Konsolidierung braucht aber Einzelabschluesse BEIDER Seiten —
+      // `apply` verweigert zu Recht, wenn die GuV der Mutter fehlt.
+      // Damit wurde nicht der neue, sondern ein fachlich richtiger
+      // Fehlerpfad getestet.
+      const guvAnlegen = await fetch(`/api/guv?mandantId=${mutter.id}`, {
+        method: 'POST',
+        headers: { ...h, Authorization: `Bearer ${sbToken}` },
+        body: JSON.stringify({
+          mandantId: mutter.id,
+          geschaeftsjahr: jahr,
+          verfahren: 'GKV',
+          positionen: [
+            { kontonummer: '1.', bezeichnung: 'Erlöse', kategorie: 'ERLOES', betragVorjahr: '0', betragAktuell: 50000, reihenfolge: 1 },
+            { kontonummer: '5a.', bezeichnung: 'Material', kategorie: 'MATERIAL', betragVorjahr: '0', betragAktuell: -20000, reihenfolge: 2 },
+          ],
+        }),
+      });
+      if (!guvAnlegen.ok) {
+        return { grund: `GuV-Anlage ${guvAnlegen.status}` } as const;
+      }
+
       const r = await fetch('/api/konsolidierung/einheiten', {
         method: 'POST',
         headers: h,
@@ -317,10 +339,22 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json', Authorization: `Bearer ${t}` },
       });
+      // GEPARST, nicht als Text: der Body wurde auf 300 Zeichen
+      // gekuerzt und waere damit kein gueltiges JSON mehr. Die
+      // vorherige Zusicherung griff deshalb ins Leere.
+      const roh = await apply.text();
+      let geparst: unknown = roh;
+      try {
+        geparst = JSON.parse(roh);
+      } catch {
+        /* Fehlerfall: roh bleibt der Text */
+      }
       return {
         jahr,
+        mutterId: mutter.id,
         status: apply.status,
-        body: (await apply.text()).slice(0, 300),
+        body: geparst,
+        text: roh.slice(0, 300),
       } as const;
     });
 
@@ -335,16 +369,66 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
       expect(ergebnis.grund).toBe('UNERREICHBAR');
     }
 
+    // Bugfix 2026-10-07 (HGB §301 / IDW RS 11): Ein vorhandener
+    // Einzelsatz der MUTTER blockiert die Konsolidierung NICHT mehr.
+    //
+    // Dieser Test hat den alten Zustand festgeschrieben: der
+    // Unique-Constraint `@@unique([mandantId, geschaeftsjahr])`
+    // machte es unmöglich, Einzelsatz und Konzernsatz der Mutter
+    // gleichzeitig zu führen, also wurde hier eine 400 „Geschäftsjahr
+    // bereits belegt" erwartet.
+    //
+    // Der Konzernabschluss ist ein EIGENER Abschluss neben dem
+    // Einzelsatz. Beide müssen bestehen können — sonst ist die
+    // Konzernrechnung entweder unmöglich oder enthält die Mutter nicht.
     expect(
       ergebnis.status,
-      `Anwenden darf bei belegtem Jahr kein 5xx sein: ${ergebnis.body}`,
-    ).toBeLessThan(500);
-    // Ausdrücklich 400 mit Handlungsanweisung — "irgendwas unter 500"
-    // würde auch ein 404 oder gar kein Konflikt erfüllen.
-    expect(ergebnis.status, `Konflikt muss als 400 kommen: ${ergebnis.body}`).toBe(400);
-    expect(ergebnis.body, 'die 400 muss das Geschäftsjahr benennen').toContain('Geschäftsjahr');
-    expect(ergebnis.body, 'die 400 muss eine Handlung nennen').toMatch(
-      /löschen|anderes Geschäftsjahr/i,
-    );
+      `Anwenden neben einem Einzelsatz muss gelingen: ${ergebnis.text}`,
+    ).toBe(201);
+    const ok = ergebnis.body as unknown as {
+      konzernBilanzId: string;
+      konzernGuvId: string;
+    };
+    expect(ok.konzernBilanzId, 'es muss eine Konzern-Bilanz entstehen').toBeTruthy();
+    expect(ok.konzernGuvId, 'es muss eine Konzern-GuV entstehen').toBeTruthy();
+
+    // Die eigentliche Aussage: Der Einzelsatz der Mutter ist danach
+    // IMMER NOCH DA. Genau daran scheiterte es vorher.
+    // Achtung: Die Mandantenliste ist fuer verschiedene Logins
+    // unterschiedlich sortiert. `arr[0]` hier waere moeglicherweise
+    // eine ANDERE Mandantin als `liste[0]` in der Fixture. Deshalb
+    // wird die ID aus der Fixture durchgereicht.
+    const fixture = ergebnis as unknown as { mutterId: string; jahr: number };
+    expect(fixture.mutterId, 'die Fixture muss die Mutter-ID liefern').toBeTruthy();
+    const mutterId: string = fixture.mutterId;
+    const fixtureJahr: number = fixture.jahr;
+
+    const saetze = await page.evaluate(async ({ jahr, mandantId }: { jahr: number; mandantId: string }) => {
+      const l = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'steuerberater@kanzlei.de', password: 'Demo123!' }),
+      });
+      const { accessToken } = await l.json();
+      const m = { id: mandantId };
+      // Auf das FIXTURE-Jahr filtern: ohne Filter zaehlt auch der
+      // Seed-Satz des Jahres 2025 mit und die Aussage wird unscharf.
+      const alle = (await (
+        await fetch(`/api/bilanz?mandantId=${m.id}&geschaeftsjahr=${jahr}`, {
+          headers: { Authorization: `Bearer ${accessToken}`, 'x-mandant-id': m.id },
+        })
+      ).json()) as Array<{ id: string; geschaeftsjahr: number }>;
+      return {
+        mandantId,
+        jahr,
+        anzahlSaetze: alle.length,
+        ids: alle.map((x) => x.id),
+      };
+    }, { jahr: fixtureJahr, mandantId: mutterId });
+    expect(
+      saetze.anzahlSaetze,
+      `die Mutter muss EINZELSatz und KONZERNSatz fuer dasselbe Jahr haben: ${JSON.stringify(saetze)}`,
+    ).toBeGreaterThanOrEqual(2);
+    expect(saetze.ids).toContain(ok.konzernBilanzId);
   });
 });

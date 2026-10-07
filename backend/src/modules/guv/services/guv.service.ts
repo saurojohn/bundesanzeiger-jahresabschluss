@@ -398,6 +398,9 @@ export class GuVService {
       status: 'DRAFT',
       hinweise: null,
       bilanzId: null,
+      // Bugfix 2026-10-07: neues Feld aus dem Schema — der Einzelsatz
+      // ist ausdruecklich KEIN Konzernsatz.
+      konzernEinheitId: null,
       ergebnis: new Prisma.Decimal(0),
       createdAt: now,
       updatedAt: now,

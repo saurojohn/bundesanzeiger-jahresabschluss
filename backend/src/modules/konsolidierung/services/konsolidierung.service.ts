@@ -353,21 +353,25 @@ export class KonsolidierungService {
       );
     }
 
-    // Bugfix 2026-10-04: Vor jeder Schrift die Zieljahres-Sätze prüfen.
+    // Bugfix 2026-10-07: `assertZieljahrFrei` ist ENTFALLEN.
     //
-    // `apply` legt eine Konzern-Bilanz UND eine Konzern-GuV für
-    // (mutterMandantId, geschaeftsjahr) an — beide unterliegen einem
-    // Unique-Constraint. Existiert für das Jahr bereits ein Satz, warf
-    // Prisma P2002 und der Aufrufer bekam HTTP 500 "Internal server
-    // error". Das ist nicht der Randfall, sondern der Normalfall: die
-    // Mutter hat für jedes Wirtschaftsjahr eine Jahresbilanz.
+    // Die Vorpruefung verlangte, dass die Mutter fuer das Jahr KEINE
+    // Bilanz und KEINE GuV hat — zwei Zeilen spaeter wurden genau
+    // diese Saetze geladen. Es gab sie also nie, und die Konsernrechnung
+    // enthielt ausschliesslich die Toechter. Ein Konzernabschluss ohne
+    // die Muttergesellschaft ist keiner, und er sah vollstaendig aus.
     //
-    // Ohne Vorprüfung entsteht zusätzlich ein TEILZUSTAND: Existiert keine
-    // Bilanz, aber eine GuV, wird die Konzern-Bilanz angelegt und die
-    // GuV-Anlage scheitert. Danach steht eine Konzern-Bilanz ohne
-    // Konzern-GuV da, der Status bleibt DRAFT — und jeder Versuch,
-    // erneut anzuwenden, scheitert nun an der Bilanz.
-    await this.assertZieljahrFrei(einheit.mutterMandantId, einheit.geschaeftsjahr);
+    // Ursache war der Unique-Constraint `@@unique([mandantId,
+    // geschaeftsjahr])`: der Konzernsatz wurde unter `mutterMandantId`
+    // gespeichert und verdraengte den Einzelsatz der Mutter.
+    //
+    // Nach HGB §301 / IDW RS 11 ist der Konzernabschluss ein EIGENER
+    // Abschluss neben dem Einzelsatz. Migration
+    // 20261007230000 fuehrt `konzernEinheitId` ein und zwei partielle
+    // Unique-Indizes — beide Saetze koennen jetzt nebeneinander
+    // existieren, und die Vorpruefung waere schadigend: sie wuerde
+    // genau die Einzelabschluesse verlangen, ohne die es keine
+    // Konsolidierung gibt.
 
     // 1. Aktuelle Buchungen laden (oder neu berechnen, falls DRAFT).
     let buchungen = einheit.buchungen;
@@ -430,10 +434,7 @@ export class KonsolidierungService {
           `fuer ${String(einheit.geschaeftsjahr)}. Ohne die Einzelabschluesse der ` +
           'Mutter kann keine Konzernrechnung erstellt werden — die Konzern-Bilanz ' +
           'wuerde ausschliesslich die Tochtergesellschafte enthalten und damit ' +
-          'voellig falsch sein.\n\nHinweis: `assertZieljahrFrei` verlangt zur Zeit, ' +
-          'dass die Mutter fuer das Jahr KEINE Saetze hat. Das widerspricht der ' +
-          'hier benoetigten Eingangsdatenlage und ist als bekannt offene ' +
-          'Spezifikationsluecke dokumentiert.',
+          'voellig falsch sein.',
         code: 'MUTTER_OHNE_EINZELABSCHLUSS',
         fehlendeMutterBilanz,
         fehlendeMutterGuv,
@@ -474,6 +475,9 @@ export class KonsolidierungService {
     this.applyEliminationsToGuv(konsGuvPositionen, buchungen);
 
     // 5. Konzern-Bilanz anlegen (mandantId = mutterMandantId).
+    // Der Konzernsatz wird als EIGENER Satz mit `konzernEinheitId`
+    // angelegt. Der Einzelsatz der Mutter bleibt unberuehrt bestehen
+    // (HGB §301 / IDW RS 11).
     const konzernBilanz = await this.kreatorSchutz(() =>
       this.bilanzRepository.createWithPositionen({
       mandantId: einheit.mutterMandantId,
@@ -481,6 +485,11 @@ export class KonsolidierungService {
       status: 'VALIDATED',
       hinweise: `Konzern-Bilanz (Konsolidierungseinheit ${einheit.id}, ${einheit.konsolidierungsArt})`,
       createdById: user.id,
+      // Bugfix 2026-10-07: eigener Satz NEBEN dem Einzelsatz der Mutter
+      // (HGB §301 / IDW RS 11). Vorher verdraengte der Konzernsatz den
+      // Einzelsatz, weil beide unter `mutterMandantId` fuer dasselbe Jahr
+      // gespeichert wurden.
+      konzernEinheitId: einheit.id,
       positionen: konsBilanzPositionen.map((p, idx) => ({
         seite: p.seite,
         kontonummer: p.kontonummer,
@@ -505,6 +514,7 @@ export class KonsolidierungService {
       hinweise: `Konzern-GuV (Konsolidierungseinheit ${einheit.id}, ${einheit.konsolidierungsArt})`,
       ergebnis: jahresergebnis,
       createdById: user.id,
+      konzernEinheitId: einheit.id,
       positionen: konsGuvPositionen.map((p, idx) => ({
         kontonummer: p.kontonummer,
         bezeichnung: p.bezeichnung,

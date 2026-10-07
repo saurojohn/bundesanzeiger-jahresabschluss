@@ -49,6 +49,8 @@ export interface BilanzCreateInput {
   status?: string;
   hinweise?: string | null;
   createdById?: string | null;
+  /** Konzernsatz (null = Einzelsatz). Siehe Migration 20261007230000. */
+  konzernEinheitId?: string | null;
   positionen?: BilanzPositionInput[];
 }
 
@@ -265,6 +267,8 @@ export class BilanzRepository {
           status: input.status ?? 'DRAFT',
           hinweise: input.hinweise ?? null,
           createdById: input.createdById ?? null,
+          // Bugfix 2026-10-07: Konzernsatz markieren. `null` = Einzelsatz.
+          konzernEinheitId: input.konzernEinheitId ?? null,
         },
       });
       const positionen = await this.createPositionenInTx(

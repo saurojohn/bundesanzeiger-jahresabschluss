@@ -276,7 +276,8 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
     expect(warn).toHaveBeenCalled();
   });
 
-  it('apply() VERWEIGERT ohne Einzelabschlüsse der Mutter (BUG vor dem Fix)', async () => {
+  it('apply() VERWEIGERT ohne Einzelabschlüsse der Mutter', async () => {
+    const bilanzCreate = vi.fn();
     // Das ist der eigentliche Nachweis: `apply` liefert die falsche
     // Konzern-Bilanz zurueck und meldet Erfolg mit Salden. Der Test
     // muss den Weg durch `apply` gehen, nicht nur die Loader.
@@ -286,10 +287,12 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
       {
         findByMandantAndJahr: vi.fn().mockResolvedValue([]), // KEINE Bilanzen
         findWithPositionen: vi.fn(),
+        createWithPositionen: bilanzCreate,
       } as never,
       {
         findByMandantAndJahr: vi.fn().mockResolvedValue([]), // KEINE GuVs
         findWithPositionen: vi.fn(),
+        createWithPositionen: vi.fn().mockResolvedValue({}),
       } as never,
       { record: vi.fn().mockResolvedValue(undefined) } as never,
     );
@@ -310,17 +313,19 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
       beteiligungsquote: '100',
       buchungen: [{ id: 'b1', buchungsArt: 'X', betrag: '0' }],
     });
-    intern.assertZieljahrFrei = vi.fn().mockResolvedValue(undefined);
-
     await expect(
       intern.applyKonsolidierung('e1', undefined as never, {
         ip: null,
         userAgent: null,
       }),
     ).rejects.toThrow(BadRequestException);
-
-    // Und es darf KEINE Konzern-Bilanz geschrieben worden sein.
-    expect(intern.assertZieljahrFrei).toHaveBeenCalled();
+    // Und es darf KEINE Konzern-Bilanz geschrieben worden sein. Bis
+    // 2026-10-07 stand hier `assertZieljahrFrei` an dieser Stelle — die
+    // Pruefung, die das Gegenteil verlangte und damit die ganze
+    // Konsolidierung blockierte. Sie ist mit der Migration
+    // 20261007230000 entfallen, weil der Konzernsatz jetzt NEBEN dem
+    // Einzelsatz existiert.
+    expect(bilanzCreate).not.toHaveBeenCalled();
   });
 
   it('die Fehlermeldung nennt den Grund und den Code', async () => {
@@ -355,9 +360,6 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
       expect(body.code).toBe('MUTTER_OHNE_EINZELABSCHLUSS');
       expect(body.fehlendeMutterBilanz).toBe(true);
       expect(body.message).toMatch(/Muttergesellschaft/);
-      // Und es benennt die Widersprüchlichkeit der Spezifikation —
-      // damit der Aufrufer weiß, dass es keine Bedienungsfrage ist.
-      expect(body.message).toMatch(/Spezifikationsl/);
     }
   });
 
@@ -574,5 +576,73 @@ describe('Konsolidierung: Einheit löschen (BUGFIX 2026-10-07)', () => {
     expect(koerper).toContain('kanzleiId');
     expect(koerper).toMatch(/status/);
     expect(koerper).toMatch(/DRAFT/);
+  });
+});
+
+describe('Konsernmodell: Einzelsatz und Konzernsatz koexistieren', () => {
+  /**
+   * Bugfix 2026-10-07, HGB §301 / IDW RS 11.
+   *
+   * `@@unique([mandantId, geschaeftsjahr])` auf `bilanz` und `guv`
+   * verbiet, dass der Einzelsatz der MUTTER und ihr Konzernsatz fuer
+   * dasselbe Jahr gleichzeitig existieren. `apply` speicherte den
+   * Konzernsatz unter `mutterMandantId` — also war die Rechnung
+   * entweder unmoglich (400) oder enthielt nur die Toechter.
+   *
+   * Migration 20261007230000 fuehrt `konzernEinheitId` ein und zwei
+   * PARTIELLE Unique-Indizes. Diese Tests sichern genau das ab.
+   */
+  it('der Konzernsatz wird mit konzernEinheitId angelegt', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const code = readFileSync(
+      join(process.cwd(), 'src/modules/konsolidierung/services/konsolidierung.service.ts'),
+      'utf-8',
+    );
+    // Beide Saetze (Bilanz und GuV).
+    const treffer = code.match(/konzernEinheitId:\s*einheit\.id,/g) ?? [];
+    expect(treffer.length, 'Konzern-Bilanz und -GuV').toBe(2);
+  });
+
+  it('das Schema kennt konzernEinheitId an Bilanz und GuV', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const schema = readFileSync(join(process.cwd(), 'prisma/schema.prisma'), 'utf-8');
+    const bilanz = schema.slice(schema.indexOf('model Bilanz {'), schema.indexOf('model GuV {'));
+    const guv = schema.slice(schema.indexOf('model GuV {'), schema.indexOf('model Anhang {'));
+    expect(bilanz).toContain('konzernEinheitId');
+    expect(guv).toContain('konzernEinheitId');
+    // Und der blockierende @@unique ist ENTFALLEN.
+    expect(bilanz).not.toContain('@@unique([mandantId, geschaeftsjahr])');
+    expect(guv).not.toContain('@@unique([mandantId, geschaeftsjahr])');
+  });
+
+  it('die Migration legt partielle Unique-Indizes an', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const sql = readFileSync(
+      join(
+        process.cwd(),
+        'prisma/migrations/20261007230000_konzern_eigener_abschluss/migration.sql',
+      ),
+      'utf-8',
+    );
+    // Vier partielle Indizes: Einzelsatz + Konzernsatz je Tabelle.
+    const partielle = sql.match(/CREATE UNIQUE INDEX/g) ?? [];
+    expect(partielle.length).toBe(4);
+    expect(sql).toMatch(/WHERE "konzernEinheitId" IS NULL/);
+    expect(sql).toMatch(/WHERE "konzernEinheitId" IS NOT NULL/);
+    // Der alte Global-Constraint muss weg, sonst blockiert er weiter.
+    expect(sql).toMatch(/DROP INDEX IF EXISTS "bilanz_mandantId_geschaeftsjahr_key"/);
+  });
+
+  it('der blockierende Vorbehalt ist entfernt', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const code = readFileSync(
+      join(process.cwd(), 'src/modules/konsolidierung/services/konsolidierung.service.ts'),
+      'utf-8',
+    );
+    expect(code).not.toMatch(/await this\.assertZieljahrFrei\(/);
   });
 });

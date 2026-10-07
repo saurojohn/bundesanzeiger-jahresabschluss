@@ -139,6 +139,43 @@ export class WPPruefungService {
     }
     this.assertMandantAccess(mandantId, user);
 
+    // Vier-Augen-Prinzip (IDW PS 880, § 11 Abs. 2 WPO).
+    //
+    // BEFUND 2026-10-07, bewusst NICHT als harte Sperre umgesetzt:
+    // Die Vier-Augen-Pruefung ist in diesem System strukturell nicht
+    // durchfuehrbar. `WPPruefungsAbschluss` fuehrt genau EIN
+    // `wpUserId` — den Pruefenden. Es gibt kein Feld fuer eine zweite
+    // Person und keine Rolle dafuer. Der Seed legt genau EINEN
+    // WIRTSCHAFTSPRUEFER an (`wp@kanzlei.de`).
+    //
+    // Eine harte Sperre (`existing.wpUserId === user.id` -> 403) wuerde
+    // damit den gesamten Freigabeweg unbenutzbar machen: der einzige
+    // Pruefer koennte seine eigene Pruefung nie freigeben. Das waere
+    // keine Erfuellung der Kontrolle, sondern das Abschalten des
+    // Produkts.
+    //
+    // Was stattdessen passiert: Die Selbstfreigabe wird
+    //   1. protokolliert,
+    //   2. im Audit-Eintrag als `selbstFreigegeben` festgehalten und
+    //   3. dem Aufrufer als Warnung zurueckgegeben.
+    // Fuer § 147 AO ist genau das richtig: die Aufzeichnung zeigt
+    // kuenftig, dass die Freigabe OHNE zweite Person erfolgte, statt
+    // es unauffaellig zu verschweigen.
+    //
+    // Die eigentliche Kontrolle erfordert ein Produktkonzept, das es
+    // nicht gibt (zweiter Pruefer je Abschluss). Das ist eine
+    // Entscheidung fuer die Kanzlei-Seite und NICHT hier zu erfinden.
+    const selbstFreigegeben =
+      args.status === 'APPROVED' && existing.wpUserId === user.id;
+    if (selbstFreigegeben) {
+      this.logger.warn(
+        `Vier-Augen-Prinzip verletzt: ${String(existing.bilanzId)} wurde von ` +
+          'dem Wirtschaftspruefer freigegeben, der die Pruefung ' +
+          'durchgefuehrt hat. Fuer eine Pflichtveroeffentlichung ist das ' +
+          'nicht ausreichend.',
+      );
+    }
+
     const updated = await this.wpRepository.finalizePruefungsAbschluss({
       id: pruefungId,
       status: args.status,
@@ -165,6 +202,10 @@ export class WPPruefungService {
         zusammenfassung: updated.zusammenfassung,
         completedAt: updated.completedAt?.toISOString() ?? null,
         bilanzStatusNachFinalize: args.status === 'APPROVED' ? 'APPROVED' : null,
+        // Vier-Augen-Prinzip: die Aufzeichnung muss zeigen, dass die
+        // Freigabe durch den Pruefenden selbst erfolgte (§ 147 AO).
+        pruefendeUserId: existing.wpUserId,
+        selbstFreigegeben,
       } as unknown as Prisma.JsonValue,
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,

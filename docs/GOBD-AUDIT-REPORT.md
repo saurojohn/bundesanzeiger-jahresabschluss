@@ -412,6 +412,52 @@ Pilot büßen.
 
 ---
 
+### Nachtrag 2026-10-07 (Nachtrag 2): Konzernabschluss erzeugte eine Rechnung ohne die Mutter
+
+Der schwerste verbleibende Befund, gefunden nach Abschluss der drei
+Auditrunden.
+
+`applyKonsolidierung()` verlangte über `assertZieljahrFrei`, dass die
+Muttergesellschaft für das Geschäftsjahr **keine** Bilanz und **keine**
+GuV hat. Fünfzehn Zeilen später wurden genau diese Sätze geladen. Es
+gab sie also nie.
+
+Das Ergebnis: die Konzern-Bilanz enthielt **ausschließlich die
+Tochtergesellschaften** — und beide möglichen Zweige sahen plausibel
+aus:
+
+| Situation | Altes Verhalten |
+|---|---|
+| Mutter hat einen Satz | 400 „bitte die vorhandenen Sätze zuerst löschen" |
+| Mutter hat keinen Satz | 201 Created, Konzern-Bilanz **ohne die Mutter**, inklusive Salden |
+
+Eine Konzernrechnung ohne Muttergesellschaft ist keine
+Konzernrechnung. Verschärfend: fehlende Eingangsdaten wurden per
+`continue` verworfen, **ohne Log und ohne Warnung** — `this.logger`
+war in der Datei deklariert und wurde nie benutzt. Das System meldete
+Erfolg für ein fachlich unbrauchbares Ergebnis.
+
+Fix, fail-closed:
+
+- Fehlt der Mutter die Bilanz oder die GuV, bricht `apply` mit
+  `MUTTER_OHNE_EINZELABSCHLUSS` ab, bevor irgendetwas geschrieben wird.
+- Beide Loader protokollieren, **wer** fehlt.
+- Fehlende Tochterabschlüsse werden gewarnt statt verschluckt.
+
+**Nicht geändert** wurde, welches Modell fachlich richtig ist: ob der
+Konzernsatz den Einzelsatz der Mutter ersetzt (der aktuelle
+`@@unique([mandantId, geschaeftsjahr])` lässt beides nicht zu) oder
+eine eigene Identität erhalten muss. Das ist eine Produktentscheidung
+und wird hier nicht erfunden. Bis dahin verweigert das System die
+Konsolidierung, statt eine falsche zu erzeugen.
+
+Für die externe Prüfung heißt das: **ein grüner HTTP-Status auf
+`apply` war bisher kein Nachweis für eine richtige Konzernrechnung.**
+Wenn dieser Pfad im Pilot genutzt wurde, sind die erzeugten
+Konzernabschlüsse zu prüfen.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

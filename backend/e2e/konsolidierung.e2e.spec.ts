@@ -10,7 +10,7 @@
  *   6.  POST /api/konsolidierung/einheiten mit 1 Mutter + 1 Tochter → 201
  *   7.  GET /api/konsolidierung/einheiten/:id → 200 + Einheit
  *   8.  POST /api/konsolidierung/einheiten/:id/calculate → 200 + Buchungen
- *   9.  POST /api/konsolidierung/einheiten/:id/apply → 201 + Konzern-IDs
+ *   9.  POST /api/konsolidierung/einheiten/:id/apply → 400 (fehlende Mutterdaten)
  *   10. POST /api/konsolidierung/einheiten/:id/finalize → 204
  *
  * Hinweis: Diese Tests sind gegen die Live-App (Port 3000). Tests werden
@@ -312,7 +312,24 @@ describe('Konsolidierung E2E (M3 Sprint 1)', () => {
   // ===========================================================================
   // 9. POST /api/konsolidierung/einheiten/:id/apply → 201 + Konzern-IDs
   // ===========================================================================
-  it('POST /api/konsolidierung/einheiten/:id/apply → 201 + Konzern-IDs', async () => {
+  // 9. apply → 400 MUTTER_OHNE_EINZELABSCHLUSS
+  //
+  // BUGFIX 2026-10-07 — dieser Test schrieb bis dahin den BEFUND fest.
+  //
+  // Er erwartete `201` mit `konzernBilanzId`, `konzernGuvId` und
+  // `salden`. Genau diese Antwort war fachlich falsch:
+  // `assertZieljahrFrei` verlangt, dass die Mutter fuer das Jahr KEINE
+  // Bilanz und KEINE GuV hat; fuenfzehn Zeilen spaeter werden genau
+  // diese Saetze geladen — es gibt sie also nie. Die zurueckgegebene
+  // „Konzern-Bilanz" enthielt ausschliesslich die Toechter und SAH
+  // vollstaendig aus, inklusive Salden.
+  //
+  // Die Erwartung ist deshalb umgedreht: ohne die Einzelabschluesse
+  // der Mutter wird die Konsolidierung verweigert. Ein 201 waere erst
+  // wieder richtig, wenn die Spezifikationsluecke (Konzernsatz ersetzt
+  // den Einzelsatz vs. eigener Datensatz) geklaert ist.
+  // ===========================================================================
+  it('POST /api/konsolidierung/einheiten/:id/apply → 400 ohne Einzelabschlüsse der Mutter', async () => {
     const loginRes = await loginAs('wp@kanzlei.de', 'Demo123!');
     const headers = await authHeaders(loginRes.accessToken);
 
@@ -331,17 +348,40 @@ describe('Konsolidierung E2E (M3 Sprint 1)', () => {
         headers,
       },
     );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as ApplyResponse;
-    expect(body.konzernBilanzId).toBeTruthy();
-    expect(body.konzernGuvId).toBeTruthy();
-    expect(body.salden).toBeTruthy();
+
+    // Zulaessig sind 400 (fehlende Mutterdaten) oder 400 (bereits
+    // angewendet) — in KEINEM Fall darf eine Konzern-Bilanz entstehen.
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      message?: string;
+      code?: string;
+      konzernBilanzId?: string;
+      konzernGuvId?: string;
+    };
+
+    // Der entscheidende Punkt: es darf KEINE Konzern-Bilanz herauskommen.
+    expect(body.konzernBilanzId, 'es darf keine Konzern-Bilanz entstehen').toBeUndefined();
+    expect(body.konzernGuvId, 'es darf keine Konzern-GuV entstehen').toBeUndefined();
+
+    // Und wenn es der Mutter-Check ist, muss er sich zu erkennen geben.
+    if (body.code) {
+      expect(body.code).toBe('MUTTER_OHNE_EINZELABSCHLUSS');
+      expect(String(body.message)).toMatch(/Muttergesellschaft/);
+    }
   });
 
   // ===========================================================================
   // 10. POST /api/konsolidierung/einheiten/:id/finalize → 204
   // ===========================================================================
-  it('POST /api/konsolidierung/einheiten/:id/finalize → 204', async () => {
+  it('POST /api/konsolidierung/einheiten/:id/finalize → 400, solange apply nicht moeglich war', async () => {
+    // Folge des Bugfixes in Test 9: `apply` wird ohne die
+    // Einzelabschluesse der Mutter verweigert, die Einheit bleibt
+    // IN_PROGRESS, und `finalize` kann nicht stattfinden.
+    //
+    // Vorher lief die Kette bis zu einem `VALIDATED`-Abschluss, der
+    // auf einer Konzernrechnung OHNE die Muttergesellschaft beruhte.
+    // Diese Kette ist jetzt bis zur geklaerten Spezifikationsluecke
+    // nicht durchlaeufig — und der Test sagt das ausdruecklich.
     const loginRes = await loginAs('wp@kanzlei.de', 'Demo123!');
     const headers = await authHeaders(loginRes.accessToken);
 
@@ -360,6 +400,8 @@ describe('Konsolidierung E2E (M3 Sprint 1)', () => {
         headers,
       },
     );
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message?: string };
+    expect(String(body.message)).toMatch(/Finalize nur nach Apply/);
   });
 });

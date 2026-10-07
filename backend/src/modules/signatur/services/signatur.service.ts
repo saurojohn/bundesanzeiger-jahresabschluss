@@ -1012,6 +1012,35 @@ export class SignaturService {
         signatureVerified: false,
       };
     }
+    // Bugfix 2026-10-07: Die Bindung an das Dokument wird VOR dem
+    // Token-Parsing geprüft. Sie ist eine Frage an das PDF, nicht an
+    // das Token — und vorher stand sie hinter dem Parse, wodurch ein
+    // unlesbares Token die eigentliche Frage verdeckte.
+    //
+    // Ohne /ByteRange lässt sich nicht bestimmen, welchen Byte-Bereich
+    // die Signatur abdeckt, also auch nicht, worauf sich der
+    // Zeitstempel bezieht. Vorher stand hier nur ein Warn-Log und die
+    // Prüfung lief bis `valid: true` — ein gueltiger TSA-Token für ein
+    // voellig anderes Dokument wurde als Zeitstempel fuer DIESES
+    // akzeptiert, und `legalValidity` wurde `VOLLSTAENDIG`.
+    //
+    // Ein ordnungsgemaess signiertes PDF hat immer eine /ByteRange.
+    const signedContentHash = this.hashSignedContent(signedPdfBytes);
+    if (!signedContentHash) {
+      this.logger.warn(
+        'Keine /ByteRange im signierten PDF gefunden — der Zeitstempel kann ' +
+          'dem Dokument nicht zugeordnet werden.',
+      );
+      return {
+        valid: false,
+        reason:
+          'Der Zeitstempel ist nicht an dieses Dokument gebunden: Im ' +
+          'signierten PDF fehlt die /ByteRange, der messageImprint ' +
+          'konnte deshalb nicht geprüft werden.',
+        signatureVerified: false,
+      };
+    }
+
     const parsed = parseTimestampToken(timestampTokenBytes);
     if (!parsed.parsed) {
       return { valid: false, reason: parsed.reason ?? 'Token nicht lesbar', signatureVerified: false };
@@ -1020,8 +1049,7 @@ export class SignaturService {
     // Der messageImprint der TSA bezieht sich auf den signierten Dokumentinhalt.
     // Wir bilden denselben Hash (SHA-256 über die /ByteRange-Bereiche) und
     // vergleichen die Hex-Werte direkt.
-    const signedContentHash = this.hashSignedContent(signedPdfBytes);
-    if (signedContentHash) {
+    {
       if (!parsed.messageImprintHex) {
         return {
           valid: false,
@@ -1038,11 +1066,6 @@ export class SignaturService {
           signatureVerified: false,
         };
       }
-    } else {
-      this.logger.warn(
-        'Keine /ByteRange im signierten PDF gefunden — messageImprint-Vergleich übersprungen. ' +
-          'Der Zeitstempel wird nur strukturell auf Plausibilität geprüft.',
-      );
     }
 
     const plausibility = checkTimestampPlausibility({

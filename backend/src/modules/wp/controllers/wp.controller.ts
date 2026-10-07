@@ -287,6 +287,13 @@ export class WPController {
     status: string;
     startedAt: string;
     completedAt: string | null;
+    // Bugfix 2026-10-07 (Vier-Augen-Prinzip): Der Aufzeichnungsstand
+    // muss zeigen, WER freigegeben hat und WER geprueft hat. Ohne diese
+    // Felder laesst sich am Datensatz nicht feststellen, ob die
+    // Vier-Augen-Pruefung stattgefunden hat (§ 147 AO).
+    freigegebenVonId: string | null;
+    freigegebenAm: string | null;
+    wpUserId: string | null;
   }>> {
     const pruefungen = await this.wpPruefungService.listByBilanz(bilanzId, user);
     return pruefungen.map((p) => ({
@@ -294,6 +301,9 @@ export class WPController {
       status: p.status,
       startedAt: p.startedAt.toISOString(),
       completedAt: p.completedAt?.toISOString() ?? null,
+      freigegebenVonId: p.freigegebenVonId ?? null,
+      freigegebenAm: p.freigegebenAm?.toISOString() ?? null,
+      wpUserId: p.wpUserId ?? null,
     }));
   }
 
@@ -336,7 +346,14 @@ function toResultDto(r: BilanzPruefungsResultEntity): BilanzPruefungsResultDto {
 }
 
 function toPruefungDto(
-  pruefung: { id: string; bilanzId: string; guvId: string | null; wpUserId: string; status: string; zusammenfassung: string | null; startedAt: Date; completedAt: Date | null },
+  pruefung: {
+    id: string; bilanzId: string; guvId: string | null; wpUserId: string;
+    status: string; zusammenfassung: string | null;
+    startedAt: Date; completedAt: Date | null;
+    // Bugfix 2026-10-07 (Vier-Augen-Prinzip)
+    freigegebenVonId?: string | null;
+    freigegebenAm?: Date | null;
+  },
   results: BilanzPruefungsResultEntity[],
   notizen: WPNotizEntity[],
 ): WPPruefungDto {
@@ -348,6 +365,10 @@ function toPruefungDto(
     status: pruefung.status as WPPruefungDto['status'],
     zusammenfassung: pruefung.zusammenfassung,
     startedAt: pruefung.startedAt.toISOString(),
+    // Bugfix 2026-10-07 (Vier-Augen-Prinzip): die freigebende Person
+    // gehoert in den Aufzeichnungsstand (§ 147 AO).
+    freigegebenVonId: pruefung.freigegebenVonId ?? null,
+    freigegebenAm: pruefung.freigegebenAm?.toISOString() ?? null,
     completedAt: pruefung.completedAt?.toISOString() ?? null,
     pruefungsResults: results.map(toResultDto),
     notizen: notizen.map(toNotizDto),

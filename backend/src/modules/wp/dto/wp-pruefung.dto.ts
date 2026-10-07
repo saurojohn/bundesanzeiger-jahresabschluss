@@ -86,6 +86,13 @@ export class WPPruefungDto {
   startedAt!: string;
   completedAt!: string | null;
 
+  /// Vier-Augen-Prinzip (Bugfix 2026-10-07): wer hat freigegeben?
+  /// Ohne diese Felder laesst sich am Aufzeichnungsstand nicht
+  /// feststellen, ob die Vier-Augen-Pruefung stattgefunden hat
+  /// (§ 11 Abs. 2 WPO, IDW PS 880).
+  freigegebenVonId!: string | null;
+  freigegebenAm!: string | null;
+
   @ValidateNested({ each: true })
   @Type(() => BilanzPruefungsResultDto)
   pruefungsResults!: BilanzPruefungsResultDto[];

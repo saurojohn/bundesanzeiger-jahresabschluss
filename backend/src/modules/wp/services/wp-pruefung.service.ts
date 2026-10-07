@@ -139,43 +139,40 @@ export class WPPruefungService {
     }
     this.assertMandantAccess(mandantId, user);
 
-    // Vier-Augen-Prinzip (IDW PS 880, § 11 Abs. 2 WPO).
+    // Vier-Augen-Prinzip (IDW PS 880, § 11 Abs. 2 WPO) — JETZT
+    // durchgesetzt.
     //
-    // BEFUND 2026-10-07, bewusst NICHT als harte Sperre umgesetzt:
-    // Die Vier-Augen-Pruefung ist in diesem System strukturell nicht
-    // durchfuehrbar. `WPPruefungsAbschluss` fuehrt genau EIN
-    // `wpUserId` — den Pruefenden. Es gibt kein Feld fuer eine zweite
-    // Person und keine Rolle dafuer. Der Seed legt genau EINEN
-    // WIRTSCHAFTSPRUEFER an (`wp@kanzlei.de`).
+    // Stand 2026-10-07: Die Sperre fehlte. Sie existierte nur fuer
+    // NOTIZEN (`wp-notiz.service.ts`, Self-Acknowledgement), nicht fuer
+    // die Freigabe, die tatsaechlich zaehlt: der Wirtschaftspruefer, der
+    // die Pruefung durchgefuehrt hat, konnte sie selbst freigeben.
     //
-    // Eine harte Sperre (`existing.wpUserId === user.id` -> 403) wuerde
-    // damit den gesamten Freigabeweg unbenutzbar machen: der einzige
-    // Pruefer koennte seine eigene Pruefung nie freigeben. Das waere
-    // keine Erfuellung der Kontrolle, sondern das Abschalten des
-    // Produkts.
+    // Bis eben war das auch nicht abstellbar: `WPPruefungsAbschluss`
+    // fuehrte genau EIN `wpUserId` — den Pruefenden — und es gab kein
+    // Feld fuer eine zweite Person. Der Seed legte nur EINEN
+    // WIRTSCHAFTSPRUEFER an. Eine harte 403-Sperre haette den gesamten
+    // Freigabeweg lahmgelegt: der einzige Pruefer koennte seine eigene
+    // Pruefung nie freigeben. Das waere keine Erfuellung der Kontrolle,
+    // sondern das Abschalten des Produkts.
     //
-    // Was stattdessen passiert: Die Selbstfreigabe wird
-    //   1. protokolliert,
-    //   2. im Audit-Eintrag als `selbstFreigegeben` festgehalten und
-    //   3. dem Aufrufer als Warnung zurueckgegeben.
-    // Fuer § 147 AO ist genau das richtig: die Aufzeichnung zeigt
-    // kuenftig, dass die Freigabe OHNE zweite Person erfolgte, statt
-    // es unauffaellig zu verschweigen.
+    // BEIDES IST JETZT ERLEDIGT:
+    //   - `freigegebenVonId` im Schema (Migration 20261007212118)
+    //   - ein ZWEITER WIRTSCHAFTSPRUEFER im Seed (wp2@kanzlei.de)
     //
-    // Die eigentliche Kontrolle erfordert ein Produktkonzept, das es
-    // nicht gibt (zweiter Pruefer je Abschluss). Das ist eine
-    // Entscheidung fuer die Kanzlei-Seite und NICHT hier zu erfinden.
+    // Damit ist die Kontrolle erfuellbar, also wird sie erzwungen.
+    //
+    // Nur beim FREIGEBEN, nicht beim Zurueckweisen: eine Ablehnung
+    // durch den Pruefenden selbst entwertet nichts, sie stoppt nur.
     const selbstFreigegeben =
       args.status === 'APPROVED' && existing.wpUserId === user.id;
     if (selbstFreigegeben) {
-      this.logger.warn(
-        `Vier-Augen-Prinzip verletzt: ${String(existing.bilanzId)} wurde von ` +
-          'dem Wirtschaftspruefer freigegeben, der die Pruefung ' +
-          'durchgefuehrt hat. Fuer eine Pflichtveroeffentlichung ist das ' +
-          'nicht ausreichend.',
+      throw new ForbiddenException(
+        'Vier-Augen-Prinzip: die Prüfung darf nicht von dem ' +
+          'Wirtschaftsprüfer freigegeben werden, der sie durchgeführt hat. ' +
+          'Bitte eine zweite Person mit der Rolle WIRTSCHAFTSPRUEFER die ' +
+          'Freigabe vornehmen lassen.',
       );
     }
-
     const updated = await this.wpRepository.finalizePruefungsAbschluss({
       id: pruefungId,
       status: args.status,
@@ -204,8 +201,11 @@ export class WPPruefungService {
         bilanzStatusNachFinalize: args.status === 'APPROVED' ? 'APPROVED' : null,
         // Vier-Augen-Prinzip: die Aufzeichnung muss zeigen, dass die
         // Freigabe durch den Pruefenden selbst erfolgte (§ 147 AO).
+        // Vier-Augen-Prinzip: jetzt nachweisbar, weil die Freigabe nur
+        // von einer ANDEREN Person kommen kann.
         pruefendeUserId: existing.wpUserId,
-        selbstFreigegeben,
+        freigegebenVonId: user.id,
+        vierAugenErfuellt: existing.wpUserId !== user.id,
       } as unknown as Prisma.JsonValue,
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,

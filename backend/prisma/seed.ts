@@ -258,6 +258,29 @@ async function main(): Promise<void> {
     });
   }
 
+  // Bugfix 2026-10-07 (Vier-Augen-Prinzip): Es gab nur EINEN
+  // Wirtschaftspruefer. Das Vier-Augen-Prinzip (IDW PS 880, § 11
+  // Abs. 2 WPO) verlangt aber, dass die Person, die die Pruefung
+  // durchfuehrt, sie NICHT selbst freigibt — wofuer es eine zweite
+  // Person braucht. Mit nur einem WP war die Kontrolle nicht nur
+  // nicht durchgesetzt, sie war strukturell unerfuellbar.
+  const wp2 = await prisma.user.create({
+    data: {
+      email: 'wp2@kanzlei.de',
+      passwordHash: demoPwd,
+      vorname: 'Waltraud',
+      nachname: 'Prüfin',
+      kanzleiId: kanzlei.id,
+      globalRole: 'USER',
+      isActive: true,
+    },
+  });
+  for (const m of [mandant1, mandant2]) {
+    await prisma.userMandantRole.create({
+      data: { userId: wp2.id, mandantId: m.id, rolle: 'WIRTSCHAFTSPRUEFER' },
+    });
+  }
+
   const gfDemo = await prisma.user.create({
     data: {
       email: 'gf-demo@demo-gmbh.de',

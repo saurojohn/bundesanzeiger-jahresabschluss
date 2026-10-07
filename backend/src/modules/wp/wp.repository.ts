@@ -258,6 +258,16 @@ export class WPRepository {
         completedAt: new Date(),
         finalisierungAm: new Date(),
         finalisierungVonId: input.finalisierungVonId,
+        // Vier-Augen-Prinzip (Bugfix 2026-10-07): die freigebende Person
+        // wird ausdruecklich festgehalten. Ohne dieses Feld war aus dem
+        // Datensatz NICHT erkennbar, wer freigegeben hat — der
+        // Aufzeichnungsstand nach § 147 AO blieb unvollstaendig.
+        ...(input.status === 'APPROVED'
+          ? {
+              freigegebenVonId: input.finalisierungVonId,
+              freigegebenAm: new Date(),
+            }
+          : {}),
       },
     });
   }

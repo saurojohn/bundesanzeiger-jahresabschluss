@@ -16,7 +16,7 @@
  *   8.  PATCH /api/wp/notizen/:id/status mit anderem WP → 200 + Status-APPROVED
  *   9.  POST /api/wp/pruefungen → 201 + pruefung
  *   10. Plausi-Pruefung läuft automatisch → 5 BilanzPruefungsResult vorhanden
- *   11. POST /api/wp/pruefungen/:id/finalize mit APPROVED → 200 + Status
+ *   11. finalize: Selbstfreigabe 403, Freigabe durch die zweite Person 200
  *   12. GET /api/wp/pruefungen/:id/report → 200 + markdownReport mit allen Daten
  *
  * Hinweis: Tests werden gegen die Live-App ausgefuehrt (Port 3000),
@@ -310,11 +310,35 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
     ]);
   });
 
-  it('11. POST /api/wp/pruefungen/:id/finalize mit APPROVED → 200 + Status-APPROVED', async () => {
+  it('11. finalize: Selbstfreigabe 403, Freigabe durch die zweite Person 200', async () => {
+    // Bugfix 2026-10-07 (Vier-Augen-Prinzip, IDW PS 880 § 11 Abs. 2 WPO).
+    //
+    // Dieser Test hat bis eben den BEFUND festgeschrieben: `wp@kanzlei.de`
+    // beginnt die Prüfung UND gibt sie selbst frei, und der Test erwartete
+    // dafür 200. Genau diese Antwort war fachlich falsch.
     expect(pruefungId).toBeTruthy();
     const wp = await loginAs('wp@kanzlei.de', 'Demo123!');
-    const res = await authFetch(
+
+    // 1) Der Prüfende darf seine eigene Prüfung nicht freigeben.
+    const selbst = await authFetch(
       wp.accessToken,
+      `/api/wp/pruefungen/${pruefungId}/finalize?mandantId=${wpNotizMandantId}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          status: 'APPROVED',
+          zusammenfassung: 'Pilot erfolgreich abgeschlossen.',
+        }),
+      },
+    );
+    expect(selbst.status, 'Selbstfreigabe muss abgewiesen werden').toBe(403);
+    const selbstBody = (await selbst.json()) as { message?: string };
+    expect(String(selbstBody.message ?? '')).toMatch(/Vier-Augen-Prinzip/i);
+
+    // 2) Eine zweite Person mit der Rolle WIRTSCHAFTSPRUEFER darf.
+    const wp2 = await loginAs('wp2@kanzlei.de', 'Demo123!');
+    const res = await authFetch(
+      wp2.accessToken,
       `/api/wp/pruefungen/${pruefungId}/finalize?mandantId=${wpNotizMandantId}`,
       {
         method: 'POST',
@@ -328,6 +352,12 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
     const pruefung = (await res.json()) as WPPruefungDto;
     expect(pruefung.status).toBe('APPROVED');
     expect(pruefung.completedAt).not.toBeNull();
+    // Der Aufzeichnungsstand muss zeigen, dass die Vier-Augen-Pruefung
+    // stattgefunden hat (§ 147 AO).
+    expect(
+      (pruefung as unknown as { freigegebenVonId?: string | null }).freigegebenVonId,
+      'die freigebende Person muss festgehalten sein',
+    ).toBeTruthy();
   });
 
   it('12. GET /api/wp/pruefungen/:id/report → 200 + markdownReport', async () => {

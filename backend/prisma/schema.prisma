@@ -157,6 +157,7 @@ model User {
   wpNotizenErstellt           WPNotiz[]              @relation("WPNotizErstellt")
   wpNotizenAcknowledged       WPNotiz[]              @relation("WPNotizAcknowledged")
   wpPruefungenErstellt        WPPruefungsAbschluss[] @relation("WPPruefungErstellt")
+  wpPruefungenFreigegeben     WPPruefungsAbschluss[] @relation("WPPruefungFreigegeben")
   apiKeysCreated              APIKey[]               @relation("APIKeyErstellt")
   apiKeysRevoked              APIKey[]               @relation("APIKeyRevoked")
   webhookSubscriptionsCreated WebhookSubscription[]  @relation("WebhookErstellt")
@@ -707,9 +708,26 @@ model WPPruefungsAbschluss {
   finalisierungAm    DateTime?
   finalisierungVonId String?   @db.Uuid
 
+  /// Vier-Augen-Prinzip (IDW PS 880, § 11 Abs. 2 WPO): die Person, die
+  /// die Prüfung DURCHFÜHRT hat, darf sie nicht selbst freigeben.
+  ///
+  /// Bis 2026-10-07 gab es nur `wpUserId` (den Prüfenden) und kein Feld
+  /// für eine zweite Person — die Kontrolle war damit strukturell nicht
+  /// erfüllbar. Statt sie vorzutäuschen, wird die Zweitperson jetzt
+  /// ausdrücklich erfasst.
+  ///
+  /// `null` = noch nicht freigegeben (durfte bis 2026-10-07 nie
+  /// passieren). Das Feld wird in `finalizePruefung` gesetzt und ist
+  /// danach Pflicht.
+  freigegebenVonId     String?   @db.Uuid
+  /// Freigabe-Datum getrennt von `finalisierungAm`, damit die
+  /// Freigabe des Prüfers im Aufzeichnungsstand erkennbar bleibt.
+  freigegebenAm        DateTime?
+
   bilanz Bilanz @relation(fields: [bilanzId], references: [id], onDelete: Cascade)
   guv    GuV?   @relation(fields: [guvId], references: [id])
   wpUser User   @relation("WPPruefungErstellt", fields: [wpUserId], references: [id])
+  freigegebenVon User? @relation("WPPruefungFreigegeben", fields: [freigegebenVonId], references: [id])
 
   @@index([bilanzId])
   @@index([status])

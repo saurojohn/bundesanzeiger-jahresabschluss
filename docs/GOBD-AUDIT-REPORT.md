@@ -458,6 +458,127 @@ Konzernabschlüsse zu prüfen.
 
 ---
 
+### Nachtrag 2026-10-07 (Nachtrag 3): Vier Produktlücken geschlossen
+
+Nach den drei Auditrunden wurden die vier offenen Punkte umgesetzt. Jeder
+Punkt war entweder eine Spezifikationslücke oder eine deklarierte, aber
+nicht durchgesetzte Kontrolle.
+
+#### 1. DELETE-Route für Konsolidierungseinheiten
+
+`@@unique([mutterMandantId, geschaeftsjahr])` bedeutet: eine Einheit
+belegt ihr Geschäftsjahr dauerhaft. Es gab keinen Löschweg. Nach einem
+abgebrochenen Versuch — insbesondere nachdem `apply` fachlich nicht
+anwendbar war — war für dasselbe Jahr keine zweite Konsolidierung mehr
+möglich; es blieb nur manuelles Nachhelfen in der Datenbank.
+
+Neu: `DELETE /api/konsolidierung/einheiten/:id`. Gesperrt ab
+`COMPLETED` — ab da existieren Konzern-Bilanz und Konzern-GuV und der
+Aufzeichnungsstand nach § 147 AO wird nicht entfernt.
+
+#### 2. Premium-Funktionen werden durchgesetzt
+
+`TIER_CONFIGS` definierte `custom-domain`, `public-api` und
+`white-label-branding` als Premium-only. `FeatureFlagService.has()`
+hatte **null** Aufrufer, ein `SubscriptionGuard` existierte nicht. Eine
+PILOT-Kanzlei konnte alle drei uneingeschränkt nutzen.
+
+Live belegt nach Einführung (`assertFeatureEntitled`):
+
+| Aktion | PILOT | PREMIUM |
+|---|---|---|
+| Custom-Domain verifizieren | 402 `FEATURE_NOT_ENTITLED` | 200 |
+| API-Schlüssel anlegen | 402 `FEATURE_NOT_ENTITLED` | 201 |
+| Branding-Farbe ändern | 402 `FEATURE_NOT_ENTITLED` | 200 |
+
+Zwei Entscheidungen: Die **Aktion** wird gesperrt, **vorhandene Daten
+bleiben** — wer nach einem Downgrade sein Logo verliert, kann nicht
+nachvollziehen, warum. Und ein **GET** darf nie an einem Tarif scheitern,
+sonst wäre die Branding-Seite für PILOT unbenutzbar. Geprüft wird
+deshalb nur bei einer tatsächlichen Änderung.
+
+Der Seed steht jetzt auf PREMIUM: eine Demonstrationsumgebung, die genau
+die Funktionen sperrt, die sie verkaufen soll, demonstriert nichts. Die
+Sperre selbst ist für PILOT nachgewiesen.
+
+#### 3. Vier-Augen-Prinzip — jetzt erfüllbar und erzwungen
+
+Der Befund war doppelt: die Kontrolle **fehlte** (der Prüfende konnte
+selbst freigeben) und war **nicht abstellbar** (`WPPruefungsAbschluss`
+führte genau ein `wpUserId`, der Seed genau einen Wirtschaftsprüfer).
+Eine harte Sperre hätte den gesamten Freigabeweg lahmgelegt.
+
+Beides erledigt: Migration `20261007212118_wp_vier_augen` mit
+`freigegebenVonId`/`freigegebenAm`, und ein zweiter Wirtschaftsprüfer
+(`wp2@kanzlei.de`) im Seed. Damit **erzwungen**:
+
+| | |
+|---|---|
+| Prüfende gibt selbst frei | 403 Vier-Augen-Prinzip |
+| Zweite Person gibt frei | 200 `APPROVED` |
+
+Aufzeichnungsstand (§ 147 AO): Repository, Audit-Eintrag und API nennen
+`pruefendeUserId`, `freigegebenVonId` und `vierAugenErfuellt`. Aus dem
+Datensatz ist jetzt erkennbar, **ob** und **wie** vier Augen geprüft
+wurde — vorher war das nicht feststellbar.
+
+Nur beim Freigeben gesperrt, nicht beim Zurückweisen: eine Ablehnung
+durch den Prüfenden selbst entwertet nichts, sie stoppt nur.
+
+#### 4. Konzernabschluss als eigener Satz (§ 301 HGB / IDW RS 11)
+
+Der Unique-Constraint verhinderte, dass Einzelsatz und Konzernsatz der
+Mutter gleichzeitig existieren. `apply` speicherte den Konzernsatz unter
+`mutterMandantId` — beide Zweige waren falsch: 400 „erst löschen" oder
+201 mit einer Rechnung ohne die Mutter.
+
+Migration `20261007230000` führt `konzernEinheitId` ein und **partielle**
+Unique-Indizes:
+
+```
+UNIQUE (mandantId, geschaeftsjahr)                    WHERE konzernEinheitId IS NULL
+UNIQUE (mandantId, geschaeftsjahr, konzernEinheitId)  WHERE konzernEinheitId IS NOT NULL
+```
+
+Warum partielle Indizes und nicht `coalesce(...)` im Spaltendefault:
+Postgres vergleicht beim Zeilenscan auch COALESCE-Ausdrücke des
+Indizes — ein Default hätte nichts geändert. Live belegt: die Mutter
+führt jetzt für dasselbe Jahr **beide** Sätze (Einzel 100.000 / Konzern
+100.000).
+
+#### 4b. Kapitalkonsolidierung — sie konnte nie auslösen und brach die Gleichung
+
+Zwei Defekte:
+
+- `anschaffungskosten`, `eigenkapitalTochter`,
+  `jahresueberschussTochter` standen fest auf 0 und hatten **keinen
+  Schreibpfad**. `if (ak > 0 || ekTochter > 0)` war damit immer falsch.
+- Die Buchung reduzierte Passiva um `betrag` **und** erhöhte Aktiva um
+  denselben Betrag → Differenz **2 × betrag**. Die Konzern-Bilanz war
+  nach dem Buchen nicht ausgeglichen, wurde aber gespeichert und als
+  `VALIDATED` gemeldet.
+
+Negativprobe mit dem alten Code (AK 60.000 / EK 100.000):
+```
+Bilanz ungleich: Aktiva 240000 / Passiva 160000:
+expected 80000 to be less than 0.01
+```
+80.000 = 2 × 40.000.
+
+Korrekt ist jetzt: anteiliges Tochter-EK eliminieren, Geschäfts-/
+Firmenwert als Aktivposten ansetzen (Badwill mindert das EK) und den
+Rest als **Kapitalkonsolidierungsdifferenz** ausweisen — damit die
+Gleichung aufgeht und der Betrag für die Wirtschaftsprüfung sichtbar
+ist, statt zu verschwinden.
+
+**Zur Testform:** Der Gleichungstest blieb zunächst grün, weil die
+Fixture eine Buchung mit Betrag 0 erzeugte — mit der alten Logik war
+dann nichts zu sehen. Eine Fixture, die den Fehler nicht auftreten
+lässt, macht den Test wertlos. Erst mit dem echten |AK − anteil EK|
+wurde er sichtbar.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

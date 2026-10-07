@@ -7,7 +7,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PublicApiRepository } from '../api.repository';
@@ -187,7 +192,7 @@ export class ApiKeyService {
     if (apiKey.expiresAt && apiKey.expiresAt.getTime() < Date.now()) return null;
 
     const hash = this.hashSecret(secret);
-    if (hash !== apiKey.keyHash) return null;
+    if (!this.vergleicheHashZeitkonstant(hash, apiKey.keyHash)) return null;
 
     // Fire-and-forget lastUsedAt
     void this.repository.touchLastUsedAt(apiKey.id);
@@ -345,6 +350,36 @@ export class ApiKeyService {
 
   private generateSecret(): string {
     return randomBytes(SECRET_RANDOM_BYTES).toString('base64url');
+  }
+
+  /**
+   * Zeitkonstanter Vergleich zweier SHA-256-Hexwerte.
+   *
+   * Bugfix 2026-10-07. Vorher stand hier `hash !== apiKey.keyHash`.
+   * `!==` vergleicht Zeichen für Zeichen und bricht beim ersten
+   * Unterschied ab; die Laufzeit verrät damit, wie viele führende
+   * Zeichen des gespeicherten Hashes getroffen wurden.
+   *
+   * Schweregrad: niedrig, weil ein Angreifer den gespeicherten Hash
+   * nicht direkt nutzen kann — serverseitig wird der Hash SEINES
+   * Secrets gebildet, nicht der gewünschte Wert übernommen. Es bleibt
+   * eine unnötige Information und die Empfehlung für Geheimnis-
+   * Vergleiche ist eindeutig.
+   *
+   * `crypto.timingSafeEqual` wirft bei abweichender Laenge, deshalb
+   * wird die Laenge vorher geprueft. Laengenunterschiede werden in
+   * einem konstanten Vergleich behandelt, nicht in einer Verzweigung.
+   */
+  private vergleicheHashZeitkonstant(a: string, b: string): boolean {
+    const bufA = Buffer.from(a, 'utf-8');
+    const bufB = Buffer.from(b, 'utf-8');
+    if (bufA.length !== bufB.length) {
+      // Falscher Hash, aber mit gleichem Aufwand verglichen: trotzdem
+      // eine konstante Anzahl Bytes durch timingSafeEqual schicken.
+      timingSafeEqual(bufA, bufA);
+      return false;
+    }
+    return timingSafeEqual(bufA, bufB);
   }
 
   private hashSecret(secret: string): string {

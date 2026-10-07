@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -141,6 +142,33 @@ export class KonsolidierungController {
     @Req() req: Request,
   ): Promise<void> {
     await this.konsolidierungService.finalizeEinheit(id, user, {
+      ip: req.ip ?? null,
+      userAgent: this.userAgent(req),
+    });
+  }
+
+  /**
+   * DELETE /api/konsolidierung/einheiten/:id
+   *
+   * Bugfix 2026-10-07 (fehlte vollstaendig). `@@unique([mutterMandantId,
+   * geschaeftsjahr])` bedeutet: eine Einheit belegt dieses Jahr
+   * dauerhaft. Nach einem abgebrochenen Versuch — z.B. wenn `apply`
+   * fachlich nicht anwendbar war — gab es keinen Weg zurueck und kein
+   * Weg, fuer dasselbe Jahr neu zu beginnen.
+   *
+   * Nur im Entwurfszustand (DRAFT / IN_PROGRESS). Ab COMPLETED
+   * existieren Konzern-Bilanz und Konzern-GuV; das ist ein
+   * Aufzeichnungsstand nach § 147 AO und wird nicht entfernt.
+   */
+  @Delete('einheiten/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles('WIRTSCHAFTSPRUEFER', 'KANZLEI_ADMIN')
+  async deleteEinheit(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this.konsolidierungService.deleteEinheit(id, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
     });

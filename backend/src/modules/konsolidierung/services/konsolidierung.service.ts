@@ -552,6 +552,63 @@ export class KonsolidierungService {
   }
 
   /**
+   * Löscht eine Konsolidierungseinheit.
+   *
+   * Bugfix 2026-10-07 (fehlte vollstaendig). `@@unique([mutterMandantId,
+   * geschaeftsjahr])` bedeutet: eine Einheit belegt dieses Jahr
+   * dauerhaft. Ohne Loeschweg blieb nach einem abgebrochenen Versuch
+   * nur „manuell in der Datenbank nachhelfen".
+   *
+   * Gesperrt ab `COMPLETED`: ab da existieren Konzern-Bilanz und
+   * Konzern-GuV, die auf die Einheit verweisen und WORM-archiviert
+   * sein koennen. Ein Loeschen wuerde einen veroeffentlichungs-
+   * relevanten Aufzeichnungsstand zerstoeren (§ 147 AO). Gesperrt ist
+   * auch `VALIDATED` — das ist der freigegebene Endzustand.
+   */
+  async deleteEinheit(
+    einheitId: string,
+    user: AuthUser,
+    context: KonsolidierungServiceContext,
+  ): Promise<void> {
+    const einheit = await this.loadEinheitForUser(einheitId, user);
+
+    if (einheit.status === 'COMPLETED' || einheit.status === 'VALIDATED') {
+      throw new BadRequestException(
+        `Konsolidierung kann nicht gelöscht werden — Status: ${einheit.status}. ` +
+          'Ab COMPLETED existieren Konzern-Bilanz und Konzern-GuV; das ist ' +
+          'ein Aufzeichnungsstand nach § 147 AO und wird nicht entfernt.',
+      );
+    }
+
+    const geloescht = await this.konsolidierungRepository.deleteEinheitDraft(
+      einheitId,
+      einheit.kanzleiId,
+    );
+    if (!geloescht) {
+      throw new NotFoundException(
+        'Konsolidierungseinheit nicht gefunden oder nicht mehr im Entwurfszustand',
+      );
+    }
+
+    void this.auditService.record({
+      userId: user.id,
+      kanzleiId: einheit.kanzleiId,
+      mandantId: einheit.mutterMandantId,
+      action: 'DELETE',
+      entityType: 'KonsolidierungsEinheit',
+      entityId: einheitId,
+      previousState: {
+        status: einheit.status,
+        geschaeftsjahr: einheit.geschaeftsjahr,
+        mutterMandantId: einheit.mutterMandantId,
+        anzahlBuchungen: einheit.buchungen?.length ?? null,
+      } as unknown as Prisma.JsonValue,
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+  }
+
+  /**
    * Berechnet finale Konzern-Salden aus Konzern-Bilanz + Konzern-GuV.
    *
    * Goodwill/Badwill werden aus dem passiven/aktiven Differenzbetrag

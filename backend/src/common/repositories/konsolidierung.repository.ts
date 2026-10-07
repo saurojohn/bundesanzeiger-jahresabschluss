@@ -186,6 +186,30 @@ export class KonsolidierungRepository {
   }
 
   /**
+   * Löscht eine Einheit samt Buchungen — NUR im Entwurfszustand.
+   *
+   * Bugfix 2026-10-07 (fehlte vollstaendig). Ohne diese Route blieb
+   * eine abgebrochene Einheit fuer immer liegen und belegte
+   * `(mutterMandantId, geschaeftsjahr)` dauerhaft. Praktische Folge:
+   * nach einem Fehlversuch konnte fuer dieses Jahr keine zweite
+   * Konsolidierung angelegt werden — es gab keinen Weg zurueck.
+   *
+   * Der Kanzlei-Filter sitzt in der WHERE-Bedingung, wie bei
+   * `updateStatus`: eine fremde Einheit liefert `count === 0` und wird
+   * als NotFound gemeldet, nicht stillschweigend geloescht.
+   */
+  async deleteEinheitDraft(
+    id: string,
+    kanzleiId: string,
+  ): Promise<boolean> {
+    const result = await this.prismaService.konsolidierungsEinheit.deleteMany({
+      where: { id, kanzleiId, status: { in: ['DRAFT', 'IN_PROGRESS'] } },
+    });
+    // Buchungen haengen ueber `onDelete: Cascade` an der Einheit.
+    return result.count > 0;
+  }
+
+  /**
    * Löscht alle vorhandenen Buchungen einer Einheit (für Recalculate).
    */
   async deleteBuchungen(einheitId: string): Promise<void> {

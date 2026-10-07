@@ -482,3 +482,97 @@ describe('Konsolidierung: Kanzlei-Filter im Repository', () => {
     ).resolves.toBe(satz);
   });
 });
+
+describe('Konsolidierung: Einheit löschen (BUGFIX 2026-10-07)', () => {
+  /**
+   * Vorher gab es KEINE Löschmöglichkeit. Durch
+   * `@@unique([mutterMandantId, geschaeftsjahr])` belegt eine Einheit
+   * das Jahr dauerhaft: nach einem abgebrochenen Versuch — etwa weil
+   * `apply` fachlich nicht anwendbar war — konnte für dasselbe Jahr
+   * keine zweite Konsolidierung angelegt werden.
+   */
+  function buildService(status: string) {
+    const repository = {
+      deleteEinheitDraft: vi.fn().mockResolvedValue(true),
+    };
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const service = new KonsolidierungService(
+      {} as never, // prisma
+      repository as never,
+      {} as never, // bilanzRepository
+      {} as never, // guvRepository
+      audit as never,
+    );
+    const intern = service as unknown as {
+      loadEinheitForUser: (...a: unknown[]) => Promise<unknown>;
+      deleteEinheit: (...a: unknown[]) => Promise<void>;
+    };
+    intern.loadEinheitForUser = vi.fn().mockResolvedValue({
+      id: 'e1',
+      kanzleiId: 'k1',
+      status,
+      geschaeftsjahr: 2025,
+      mutterMandantId: MUTTER,
+      buchungen: [],
+    });
+    return { service, repository, audit, intern };
+  }
+
+  const ctx = { ip: null, userAgent: null };
+  const user = { id: 'u1', globalRole: null, mandanten: [] } as never;
+
+  it('löscht eine Einheit im Entwurfszustand', async () => {
+    const { intern, repository, audit } = buildService('DRAFT');
+    await intern.deleteEinheit('e1', user, ctx);
+    expect(repository.deleteEinheitDraft).toHaveBeenCalledWith('e1', 'k1');
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('löscht auch IN_PROGRESS', async () => {
+    const { intern, repository } = buildService('IN_PROGRESS');
+    await intern.deleteEinheit('e1', user, ctx);
+    expect(repository.deleteEinheitDraft).toHaveBeenCalled();
+  });
+
+  it('VERWEIGERT ab COMPLETED — Konzern-Bilanz existiert (§ 147 AO)', async () => {
+    const { intern, repository } = buildService('COMPLETED');
+    await expect(
+      intern.deleteEinheit('e1', user, ctx),
+    ).rejects.toThrow(BadRequestException);
+    expect(repository.deleteEinheitDraft).not.toHaveBeenCalled();
+  });
+
+  it('VERWEIGERT auch im freigegebenen Zustand VALIDATED', async () => {
+    const { intern, repository } = buildService('VALIDATED');
+    await expect(
+      intern.deleteEinheit('e1', user, ctx),
+    ).rejects.toThrow(BadRequestException);
+    expect(repository.deleteEinheitDraft).not.toHaveBeenCalled();
+  });
+
+  it('meldet 0 Treffer als NotFound statt still zu nichts zu tun', async () => {
+    const { intern, repository } = buildService('DRAFT');
+    repository.deleteEinheitDraft.mockResolvedValue(false);
+    await expect(
+      intern.deleteEinheit('e1', user, ctx),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('das Repository filtert nach kanzleiId UND Status', async () => {
+    // Strukturtest: ein fehlender Kanzlei-Filter waere ein Cross-Tenant-
+    // Leck, ein fehlender Status-Filter wuerde einen
+    // Aufzeichnungsstand loeschen.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const code = readFileSync(
+      join(process.cwd(), 'src/common/repositories/konsolidierung.repository.ts'),
+      'utf-8',
+    );
+    const start = code.indexOf('async deleteEinheitDraft');
+    expect(start).toBeGreaterThan(-1);
+    const koerper = code.slice(start, code.indexOf('\n  }', start));
+    expect(koerper).toContain('kanzleiId');
+    expect(koerper).toMatch(/status/);
+    expect(koerper).toMatch(/DRAFT/);
+  });
+});

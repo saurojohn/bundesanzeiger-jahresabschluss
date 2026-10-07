@@ -345,6 +345,73 @@ nicht durch Platzhalter überdeckt, damit das Modul fertig wirkt.
 
 ---
 
+### Nachtrag 2026-10-07: Signatur, Public API, Wirtschaftsprüfung
+
+Eine dritte Runde über Signatur, Public API und die WP-Kette. Vier
+Defekte behoben — und zwei Lücken dokumentiert, die **nicht** durch
+Code behoben werden konnten, weil das dafür nötige Konzept nicht
+existiert.
+
+#### Behoben
+
+| # | Modul | Defekt | Beleg |
+|---|---|---|---|
+| 1 | Signatur | Zeitstempel ohne `/ByteRange` ergab `legalValidity: VOLLSTAENDIG` | Ein gültiger TSA-Token für ein anderes Dokument wurde als Zeitstempel für dieses akzeptiert |
+| 2 | Subscription | Billing-Provider schrieb ungeprüfte Werte in die DB | `'GIBT-ES-NICHT'` landete wörtlich in `kanzlei.subscriptionStatus` |
+| 3 | Public API | Geheimnis-Vergleich mit `!==` statt `timingSafeEqual` | Zeitabhängiger Vergleich des gespeicherten Hashes |
+| 4 | WP | Vier-Augen-Prinzip nicht erfüllt, aber ausgewiesen | Der Prüfende durfte seine eigene Prüfung freigeben |
+
+Zu 1 im Detail, weil es das schwerste ist: `checkTimestamp()` verglich
+den `messageImprint` mit dem SHA-256 über die `/ByteRange`. Fehlte die
+ByteRange, wurde der Vergleich **übersprungen** — es stand nur ein
+Warn-Log im Code. Ein gültiger Zeitstempel für ein beliebiges anderes
+Dokument galt damit als Zeitstempel für dieses, und die Signatur
+wurde als `VOLLSTAENDIG` ausgewiesen (§ 313 HGB, PublG § 11). Die
+Bindungsprüfung läuft jetzt **vor** der Token-Analyse: sie ist eine
+Frage an das PDF, nicht an das Token.
+
+#### Nicht behoben — weil die Kontrolle nicht erfüllbar ist
+
+**Vier-Augen-Prinzip.** In `finalizePruefung()` fehlte die Sperre gegen
+Selbstfreigabe. Sie existiert für Notizen, fehlte aber bei der
+Freigabe, die zählt. Eine harte Sperre wurde **bewusst nicht eingebaut**:
+`WPPruefungsAbschluss` führt genau ein `wpUserId` — den Prüfenden. Es
+gibt kein Feld für eine zweite Person und keine Rolle dafür; der Seed
+legt genau einen Wirtschaftsprüfer an. Eine 403-Sperre hätte den
+gesamten Freigabeweg unbenutzbar gemacht — der einzige Prüfer könnte
+seine eigene Prüfung nie freigeben. Das wäre keine Erfüllung der
+Kontrolle, sondern das Abschalten des Produkts.
+
+Stattdessen wird die Selbstfreigabe protokolliert und im Audit-Eintrag
+als `selbstFreigegeben` festgehalten. Für § 147 AO ist genau das
+richtig: die Aufzeichnung zeigt, dass die Freigabe **ohne** zweite
+Person erfolgte, statt es unauffällig zu verschweigen. Die eigentliche
+Kontrolle braucht ein Produktkonzept, das es nicht gibt.
+
+**Premium-Funktionen ohne Gate.** `custom-domain`, `public-api` und
+`white-label-branding` sind in `TIER_CONFIGS` als Premium-only
+definiert. `has()` und `isWithinLimit()` haben null Aufrufer, ein
+`SubscriptionGuard` existiert nicht. Eine PILOT-Kanzlei kann diese
+Funktionen nutzen. Auch das ist keine Codekorrektur, sondern eine
+Vertriebsentscheidung — eine pauschale Sperre würde den laufenden
+Pilot büßen.
+
+#### Ohne Befund — geprüft und sauber
+
+- **DATEV-Import:** Sechs Müll-Eingaben (ungültiges Base64, leerer
+  Inhalt, `;;;;`, nicht parsbarer Umsatz, ungültiges Datum) werden
+  sämtlich mit 400 und klarer Meldung abgewiesen. `parseFloat` → NaN
+  wird geworfen, Datumsangaben gegen einen Rundlauf geprüft
+  (`31022026` fällt durch), deutsche Zahlenformate korrekt.
+- **Zeitstempel-Kryptografie:** Der im Token genannte Hash-Algorithmus
+  wird tatsächlich verwendet (`hashFunctionForOid`), unbekannte OIDs
+  werden fail-closed abgewiesen.
+- **OAuth2:** Scopes als Schnittmenge `requested ∩ key.scopes`;
+  `algorithms: ['HS256']` erzwungen; `kanzleiId`-Claim wird gegen den
+  gespeicherten Key gekreuzt.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

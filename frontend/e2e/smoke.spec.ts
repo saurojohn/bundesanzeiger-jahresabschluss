@@ -568,15 +568,21 @@ test.describe('Speichern je Status', () => {
 
       for (const m of liste) {
         const mandHeader = { ...auth, 'x-mandant-id': m.id };
-        if (!willNichtDraft) {
-          // DRAFT genügt — den legt der Seed/der vorige Testlauf bereits an.
-          const bl = (await (await fetch(`/api/bilanz?mandantId=${m.id}`, {
-            headers: mandHeader,
-          })).json()) as Array<{ geschaeftsjahr: number; status: string }>;
-          const treffer = bl.find((b) => b.status === 'DRAFT');
-          if (treffer) return { mandantId: m.id, geschaeftsjahr: treffer.geschaeftsjahr };
-          continue;
-        }
+        // Bugfix 2026-10-08: BEIDE Faelle legen ihr Fixture in einem
+        // FREIEN Geschäftsjahr selbst an.
+        //
+        // Der DRAFT-Fall nahm vorher einen vorhandenen Satz („den legt
+        // der Seed bereits an"). Damit war das Jahr nicht eindeutig:
+        // `konsolidierung.spec.ts` und `datev-import.spec.ts` legen
+        // ebenfalls Jahresabschlüsse an, und die Zeile wird im Test
+        // ueber `tr` + `hasText: <jahr>` gefunden. Sobald mehrere Saetze
+        // existieren, kann `.first()` die falsche Zeile treffen — dann
+        // steht an einem DRAFT-Satz faelschlich der Sperrhinweis.
+        //
+        // Sichtbar geworden ist das erst, als die Konsolidierung weitere
+        // Abschlüsse anlegte. Ein Test, der einen fremden Satz aus
+        // dem Datenbestand zieht, ist nie stabil.
+        //
         // Freies Geschäftsjahr suchen: das Backend lehnt Dubletten je
         // Mandant ab (Unique-Constraint). `Math.random()` war naiv — ein
         // Retry-Lauf traf erneut auf dasselbe Jahr.
@@ -611,12 +617,16 @@ test.describe('Speichern je Status', () => {
         // Mit `.id` wurde daraus `/api/bilanz/undefined` → PATCH 400.
         const angelegtId = ((await angelegt.json()) as { bilanz: { id: string } })
           .bilanz.id;
-        const gesetzt = await fetch(`/api/bilanz/${angelegtId}`, {
-          method: 'PATCH',
-          headers: mandHeader,
-          body: JSON.stringify({ status: 'VALIDATED' }),
-        });
-        if (!gesetzt.ok) continue;
+        // Nur der Nicht-DRAFT-Fall bekommt einen gesperrten Status.
+        // Der DRAFT-Fall bleibt DRAFT und ist damit die Sperrprobe.
+        if (willNichtDraft) {
+          const gesetzt = await fetch(`/api/bilanz/${angelegtId}`, {
+            method: 'PATCH',
+            headers: mandHeader,
+            body: JSON.stringify({ status: 'VALIDATED' }),
+          });
+          if (!gesetzt.ok) continue;
+        }
         return { mandantId: m.id, geschaeftsjahr: jahr };
       }
       return null;

@@ -35,6 +35,10 @@ function makePrismaMock(zeiten: Date[]) {
     userAgent: 'test',
     geoLocation: null,
     createdAt,
+    // BUGFIX 2026-10-08: Die Kette haengt jetzt an `sequenz`
+    // (BIGSERIAL), nicht an `(createdAt, Zufalls-UUID)`. Der Mock muss
+    // das abbilden, sonst prueft er Code, den es nicht mehr gibt.
+    sequenz: BigInt(i + 1),
     entryHash: null as string | null,
     prevHash: null as string | null,
   }));
@@ -58,6 +62,8 @@ function makePrismaMock(zeiten: Date[]) {
     }: {
       where: {
         kanzleiId?: string | null;
+        /** Neuer Zweig seit 2026-10-08: monotone Sequenz. */
+        sequenz?: { lt: bigint } | null;
         OR: Array<
           | { createdAt: { lt: Date } }
           | { createdAt: Date; id: { lt: string } }
@@ -68,6 +74,20 @@ function makePrismaMock(zeiten: Date[]) {
       const kandidaten = eintraege.filter((e) =>
         kanzleiFilter == null ? true : e.kanzleiId === kanzleiFilter,
       );
+      // Neuer Pfad: Kette ueber `sequenz`. Der Mock bildet ihn ab,
+      // sonst faellt der Schreibpfad auf den Altbestand-Zweig zurueck
+      // und der Test prueft etwas anderes als den Produktivcode.
+      if (where.sequenz && 'lt' in where.sequenz) {
+        const grenze = where.sequenz.lt;
+        const vorherigeSeq = kandidaten
+          .filter((e) => e.sequenz !== null && e.sequenz < grenze)
+          .sort((a, b) => Number(b.sequenz - a.sequenz));
+        return Promise.resolve(
+          vorherigeSeq.length
+            ? { id: vorherigeSeq[0]!.id, entryHash: vorherigeSeq[0]!.entryHash }
+            : null,
+        );
+      }
       const istDavor = (x: (typeof eintraege)[number]): boolean =>
         where.OR.some((z) =>
           'createdAt' in z && z.createdAt instanceof Date && 'id' in z

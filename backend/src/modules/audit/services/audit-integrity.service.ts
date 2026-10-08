@@ -127,17 +127,37 @@ export class AuditIntegrityService {
     //     und keiner von ihnen wurde Vorgänger des anderen. Die Kette
     //     übersprang sie lautlos.
     //
-    // Die Reihenfolge ((createdAt, id)) ist damit eine TOTALORDNUNG und
-    // deckt sich mit der Sortierung in `verifyIntegrity()`.
+    // BUGFIX 2026-10-08: Die Kette wird jetzt über die monotone
+    // Spalte `sequenz` (BIGSERIAL) gebildet, NICHT über
+    // `(createdAt, id)`.
+    //
+    // Das Problem mit `id` war nicht der Gleichstand von `createdAt`,
+    // sondern die ZUFALLS-UUID: die Verarbeitung laeuft in
+    // Einfuegereihenfolge (`enqueue`), die Sortierung entschied aber
+    // nach UUID. Entstehen zwei Eintraege in derselben Millisekunde —
+    // bei einem Sammel-Import Regelfall — und hat der spaeter
+    // eingefuegte die kleinere UUID, findet er den ersten nicht als
+    // Vorgaenger und beginnt die Kette neu (GENESIS). Die Verifikation
+    // meldete daraufhin BROKEN.
+    //
+    // Das war die Ursache der sporadisch roten `audit-chain`-e2e-Tests.
+    // Eine Hash-Kette braucht eine TOTALORDNUNG aus der Datenbank, nicht
+    // aus Zufallswerten.
     const previous = await this.prisma.auditLog.findFirst({
       where: {
         kanzleiId: current.kanzleiId,
-        OR: [
-          { createdAt: { lt: current.createdAt } },
-          { createdAt: current.createdAt, id: { lt: current.id } },
-        ],
+        ...(current.sequenz !== null
+          ? { sequenz: { lt: current.sequenz } }
+          : {
+              // Altbestand ohne Sequenz (vor der Migration): auf
+              // createdAt/id zurueckfallen.
+              OR: [
+                { createdAt: { lt: current.createdAt } },
+                { createdAt: current.createdAt, id: { lt: current.id } },
+              ],
+            }),
       },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: current.sequenz !== null ? { sequenz: 'desc' } : [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { id: true, entryHash: true },
     });
 
@@ -200,7 +220,13 @@ export class AuditIntegrityService {
     // Tie-Breaker macht beide Seiten deckungsgleich.
     const entries = await this.prisma.auditLog.findMany({
       where,
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      // BUGFIX 2026-10-08: dieselbe Reihenfolge wie beim Bauen der
+      // Kette — ueber `sequenz`, nicht ueber eine Zufalls-UUID. Ein
+      // `verifyIntegrity()`, das anders sortiert als
+      // `computeHashForEntry()`, meldet BROKEN fuer eine intakte Kette.
+      // Sekundaer nach createdAt/id, damit ein Altbestand ohne Sequenz
+      // (vor der Migration) eine stabile Reihenfolge behält.
+      orderBy: [{ sequenz: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
 
     if (entries.length === 0) {
@@ -307,6 +333,10 @@ export class AuditIntegrityService {
    */
   private canonicalizeForHash(value: unknown): unknown {
     if (value instanceof Date) return value.toISOString();
+    // BigInt (Prisma-Spalte `sequenz`) kann JSON.stringify nicht
+    // serialisieren. Ohne diesen Zweig wuerde die Hash-Berechnung fuer
+    // jeden Eintrag werfen.
+    if (typeof value === 'bigint') return value.toString();
     if (Array.isArray(value)) {
       return value.map((item) => this.canonicalizeForHash(item));
     }
@@ -316,6 +346,11 @@ export class AuditIntegrityService {
       for (const key of Object.keys(source).sort()) {
         // Die Hash-Felder selbst gehören nicht in den Hash.
         if (key === 'entryHash' || key === 'prevHash') continue;
+        // `sequenz` ist die Verkettungsreihenfolge, NICHT der Inhalt
+        // des Eintrags. Würde sie in den Hash eingehen, wäre jeder
+        // bestehende Hash ungültig — die Spalte kam nachträglich dazu
+        // und ist für die Aussage des Eintrags ohne Bedeutung.
+        if (key === 'sequenz') continue;
         result[key] = this.canonicalizeForHash(source[key]);
       }
       return result;

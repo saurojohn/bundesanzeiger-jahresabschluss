@@ -561,12 +561,30 @@ model AuditLog {
   prevHash  String?
 
   createdAt DateTime @default(now())
+  /// Monotone Sequenz fuer die Hash-Kette (§ 147 AO, GoBD
+  /// Manipulationserkennung).
+  ///
+  /// BUGFIX 2026-10-08: Die Kette wurde ueber `(createdAt, id)`
+  /// verketten. `id` ist eine ZUFALLS-UUID (uuid v4), die
+  /// Verarbeitung laeuft aber in EINfuegereihenfolge
+  /// (`AuditIntegrityService.enqueue`). Entstehen zwei Eintraege in
+  /// derselben Millisekunde — bei einem Sammel-Import Regelfall —
+  /// entscheidet die UUID, nicht die Einfuegereihenfolge. Wird der
+  /// zweite Eintrag mit einer KLEINEREN UUID verarbeitet, findet er
+  /// den ersten nicht als Vorgaenger und beginnt die Kette neu
+  /// (GENESIS). Die Verifikation meldet dann BROKEN.
+  ///
+  /// Das war die Ursache der sporadisch roten audit-chain-e2e-Tests.
+  /// Ein Hash-Kette braucht eine TOTALORDNUNG aus der Datenbank, nicht
+  /// aus Zufallswerten. `BIGSERIAL` liefert sie.
+  sequenz BigInt @default(autoincrement())
 
   kanzlei         Kanzlei?         @relation(fields: [kanzleiId], references: [id])
   mandant         Mandant?         @relation(fields: [mandantId], references: [id])
   user            User?            @relation(fields: [userId], references: [id])
   jahresabschluss Jahresabschluss? @relation(fields: [jahresabschlussId], references: [id])
 
+  @@index([kanzleiId, sequenz])
   @@index([kanzleiId, createdAt])
   @@index([mandantId, createdAt])
   @@index([userId, createdAt])

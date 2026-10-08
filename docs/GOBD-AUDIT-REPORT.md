@@ -579,6 +579,45 @@ wurde er sichtbar.
 
 ---
 
+### Nachtrag 2026-10-08 (Nachtrag 4): Die Audit-Hash-Kette konnte brechen
+
+Der schwerste Befund des Audits — und er war mehrere Tage lang als
+„sporadisch roter Test" abgetan worden.
+
+**Die Kette hing an einer Zufalls-UUID.** `computeHashForEntry()`
+verketten über `(createdAt, id)`. `id` ist eine zufällige UUID (v4),
+die Verarbeitung läuft aber in Einfügereihenfolge
+(`AuditIntegrityService.enqueue` ist eine Promise-Kette). Entstehen
+zwei Einträge in derselben Millisekunde — bei einem Sammel-Import
+Regelfall —, entscheidet die UUID statt der Einfügereihenfolge. Wird
+der später eingefügte Eintrag mit einer **kleineren** UUID verarbeitet,
+findet er den ersten nicht als Vorgänger und beginnt die Kette neu.
+
+Belegt mit 25 Einträgen und identischem `createdAt`:
+
+| | Ergebnis |
+|---|---|
+| alte Kette | `{"status":"BROKEN","entriesChecked":1, …}` — **1 von 25** geprüft |
+| neue Kette | `OK`, `entriesChecked: 25`, `prevHash == entryHash` des Vorgängers |
+
+**Fix:** Migration `2026_10_08_210000_audit_chain_sequenz` — `sequenz
+BIGSERIAL` mit Index `(kanzleiId, sequenz)`. Beide Stellen
+(`computeHashForEntry`, `verifyIntegrity`) sortieren danach. Ein
+Hash-Kette braucht eine Totalordnung aus der Datenbank, nicht aus
+Zufallswerten.
+
+`sequenz` ist **nicht** Teil des Hashes: die Spalte kam nachträglich
+dazu und ist für die Aussage des Eintrags ohne Bedeutung. Wäre sie
+eingegangen, wäre jeder bestehende Hash ungültig.
+
+**Für die externe Prüfung:** Ein Prüfer, der `verifyIntegrity()` aufruft,
+bekam bisher bei einem Sammel-Import möglicherweise `BROKEN` für eine
+vollständig intakte Kette. Noch schlimmer: `entriesChecked: 1` bedeutet,
+dass faktisch **ein einziger** Eintrag geprüft wurde. Ein „grüner"
+Audit-Trail auf dieser Grundlage trug keine Aussage.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

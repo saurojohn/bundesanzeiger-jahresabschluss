@@ -35,12 +35,20 @@ const suffix = () => Math.random().toString(36).slice(2, 8);
 describe('Audit-Kette: gleicher Zeitstempel', () => {
   let prisma: PrismaService;
   let integrity: AuditIntegrityService;
-  let kanzleiId: string;
 
   beforeAll(async () => {
     prisma = new PrismaService();
     await prisma.$connect();
     integrity = new AuditIntegrityService(prisma);
+  });
+
+  /**
+   * JEDER Test bekommt seine eigene Kanzlei. Ein gemeinsamer Mandant
+   * liess den 25-Eintrags-Test 37 Eintraege zaehlen (12 aus dem
+   * Reihenfolge-Test) — ein Fehlschlag, der von der Teststruktur
+   * stammt und nicht vom Produktivcode.
+   */
+  async function eigeneKanzlei(): Promise<string> {
     const kanzlei = await prisma.kanzlei.create({
       data: {
         name: `Kette-gleicher-Zeitstempel ${suffix()}`,
@@ -48,14 +56,48 @@ describe('Audit-Kette: gleicher Zeitstempel', () => {
         adresse: { strasse: 'Testweg 2', plz: '10999', ort: 'München', land: 'DE' },
       },
     });
-    kanzleiId = kanzlei.id;
-  });
+    return kanzlei.id;
+  }
 
   afterAll(async () => {
     await prisma.$disconnect();
   });
 
+  /**
+   * Absicherung gegen die Umgebungsannahme, an der der erste
+   * Negativprob-Versuch hing: Postgres muss die Zeilen in
+   * Heap-Reihenfolge liefern. Das tut es meistens — und genau deshalb
+   * war der Test lokal gruen und im CI rot.
+   */
+  it('die Kette haelt unabhaengig von der Reihenfolge, in der Postgres liefert', async () => {
+    const kanzleiId = await eigeneKanzlei();
+    const ms = new Date('2026-10-08T21:00:00.000Z');
+    for (let i = 0; i < 12; i += 1) {
+      await prisma.$executeRawUnsafe(
+        'INSERT INTO "audit_log" ("id","kanzleiId","mandantId","jahresabschlussId","userId","action","entityType","entityId","newState","ipAddress","userAgent","geoLocation","createdAt") VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9::jsonb,$10,$11,$12,$13::timestamp)',
+        zufallsUuid(), kanzleiId, null, null, null, 'UPDATE', 'Bilanz',
+        `reihenfolge-${i}`, JSON.stringify({ i }), null, 'test', null, ms,
+      );
+    }
+
+    // Bewusst OHNE `orderBy`: die Reihenfolge, in der die Zeilen
+    // kommen, ist dann von Postgres bestimmt und im Zweifelsfall
+    // beliebig. Die Hash-Berechnung MUSS trotzdem stimmen — sie sucht
+    // ihren Vorgaenger ueber `sequenz`, nicht ueber die Lieferreihenfolge.
+    const unsortiert = await prisma.auditLog.findMany({ where: { kanzleiId } });
+    for (const e of unsortiert) {
+      await integrity.computeHashForEntry(e.id);
+    }
+
+    const ergebnis = await integrity.verifyIntegrity({ kanzleiId });
+    expect(
+      ergebnis.status,
+      `Kette muss unabhaengig von der Lieferreihenfolge halten: ${JSON.stringify(ergebnis)}`,
+    ).toBe('OK');
+  });
+
   it('hält die Kette über 25 Einträge mit IDENTISCHEM Zeitstempel', async () => {
+    const kanzleiId = await eigeneKanzlei();
     const ms = new Date('2026-10-08T20:00:00.000Z');
 
     for (let i = 0; i < ANZAHL; i += 1) {
@@ -89,9 +131,26 @@ describe('Audit-Kette: gleicher Zeitstempel', () => {
 
     // Hashes berechnen lassen. Ohne AuditService.record() (das selbst
     // einfuegt) direkt ueber die Queue.
+    // BUGFIX 2026-10-08: Die Reihenfolge MUSS der Sequenz folgen.
+    //
+    // `computeHashForEntry()` berechnet prevHash aus dem Eintrag, der
+    // in der KETTE VORHER gehasht wurde. Der Produktivpfad garantiert
+    // das ueber `enqueue` (Promise-Kette). Dieser Test ruft die Methode
+    // direkt auf und MUSS darum selbst nach `sequenz` sortieren.
+    //
+    // Mit `orderBy: { createdAt: 'asc' }` ist die Reihenfolge bei 25
+    // IDENTISCHEN Zeitstempeln beliebig. Rechnet man in dieser
+    // Reihenfolge, bekommt ein später Hash-aufgerufener Eintrag als
+    // prevHash den noch NULLEN Hash seines Vorgängers.
+    //
+    // Lokal lieferte Postgres die Heap-Reihenfolge (= Einfuegereihenfolge)
+    // und der Test war gruen; im CI-Lauf war sie eine andere und der
+    // Test meldete BROKEN bei `entriesChecked: 2`. Dieselbe Falle wie
+    // bei den fortlaufenden UUIDs — der Test hing an einer Annahme
+    // ueber die Umgebung.
     const eintraege = await prisma.auditLog.findMany({
       where: { kanzleiId },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { sequenz: 'asc' },
     });
     expect(eintraege.length).toBe(ANZAHL);
 

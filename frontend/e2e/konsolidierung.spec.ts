@@ -295,6 +295,9 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
       if (!bilanzAnlegen.ok) {
         return { grund: `Bilanz-Anlage ${bilanzAnlegen.status}` } as const;
       }
+      // Die POST-Antwort ist gewrappt: `{ bilanz: {...}, validierung: {...} }`.
+      const einzelBilanzId = ((await bilanzAnlegen.json()) as { bilanz: { id: string } })
+        .bilanz.id;
 
       // Bugfix 2026-10-07: Die Fixture legte nur eine BILANZ an. Die
       // Konsolidierung braucht aber Einzelabschluesse BEIDER Seiten —
@@ -352,6 +355,7 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
       return {
         jahr,
         mutterId: mutter.id,
+        einzelBilanzId,
         status: apply.status,
         body: geparst,
         text: roh.slice(0, 300),
@@ -394,41 +398,53 @@ test.describe('Konsolidierung: Zustandskette und Konfliktpfad', () => {
 
     // Die eigentliche Aussage: Der Einzelsatz der Mutter ist danach
     // IMMER NOCH DA. Genau daran scheiterte es vorher.
-    // Achtung: Die Mandantenliste ist fuer verschiedene Logins
-    // unterschiedlich sortiert. `arr[0]` hier waere moeglicherweise
-    // eine ANDERE Mandantin als `liste[0]` in der Fixture. Deshalb
-    // wird die ID aus der Fixture durchgereicht.
-    const fixture = ergebnis as unknown as { mutterId: string; jahr: number };
-    expect(fixture.mutterId, 'die Fixture muss die Mutter-ID liefern').toBeTruthy();
-    const mutterId: string = fixture.mutterId;
-    const fixtureJahr: number = fixture.jahr;
+    //
+    // Beide Saetze werden per ID geprueft, NICHT ueber die Liste: die
+    // Mandantenliste liefert absichtlich nur EINZELSAETZE
+    // (`konzernEinheitId: null`) — ein Konzernsatz gehoert nicht in
+    // die Jahresabschluesse einer Mandantin. Ein Listenzaehler wuerde
+    // hier also immer 1 sehen und die eigentliche Aussage verfehlen.
+    const fixtureIds = ergebnis as unknown as {
+      mutterId: string;
+      einzelBilanzId: string;
+    };
+    const beide = await page.evaluate(
+      async ({ einzelId, konzernId, mandantId }: { einzelId: string; konzernId: string; mandantId: string }) => {
+        const l = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: 'steuerberater@kanzlei.de', password: 'Demo123!' }),
+        });
+        const { accessToken } = await l.json();
+        const holen = async (id: string) => {
+          const r = await fetch(`/api/bilanz/${id}?mandantId=${mandantId}`, {
+            headers: { Authorization: `Bearer ${accessToken}`, 'x-mandant-id': mandantId },
+          });
+          return { status: r.status, body: r.ok ? await r.json() : null };
+        };
+        return {
+          einzel: await holen(einzelId),
+          konzern: await holen(konzernId),
+        };
+      },
+      {
+        einzelId: fixtureIds.einzelBilanzId,
+        konzernId: ok.konzernBilanzId,
+        mandantId: fixtureIds.mutterId,
+      },
+    );
 
-    const saetze = await page.evaluate(async ({ jahr, mandantId }: { jahr: number; mandantId: string }) => {
-      const l = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'steuerberater@kanzlei.de', password: 'Demo123!' }),
-      });
-      const { accessToken } = await l.json();
-      const m = { id: mandantId };
-      // Auf das FIXTURE-Jahr filtern: ohne Filter zaehlt auch der
-      // Seed-Satz des Jahres 2025 mit und die Aussage wird unscharf.
-      const alle = (await (
-        await fetch(`/api/bilanz?mandantId=${m.id}&geschaeftsjahr=${jahr}`, {
-          headers: { Authorization: `Bearer ${accessToken}`, 'x-mandant-id': m.id },
-        })
-      ).json()) as Array<{ id: string; geschaeftsjahr: number }>;
-      return {
-        mandantId,
-        jahr,
-        anzahlSaetze: alle.length,
-        ids: alle.map((x) => x.id),
-      };
-    }, { jahr: fixtureJahr, mandantId: mutterId });
     expect(
-      saetze.anzahlSaetze,
-      `die Mutter muss EINZELSatz und KONZERNSatz fuer dasselbe Jahr haben: ${JSON.stringify(saetze)}`,
-    ).toBeGreaterThanOrEqual(2);
-    expect(saetze.ids).toContain(ok.konzernBilanzId);
+      beide.einzel.status,
+      `der Einzelsatz der Mutter muss weiterhin abrufbar sein: ${JSON.stringify(beide.einzel.body).slice(0, 120)}`,
+    ).toBe(200);
+    expect(
+      beide.konzern.status,
+      `der Konzernsatz muss abrufbar sein: ${JSON.stringify(beide.konzern.body).slice(0, 120)}`,
+    ).toBe(200);
+    expect(
+      beide.einzel.body?.id,
+      'Einzelsatz und Konzernsatz muessen verschiedene Datensaetze sein',
+    ).not.toBe(beide.konzern.body?.id);
   });
 });

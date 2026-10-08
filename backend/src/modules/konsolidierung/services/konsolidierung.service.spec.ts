@@ -623,7 +623,7 @@ describe('Konsernmodell: Einzelsatz und Konzernsatz koexistieren', () => {
     const sql = readFileSync(
       join(
         process.cwd(),
-        'prisma/migrations/20261007230000_konzern_eigener_abschluss/migration.sql',
+        'prisma/migrations/2026_10_07_230000_konzern_eigener_abschluss/migration.sql',
       ),
       'utf-8',
     );
@@ -841,5 +841,83 @@ describe('Konzernsatz taucht nicht in den Mandantenlisten auf', () => {
     // eine bereits konsolidierte Bilanz darf nicht noch einmal
     // konsolidiert werden.
     expect(code).toContain('loadBilanzenFuerGeschäftsjahr');
+  });
+});
+
+describe('Migrationen: lexikografische Reihenfolge', () => {
+  /**
+   * Bugfix 2026-10-08 — gefunden von einem CI-Lauf auf einer LEEREN
+   * Datenbank, lokal also unsichtbar.
+   *
+   * Die beiden neuen Migrationen hiessen `20261007212118_…` OHNE
+   * Trennzeichen. Prisma sortiert die Ordner lexikografisch, und an
+   * Index 4 vergleicht `'2026_09…'` (`_` = 0x5F) mit `'20261007…'`
+   * (`1` = 0x31). Da `1 < _`, sortierten die neuen Migrationen VOR
+   * der Baseline, die `wp_pruefungs_abschluss` erst anlegt:
+   *
+   *   ERROR: relation "wp_pruefungs_abschluss" does not exist
+   *
+   * Lokal fiel das nicht auf, weil die Tabelle dort bereits aus der
+   * Entwicklungsphase existierte. Nur ein frischer Datenbankaufbau
+   * zeigt es.
+   */
+  it('die Sortierreihenfolge entspricht der chronologischen', () => {
+    // Bugfix 2026-10-08: `20261007212118_…` OHNE Trennzeichen
+    // sortierte lexikografisch VOR `2026_09_14_…`, weil an Index 4
+    // `'1'` (0x31) < `'_'` (0x5F). Die Migration lief damit vor der
+    // Baseline, die ihre Tabelle erst anlegt — auf einer leeren
+    // Datenbank: „relation wp_pruefungs_abschluss does not exist".
+    //
+    // Statt einen Namensstil zu erzwingen (zwei aeltere Ordner
+    // erfuellen ihn nicht und sind bereits angewendet), wird die
+    // EIGENTLICHE Invariante geprueft: Was lexikografisch sortiert
+    // wird, muss auch chronologisch so sortieren.
+    const { readdirSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const dir = join(process.cwd(), 'prisma/migrations');
+    const ordner = readdirSync(dir)
+      .filter((d: string) => d !== 'migration_lock.toml')
+      .sort();
+
+    // Jeder Ordnername muss mit einem interpretierbaren Zeitstempel
+    // beginnen — und dieser Zeitstempel muss der Sortierung folgen.
+    const chronologisch = [...ordner].sort((a: string, b: string) => {
+      const na = a.match(/^(\d{4})[_-]?(\d{2})[_-]?(\d{2})[_-]?(\d{2})?[_-]?(\d{2})?[_-]?(\d{2})?/);
+      const nb = b.match(/^(\d{4})[_-]?(\d{2})[_-]?(\d{2})[_-]?(\d{2})?[_-]?(\d{2})?[_-]?(\d{2})?/);
+      const ka = na ? na.slice(1).join('') : '';
+      const kb = nb ? nb.slice(1).join('') : '';
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+
+    expect(
+      ordner,
+      'lexikografische Sortierung weicht von der chronologischen ab: ' +
+        JSON.stringify({ lexikografisch: ordner, chronologisch }),
+    ).toEqual(chronologisch);
+  });
+
+  it('jede ALTER-Tabelle existiert in einer FRÜHEREN Migration', () => {
+    const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const dir = join(process.cwd(), 'prisma/migrations');
+    const ordner = readdirSync(dir)
+      .filter((d: string) => d !== 'migration_lock.toml')
+      .sort();
+
+    const erstellt = new Set<string>();
+    for (const name of ordner) {
+      const sql = readFileSync(join(dir, name, 'migration.sql'), 'utf-8');
+      // Erst die ERSTELLUNGEN dieser Migration, dann die ALTER: eine
+      // Migration darf eine Tabelle anfassen, die sie selbst anlegt.
+      for (const m of sql.matchAll(/CREATE TABLE\s+"([a-z_]+)"/g)) {
+        erstellt.add(m[1]!);
+      }
+      for (const m of sql.matchAll(/ALTER TABLE\s+"([a-z_]+)"/g)) {
+        expect(
+          erstellt.has(m[1]!),
+          `${name} alteriert "${m[1]}", das in keiner vorherigen Migration angelegt wurde`,
+        ).toBe(true);
+      }
+    }
   });
 });

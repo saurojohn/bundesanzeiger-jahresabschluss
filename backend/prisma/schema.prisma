@@ -225,6 +225,9 @@ model Bilanz {
   konzernEinheitId       String?   @db.Uuid
 
   mandant                Mandant                 @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  /// Konzernsatz: gehoert zu dieser Konsolidierungseinheit.
+  /// Beim Loeschen der Einheit bleibt der Satz als Einzelsatz stehen.
+  konzernEinheit         KonsolidierungsEinheit? @relation(fields: [konzernEinheitId], references: [id], onDelete: SetNull)
   positionen             BilanzPosition[]
   jahresabschluesse      Jahresabschluss[]
   pruefungsResults       BilanzPruefungsResult[]
@@ -302,6 +305,9 @@ model GuV {
   konzernEinheitId       String?   @db.Uuid
 
   mandant                Mandant                 @relation(fields: [mandantId], references: [id], onDelete: Cascade)
+  /// Konzernsatz: gehoert zu dieser Konsolidierungseinheit.
+  /// Beim Loeschen der Einheit bleibt der Satz als Einzelsatz stehen.
+  konzernEinheit         KonsolidierungsEinheit? @relation(fields: [konzernEinheitId], references: [id], onDelete: SetNull)
   positionen             GuVPosition[]
   jahresabschluesse      Jahresabschluss[]
   pruefungsResults       BilanzPruefungsResult[]
@@ -624,6 +630,8 @@ model KonsolidierungsEinheit {
   kanzlei   Kanzlei                  @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
   mutter    Mandant                  @relation("Mutter", fields: [mutterMandantId], references: [id])
   buchungen KonsolidierungsBuchung[]
+  konzernBilanzen Bilanz[]
+  konzernGuVs GuV[]
 
   @@unique([mutterMandantId, geschaeftsjahr])
   @@index([kanzleiId])

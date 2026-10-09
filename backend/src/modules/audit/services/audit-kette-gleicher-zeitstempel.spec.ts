@@ -64,12 +64,28 @@ describe('Audit-Kette: gleicher Zeitstempel', () => {
   });
 
   /**
-   * Absicherung gegen die Umgebungsannahme, an der der erste
-   * Negativprob-Versuch hing: Postgres muss die Zeilen in
-   * Heap-Reihenfolge liefern. Das tut es meistens — und genau deshalb
-   * war der Test lokal gruen und im CI rot.
+   * Die Reihenfolge, in der `computeHashForEntry()` aufgerufen wird,
+   * IST bedeutsam — genau das ist die Sache, die ich hier falsch
+   * behauptet habe.
+   *
+   * Die Methode berechnet `prevHash` aus dem Hash des Vorgängers.
+   * Ist dieser noch nicht gesetzt (weil der Vorgänger später gehasht
+   * wird), ist `prevHash` null und die Kette bricht. Der
+   * Produktivpfad garantiert die Reihenfolge über `enqueue`
+   * (Promise-Kette) — dieser Test tut das nicht, und behauptete
+   * zunächst das Gegenteil.
+   *
+   * Der erste Entwurf („hält unabhängig von der Reihenfolge, in der
+   * Postgres liefert") war lokal grün — Postgres lieferte zufällig eine
+   * günstige Reihenfolge — und im CI rot. Das war kein Testfehler im
+   * Fixture, sondern eine FALSCHE BEHAUPTUNG über das System.
+   *
+   * Korrekt ist: die Berechnung folgt der Sequenz, und das prüft der
+   * 25-Eintrags-Test. Dieser Test hält stattdessen fest, dass die
+   * Sequenz die Reihenfolge vorgibt — auch wenn Postgres sie
+   * beliebig zurückliefert.
    */
-  it('die Kette haelt unabhaengig von der Reihenfolge, in der Postgres liefert', async () => {
+  it('die Sequenz, nicht die Postgres-Lieferreihenfolge, bestimmt die Kette', async () => {
     const kanzleiId = await eigeneKanzlei();
     const ms = new Date('2026-10-08T21:00:00.000Z');
     for (let i = 0; i < 12; i += 1) {
@@ -80,20 +96,27 @@ describe('Audit-Kette: gleicher Zeitstempel', () => {
       );
     }
 
-    // Bewusst OHNE `orderBy`: die Reihenfolge, in der die Zeilen
-    // kommen, ist dann von Postgres bestimmt und im Zweifelsfall
-    // beliebig. Die Hash-Berechnung MUSS trotzdem stimmen — sie sucht
-    // ihren Vorgaenger ueber `sequenz`, nicht ueber die Lieferreihenfolge.
+    // OHNE `orderBy`: die Reihenfolge, in der die Zeilen kommen,
+    // bestimmt Postgres — und ist im Zweifelsfall beliebig.
     const unsortiert = await prisma.auditLog.findMany({ where: { kanzleiId } });
-    for (const e of unsortiert) {
+    expect(unsortiert.length).toBe(12);
+
+    // In der SEQUENZ-Reihenfolge hashen (wie `enqueue` es tut).
+    const sortiert = [...unsortiert].sort((a, b) =>
+      a.sequenz === null || b.sequenz === null
+        ? 0
+        : Number(a.sequenz - b.sequenz),
+    );
+    for (const e of sortiert) {
       await integrity.computeHashForEntry(e.id);
     }
 
     const ergebnis = await integrity.verifyIntegrity({ kanzleiId });
     expect(
       ergebnis.status,
-      `Kette muss unabhaengig von der Lieferreihenfolge halten: ${JSON.stringify(ergebnis)}`,
+      `Kette muss ueber die Sequenz vollstaendig sein: ${JSON.stringify(ergebnis)}`,
     ).toBe('OK');
+    expect(ergebnis.entriesChecked).toBe(12);
   });
 
   it('hält die Kette über 25 Einträge mit IDENTISCHEM Zeitstempel', async () => {

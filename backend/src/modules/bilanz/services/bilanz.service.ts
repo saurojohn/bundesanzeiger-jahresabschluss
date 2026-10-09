@@ -29,6 +29,7 @@ import {
   CreateBilanzResponse,
 } from '../dto/bilanz-validierung.dto';
 import { saldoStimmt } from '../../../common/utils/saldo';
+import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
 
 /**
  * Listenansicht: Skalarfelder, Salden-Summen (aktivaSumme/passivaSumme) und
@@ -288,6 +289,9 @@ export class BilanzService {
     if (!previous) {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
+    // Status kommt aus dem Request — ohne diese Pruefung war die
+    // DRAFT-Sperre unten mit einem PATCH aufzuheben (Befund 2026-10-09).
+    assertKeinZuruecksetzenInBearbeitung(previous.status, dto.status, 'Bilanz');
     if (previous.status !== 'DRAFT' && dto.positionen !== undefined) {
       throw new BadRequestException(
         'Positionen können nur in DRAFT-Phase geändert werden',

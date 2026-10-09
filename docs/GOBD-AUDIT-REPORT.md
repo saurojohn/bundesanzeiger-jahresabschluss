@@ -712,11 +712,104 @@ das ist die fail-closed-Variante.
 
 ---
 
+### Nachtrag 2026-10-09 (Nachtrag 6): Die Bearbeitungssperre war mit einem PATCH aufzuheben
+
+Gefunden beim Sweep über die Schreibpfade, nicht über die Abschluss-Kette.
+
+#### Der Defekt
+
+Bilanz, GuV und Anhang sperren ihre Inhalte zu Recht:
+
+```
+if (previous.status !== 'DRAFT' && dto.positionen !== undefined) {
+  throw new BadRequestException('Positionen können nur in DRAFT-Phase geändert werden');
+}
+```
+
+Aber `status` kam **aus dem Request** (`status: dto.status ?? undefined`).
+Damit war das Schloss ohne Schlüssel-Zwang: ein einziger PATCH auf `DRAFT`
+hat die Sperre wieder geöffnet, der nächste PATCH durfte die Beträge
+schreiben. Alle drei Services betroffen, mit drei verschiedenen
+Fehlermeldungen für denselben Sachverhalt.
+
+#### Live gemessen, vier Requests über die öffentliche API
+
+| # | Request | vorher | nachher |
+|---|---|---|---|
+| 1 | `PATCH { status: 'VALIDATED' }` | 200 → DB `VALIDATED` | 200 → DB `VALIDATED` |
+| 2 | `PATCH { positionen: […] }` | **400** ✅ gesperrt | **400** ✅ |
+| 3 | `PATCH { status: 'DRAFT' }` | **200** → DB `DRAFT` ← Umgehung | **400** ← DB bleibt `VALIDATED` |
+| 4 | `PATCH { positionen: […] }` | **200**, Beträge auf 9999 | **400**, Beträge bleiben 1000 |
+
+#### Der Vier-Augen-Stand war mit derselben Hand aushebelbar
+
+`setBilanzStatus()` setzt nach einer WP-Freigabe den Status **`APPROVED`**.
+Von dort aus genügte derselbe PATCH: Freigabe einer Wirtschaftsprüferin
+zurückrechnen, anschließend Positionen ändern. Die Kontrolle war auf zwei
+Requests verteilt und damit keine.
+
+Ergänzend: `APPROVED` steht **nicht** in `BILANZ_STATUS`
+(`['DRAFT','VALIDATED','ARCHIVED']`) — es ist ein Systemzustand. Das ist
+richtig so (der Client darf ihn nicht setzen, `@IsEnum` weist ihn ab),
+aber es sind zwei Vokabulare für dieselbe Spalte.
+
+#### Behoben
+
+`src/common/utils/status-transition.ts` — eine Quelle der Wahrheit für alle
+drei Bestandteile, verdrahtet in `bilanz.service`, `guv.service` und
+`anhang.service`.
+
+**Regel:** `DRAFT` heißt „in Bearbeitung" und ist monoton — wer ihn
+verlassen hat, kann nicht zurück. Vorwärtsgerichtete Schritte
+(`VALIDATED → ARCHIVED`) bleiben offen.
+
+*Was hier bewusst NICHT getan wurde:* eine vollständige Zustandsmaschine.
+Welcher Übergang wann erlaubt ist, ist eine Fachentscheidung. Geschlossen
+wurde genau der nachgewiesene Weg, sonst nichts.
+
+13 neue Tests: 8 für die Regel, 5 für die Verdrahtung in allen drei
+Services (ein Regeltest wäre grün, auch wenn niemand sie aufruft).
+Negativprobe gegen die alte Fassung: 4 von 5 Verdrahtungstests rot mit
+`promise resolved instead of rejecting` — die alte Fassung akzeptierte das
+Zurücksetzen in allen drei Services.
+
+#### Offener Folgebefund aus derselben Kette — hier dokumentiert, nicht kaschiert
+
+Beim Nachsehen der Zustandsmaschine fiel auf, dass **Signieren keinen
+Zustand erzeugt**:
+
+- `SIGNED` kommt im gesamten Backend-Quelltext **nicht vor**, obwohl das
+  Schema `DRAFT | FINALIZED | SIGNED | SUBMITTED | PUBLISHED` dokumentiert.
+- `finalisiertAm`, `signiertAm`, `eingereichtAm` werden nie geschrieben.
+- Die Tabelle `jahresabschluss` war zum Zeitpunkt der Prüfung **leer**.
+
+Und: `Signature`-Datensätze werden nur für einen Abschluss angelegt, nicht
+für Bilanz/GuV/Anhang (`signatur.service.ts`: „ohne verknüpften
+Jahresabschluss überspringen wir den DB-Record"). Gemessen in der Datenbank:
+**9 WORM-Objekte, darunter `BILANZ_PDF_SIGNED` und `GUV_PDF_SIGNED` mit
+`legalHold` — und 0 Signature-Records.**
+
+Es wurden also qualifiziert signierte PDFs unveränderlich abgelegt, ohne
+einen einzigen Datenbankbeleg: wer hat signiert, mit welchem Zertifikat,
+über welchen Hash, zu welchem Zeitpunkt. Das `Signature`-Modell hat dafür
+genau die Felder (`zertifikatSubject`, `zertifikatSeriennummer`,
+`hashVorher`, `hashNachher`, `zeitstempelIssuer`) — sie werden nur nie
+gefüllt, weil das Modell **kein `entityType`/`entityId` kennt** und
+`jahresabschlussId` NOT NULL ist. Eine signierte Bilanz ist darin
+strukturell nicht darstellbar.
+
+Nicht behoben: das braucht eine Migration (nullable `jahresabschlussId`
+plus `entityType`/`entityId`) und ist eine eigene Entscheidung, kein
+Nebenfix. Die Konsequenz ist hier festgehalten, damit sie nicht als
+erledigt gelesen wird.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |
 |---|---|---|---|
-| Unveränderbarkeit der Bücher/ Aufzeichnungen | § 146 AO + § 147 AO + GoBD Rz. 10.1 | ✅ | WORM-Object-Lock COMPLIANCE-Mode + 3650 Tage Retention |
+| Unveränderbarkeit der Bücher/ Aufzeichnungen | § 146 AO + § 147 AO + GoBD Rz. 10.1 | ⚠️ Teilweise | WORM-Object-Lock COMPLIANCE-Mode + 3650 Tage Retention + Löschsperren (Nachtrag 5) + monotone Bearbeitungssperre (Nachtrag 6). **Offen:** signierte Bilanz/GuV/Anhang erzeugen keinen Signature-Record und keinen Zustand — siehe Nachtrag 6 |
 | Vollständigkeit | § 146 Abs. 1 AO + GoBD Rz. 10.1 | ✅ | Audit-Trail mit Vorher/Nachher-Snapshots |
 | Mandant-Trennung | § 146 Abs. 2 AO | ✅ | Repository-Pattern + MandantGuard + ESLint |
 | Aufbewahrungsfristen 10 Jahre | § 147 Abs. 3 AO + § 257 HGB | ⚠️ Teilweise | WORM-Retention 3650 Tage + Löschsperren (Bilanz/GuV/Anhang nur DRAFT, Mandant mit Bestand 409, Konsolidierungseinheit ab COMPLETED). **Offen:** Archivierung/Pseudonymisierung statt Löschung — Rechtsentscheidung, siehe Nachtrag 5 |

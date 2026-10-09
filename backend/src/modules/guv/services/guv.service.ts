@@ -30,6 +30,7 @@ import {
   CreateGuVResponse,
   GuVValidierungDto,
 } from '../dto/guv-validierung.dto';
+import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
 
 export type GuVSummaryWithWorm = GuVWithoutPositionen & {
   wormObjectKey: string | null;
@@ -257,6 +258,9 @@ export class GuVService {
 
     const previous = await this.guvRepository.findWithPositionen(id, mandantId);
     if (!previous) throw new NotFoundException('GuV nicht gefunden');
+    // Status kommt aus dem Request — ohne diese Pruefung war die
+    // DRAFT-Sperre unten mit einem PATCH aufzuheben (Befund 2026-10-09).
+    assertKeinZuruecksetzenInBearbeitung(previous.status, dto.status, 'GuV');
     if (previous.status !== 'DRAFT' && dto.positionen !== undefined) {
       throw new BadRequestException(
         'Positionen können nur in DRAFT-Phase geändert werden',

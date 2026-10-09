@@ -23,6 +23,7 @@ import {
 } from '../constants/anhang.constants';
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
+import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
 
 /**
  * Listenansicht: alle Skalarfelder, die Anzahl der Abschnitte (`_count`) und
@@ -218,6 +219,9 @@ export class AnhangService {
 
     const previous = await this.anhangRepository.findWithAbschnitte(id, mandantId);
     if (!previous) throw new NotFoundException('Anhang nicht gefunden');
+    // Status kommt aus dem Request — ohne diese Pruefung war die
+    // DRAFT-Sperre unten mit einem PATCH aufzuheben (Befund 2026-10-09).
+    assertKeinZuruecksetzenInBearbeitung(previous.status, dto.status, 'Anhang');
     if (previous.status !== 'DRAFT' && dto.abschnitte !== undefined) {
       throw new BadRequestException(
         'Abschnitte können nur in DRAFT-Phase geändert werden',

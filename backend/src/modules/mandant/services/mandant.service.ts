@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -241,6 +242,47 @@ export class MandantService {
 
   /**
    * Löscht einen Mandanten. Nur KANZLEI_ADMIN oder SYSTEM_ADMIN.
+   *
+   * BEFUND 2026-10-09 — `prisma.mandant.delete()` ist ein HARD DELETE, und
+   * das Schema haengt per `onDelete: Cascade` an:
+   *
+   *   Mandant -> Bilanz   -> BilanzPosition, WPNotiz,
+   *                          WPPruefungsAbschluss, BilanzPruefungsResult
+   *   Mandant -> GuV      -> GuVPosition
+   *   Mandant -> Anhang   -> AnhangAbschnitt
+   *   Mandant -> Jahresabschluss -> Signature   (qeS-signierte Dokumente!)
+   *   Mandant -> BanzSubmission
+   *
+   * Ein einziger DELETE eines Mandanten mit Bestand vernichtet damit die
+   * vollstaendige Buchhaltungshistorie des Mandanten — einschliesslich
+   * signierter Abschluesse. § 147 AO / GoBD verlangen aber zehnjaehrige
+   * Aufbewahrung und Unveraenderbarkeit. Vorher war das ein freier
+   * Ein-Klick-Durchgang fuer KANZLEI_ADMIN.
+   *
+   * Zusaetzlich wurden zwei weitere Schaeden gemessen:
+   *
+   *  1. `AuditLog.mandant` ist eine OPTIONALE Relation ohne `onDelete`,
+   *     also `SetNull`. Beim Loeschen werden `mandantId` und
+   *     `jahresabschlussId` ALLER Audit-Eintraege dieses Mandanten genullt
+   *     — die Nachvollziehbarkeit bleibt zwar als Zeile erhalten, verliert
+   *     aber ihren Bezug und verschwindet aus jeder mandant-gefilterten
+   *     Sicht.
+   *  2. Der Audit-Eintrag fuer das DELETE selbst wird NACH dem Loeschen
+   *     geschrieben und referenziert `before.id`. Der Fremdschluessel
+   *     verletzt, `record()` schluckt den Fehler, `failedWrites` steigt —
+   *     `/health/ready` bleibt dauerhaft `degraded`. Jedes erfolgreiche
+   *     Mandant-DELETE produzierte also einen kaputten Audit-Pfad.
+   *
+   * Der Loeschpfad bleibt fuer Mandanten OHNE Buchhaltungsdaten offen
+   * (Neuanlage-Korrektur, Testdaten). Sobald aufbewahrungsrelevante Daten
+   * existieren, ist er gesperrt.
+   *
+   * OFFENE PRODUKTFRAGE (Fachfreigabe noetig, hier bewusst NICHT erfunden):
+   * was mit einem Mandanten passiert, der weg muss, aber Aufbewahrung hat.
+   * Serienreif sind dsfaer nur: (a) Archivieren statt Loeschen,
+   * (b) Pseudonymisieren, (c) Aufbewahrung nach Ablauf beenden. Keine
+   * dieser drei ist hier implementiert, weil jede eine Rechts-/
+   * Fachentscheidung ist.
    */
   async delete(id: string, user: AuthUser, context: MandantContext): Promise<void> {
     await this.assertMandantAccess(id, user);
@@ -253,12 +295,65 @@ export class MandantService {
     const before = await this.prisma.mandant.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Mandant nicht gefunden');
 
-    await this.prisma.mandant.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      // Zaehlen und loeschen teilen sich eine Transaktion, damit die fuenf
+      // Bestandsabfragen und das DELETE nicht auseinanderlaufen.
+      //
+      // ISOLATION — Serializable wurde hier ausprobiert und wieder verworfen.
+      // Postgres SSI bricht genau dieses Muster (count + DELETE) mit P2034
+      // ab: live gemessen lieferte das Loeschen eines LEEREN Mandanten
+      // HTTP 500 "write conflict or a deadlock" — der Sperrpfad wurde
+      // dadurch unbenutzbar.
+      //
+      // Und es haette das Problem auch nicht geloest: SSI garantiert eine
+      // serielle Reihenfolge, aber in dieser Reihenfolge darf der konkurrierende
+      // Insert legitim NACH dem Delete liegen — dann greift das Cascade
+      // trotzdem. Kosten ohne Nutzen.
+      //
+      // RESTRISIKO, bewusst so gelassen: ein Abschluss, der exakt zwischen
+      // Zaehlen und DELETE entsteht, rutscht durch das Cascade. Das
+      // erfordert zwei gleichzeitige Admin-Aktionen auf denselben Mandanten
+      // und ist damit ein Fenster von Millisekunden — gegenueber dem
+      // vorherigen Verhalten ("immer alles vernichtet") ist das der
+      // Unterschied zwischen einem Fehler und einer Katastrophe. Wer es
+      // ganz schliessen will, braucht eine DB-Seitige Sperre (Trigger), und
+      // nicht noch eine Isolationsstufe.
+      const [jahresabschluesse, bilanzen, guvs, anhaenge, submissions] = await Promise.all([
+        tx.jahresabschluss.count({ where: { mandantId: id } }),
+        tx.bilanz.count({ where: { mandantId: id } }),
+        tx.guV.count({ where: { mandantId: id } }),
+        tx.anhang.count({ where: { mandantId: id } }),
+        tx.banzSubmission.count({ where: { mandantId: id } }),
+      ]);
 
+      const vorhanden: string[] = [];
+      if (jahresabschluesse > 0) vorhanden.push(`${jahresabschluesse} Jahresabschluss/-abschlüsse`);
+      if (bilanzen > 0) vorhanden.push(`${bilanzen} Bilanz(en)`);
+      if (guvs > 0) vorhanden.push(`${guvs} GuV(s)`);
+      if (anhaenge > 0) vorhanden.push(`${anhaenge} Anhang/Anhänge`);
+      if (submissions > 0) vorhanden.push(`${submissions} Bundesanzeiger-Einreichung(en)`);
+
+      if (vorhanden.length > 0) {
+        throw new ConflictException(
+          `Mandant kann nicht gelöscht werden: ${vorhanden.join(', ')} vorhanden. ` +
+            'Buchhaltungsunterlagen sind nach § 147 AO zehn Jahre aufzubewahren und ' +
+            'unveränderbar; ein Löschen würde Bilanzen, Abschlüsse und qeS-Signaturen ' +
+            'samt Nachvollziehbarkeit vernichten.',
+        );
+      }
+
+      await tx.mandant.delete({ where: { id } });
+    });
+
+    // `mandantId` waere hier ein Fremdschluessel auf eine gerade geloeschte
+    // Zeile — der Eintrag wuerfe scheitern und still verschwinden. Der
+    // Mandantbezug steckt stattdessen in `entityId`; `kanzleiId` haelt die
+    // Kanzleizugehoerigkeit, damit der Eintrag mandant-gefiltert auffindbar
+    // bleibt.
     void this.auditService.record({
       userId: user.id,
       kanzleiId: before.kanzleiId,
-      mandantId: before.id,
+      mandantId: null,
       action: 'DELETE',
       entityType: 'Mandant',
       entityId: before.id,

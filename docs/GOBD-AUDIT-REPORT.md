@@ -618,6 +618,100 @@ Audit-Trail auf dieser Grundlage trug keine Aussage.
 
 ---
 
+### Nachtrag 2026-10-09 (Nachtrag 5): Ein Klick löschte die gesamte Buchhaltungshistorie
+
+Der schwerste Aufbewahrungsbefund des Audits. Gefunden bei einem Sweep über
+alle Löschpfade — nicht über die Bilanz, sondern über **den Mandanten**.
+
+#### Der Defekt
+
+`DELETE /api/mandant/:id` rief `prisma.mandant.delete()` auf. Das Schema
+hängt per `onDelete: Cascade` an:
+
+```
+Mandant ──> Bilanz         ──> BilanzPosition, WPNotiz,
+                               WPPruefungsAbschluss, BilanzPruefungsResult
+       ──> GuV            ──> GuVPosition
+       ──> Anhang         ──> AnhangAbschnitt
+       ──> Jahresabschluss──> Signature          <-- qeS-signierte Abschlüsse
+       ──> BanzSubmission
+```
+
+Ein einziger DELETE eines Mandanten **mit Bestand** vernichtete damit die
+vollständige Buchhaltungshistorie — einschließlich kryptografisch
+signierter Abschlüsse. § 147 AO verlangt zehnjährige Aufbewahrung und
+Unveränderbarkeit. Vorher war das ein freier Durchgang für `KANZLEI_ADMIN`;
+`bilanz`, `guv` und `anhang` waren zu diesem Zeitpunkt bereits auf `DRAFT`
+gesperrt, der Mandant war die Lücke in genau dieser Sperre.
+
+#### Live gemessen (HTTP-Pfad, Messung direkt per Prisma)
+
+| Messung | vorher | nachher |
+|---|---|---|
+| `DELETE` auf Mandant **mit** Bilanz | — | **204 No Content** |
+| Bilanzen | 1 | **0** |
+| Audit-Einträge mit Mandantbezug | 2 | **0** |
+| `/health/ready` `auditWriteFailures` | 1 | **2** |
+
+#### Zwei Folgeschäden, die dieselbe Ursache haben
+
+1. **Die Nachvollziehbarkeit verlor ihren Bezug.** `AuditLog.mandant` ist
+   eine *optionale* Relation ohne `onDelete` — also `SetNull`. Beim Löschen
+   wurden `mandantId` **und** `jahresabschlussId` *aller* Audit-Einträge
+   dieses Mandanten genullt. Die Zeilen bleiben erhalten, verlieren aber ihre
+   Zuordnung und verschwinden aus jeder mandant-gefilterten Sicht.
+
+2. **Jedes erfolgreiche Mandant-DELETE zerstörte seinen eigenen
+   Audit-Eintrag.** Der Eintrag wird *nach* dem Löschen geschrieben und
+   referenziert `before.id` — ein Fremdschlüssel auf eine gerade gelöschte
+   Zeile. `record()` schluckt den Fehler, `failedWrites` steigt, und
+   `/health/ready` bleibt **dauerhaft** `degraded`. Der Zähler wird nie
+   zurückgesetzt. Der erfolgreiche Betriebsfall war damit genau der, der den
+   Health-Check dauerhaft entwertet.
+
+#### Behoben
+
+- **Sperre (409):** Vor dem Löschen wird der aufbewahrungsrelevante Bestand
+  gezählt — Jahresabschluss, Bilanz, GuV, Anhang, BanzSubmission. Ist
+  Bestand da, `409 Conflict` mit Klartextbenennung des Bestands.
+- **Audit-Eintrag:** `mandantId: null` (der Bezug steckt in `entityId`, die
+  Kanzleizugehörigkeit in `kanzleiId`) — der Eintrag landet jetzt.
+
+Gegenprobe: ein Mandant **ohne** Buchhaltungsdaten bleibt löschbar
+(HTTP 204), und sein DELETE-Eintrag wird tatsächlich persistiert
+(`kanzleiId` gesetzt, `mandantId` null).
+
+#### Ein Fehler, den der erste Fix selbst machte
+
+Der erste Entwurf zählte und löschte unter `SERIALIZABLE`. Live gemessen
+lieferte das Löschen eines **leeren** Mandanten HTTP 500:
+
+```
+P2034 — Transaction failed due to a write conflict or a deadlock
+```
+
+Postgres SSI bricht genau dieses Muster (`count` + `DELETE`) routinemäßig ab.
+Und es hätte das Restfenster ohnehin **nicht** geschlossen: SSI garantiert eine
+serielle Reihenfolge, in der der konkurrierende Insert legitim *nach* dem
+Delete liegen darf — dann greift das Cascade trotzdem. Kosten ohne Nutzen;
+zurückgenommen, mit Begründung im Code festgehalten.
+
+*Restrisiko, bewusst so gelassen:* ein Abschluss, der exakt zwischen Zählen
+und DELETE entsteht, rutscht durch das Cascade. Das erfordert zwei
+gleichzeitige Admin-Aktionen auf denselben Mandanten. Wer es ganz schließen
+will, braucht eine DB-seitige Sperre (Trigger), nicht noch eine
+Isolationsstufe.
+
+#### Offene Produktfrage (Fachfreigabe, hier bewusst NICHT erfunden)
+
+Was passiert mit einem Mandanten, der weg muss, aber Aufbewahrung hat?
+Serienreif sind nur: **Archivieren** statt Löschen, **Pseudonymisieren**, oder
+**Aufbewahrung nach Ablauf beenden**. Keines ist implementiert, weil jede
+eine Rechts- und Fachentscheidung ist. Bis dahin ist der Pfad gesperrt —
+das ist die fail-closed-Variante.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |
@@ -625,7 +719,7 @@ Audit-Trail auf dieser Grundlage trug keine Aussage.
 | Unveränderbarkeit der Bücher/ Aufzeichnungen | § 146 AO + § 147 AO + GoBD Rz. 10.1 | ✅ | WORM-Object-Lock COMPLIANCE-Mode + 3650 Tage Retention |
 | Vollständigkeit | § 146 Abs. 1 AO + GoBD Rz. 10.1 | ✅ | Audit-Trail mit Vorher/Nachher-Snapshots |
 | Mandant-Trennung | § 146 Abs. 2 AO | ✅ | Repository-Pattern + MandantGuard + ESLint |
-| Aufbewahrungsfristen 10 Jahre | § 147 Abs. 3 AO + § 257 HGB | ✅ | WORM-Retention 3650 Tage |
+| Aufbewahrungsfristen 10 Jahre | § 147 Abs. 3 AO + § 257 HGB | ⚠️ Teilweise | WORM-Retention 3650 Tage + Löschsperren (Bilanz/GuV/Anhang nur DRAFT, Mandant mit Bestand 409, Konsolidierungseinheit ab COMPLETED). **Offen:** Archivierung/Pseudonymisierung statt Löschung — Rechtsentscheidung, siehe Nachtrag 5 |
 | Datenzugriff (GDP-Zu, BMF 2019) | GoBD Rz. 10.2 | ✅ | E-Bilanz-XBRL-Export + DATEV-Export + PDF-Download |
 | Datenträgerüberlassung (Z3) | GoBD Rz. 11 | ✅ | E-Bilanz-XBRL + DATEV-EXTF-Export |
 | Maschinelle Auswertbarkeit (Z1, Z2) | GoBD Rz. 10.2 | ✅ | DB-Direct-Read + strukturierte Exporte |
@@ -634,7 +728,7 @@ Audit-Trail auf dieser Grundlage trug keine Aussage.
 | Datenschutz (DSGVO) | Art. 5, 25, 32 DSGVO | ✅ | Mandant-Trennung + Audit-Trail + Pseudonymisierung möglich |
 | Internes Kontrollsystem (IKS) | GoBD Rz. 10.1 | ⚠️ Teilweise | Audit-Trail vorhanden, IKS-Doku fehlt (TODO § 8) |
 
-**Zusammenfassung**: 9 von 11 Anforderungen vollständig erfüllt, 2 in Arbeit.
+**Zusammenfassung**: 8 von 11 Anforderungen vollständig erfüllt, 3 in Arbeit.
 
 ---
 
@@ -764,17 +858,19 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 
 ## 7. Tests + Verifikation
 
-### 7.1 Quality Gates (Stand 2026-09-25)
+### 7.1 Quality Gates (Stand 2026-10-09)
 
 | Metrik | Stand |
 |---|---|
-| Backend tsc-Errors | 0 |
-| Backend eslint-Warnings | 0 |
-| Backend npm run build | ✅ |
-| Backend e2e-Tests | n/a (kein DB in Sandbox) |
-| Frontend tsc-Errors | n/a (kein node_modules) |
-| Hash-Chain verifizierbar | ⚠️ nach Schema-Migration |
+| Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
+| Backend eslint-Warnings | 0 (`--max-warnings 0`) |
+| Backend Unit-Tests | **524 / 524 grün** (52 Dateien) |
+| Frontend tsc-Errors | 0 |
+| Playwright e2e | **62 / 62 grün**, 0 übersprungen |
+| Migrationen auf leerer DB | 6 angewandt, `migrate diff` ohne Abweichung |
+| Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |
+| CI (backend + frontend) | ✅ beide Jobs grün |
 
 ### 7.2 Pilot-Phase-2 (3 Kanzleien + 15 Mandanten)
 

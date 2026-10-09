@@ -13,6 +13,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
@@ -97,10 +98,21 @@ export class MandantController {
 
   /**
    * DELETE /api/mandant/:id
+   *
+   * 409, sobald aufbewahrungsrelevante Daten existieren (Jahresabschluss,
+   * Bilanz, GuV, Anhang, Bundesanzeiger-Einreichung). Ein Loeschen wuerde
+   * per `onDelete: Cascade` die Buchhaltungshistorie und die qeS-Signaturen
+   * mit vernichten (§ 147 AO). Siehe Befund 2026-10-09 im Service.
    */
   @Delete(':id')
   @Roles('KANZLEI_ADMIN')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiResponse({ status: 204, description: 'Mandant geloescht (ohne Buchhaltungsdaten)' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Mandant traegt Buchhaltungsdaten und ist nach § 147 AO nicht loeschbar',
+  })
   async delete(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthUser,

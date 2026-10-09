@@ -273,9 +273,24 @@ export class BilanzRepository {
    *
    * Garantiert: entweder beide Records erfolgreich oder keiner.
    */
-  async createWithPositionen(input: BilanzCreateInput): Promise<BilanzEntity> {
-    return this.prismaService.$transaction(async (tx) => {
-      const bilanz = await tx.bilanz.create({
+  async createWithPositionen(
+    input: BilanzCreateInput,
+    /**
+     * Bestehender Transaktionsclient. Wird uebergeben, laeuft der
+     * Schreibvorgang INNERHALB der Aufrufer-Transaktion — sonst wird
+     * eine eigene geoeffnet.
+     *
+     * Bugfix 2026-10-08: `applyKonsolidierung()` schrieb Konzern-Bilanz,
+     * Konzern-GuV und den Einheit-Status in DREI unabhaengigen
+     * Transaktionen. Ein Fehler im dritten Schritt hinterliess eine
+     * `VALIDATED`-Konzern-Bilanz ohne Konzern-GuV — und jeder weitere
+     * Versuch scheiterte am partiellen Unique-Index. Ohne
+     * Ausweichpfad: die Konsolidierung war fuer dieses Jahr tot.
+     */
+    tx?: Prisma.TransactionClient,
+  ): Promise<BilanzEntity> {
+    const schreiben = async (client: Prisma.TransactionClient) => {
+      const bilanz = await client.bilanz.create({
         data: {
           mandantId: input.mandantId,
           geschaeftsjahr: input.geschaeftsjahr,
@@ -287,12 +302,13 @@ export class BilanzRepository {
         },
       });
       const positionen = await this.createPositionenInTx(
-        tx,
+        client,
         bilanz.id,
         input.positionen ?? [],
       );
       return { ...bilanz, positionen };
-    });
+    };
+    return tx ? schreiben(tx) : this.prismaService.$transaction(schreiben);
   }
 
   /**

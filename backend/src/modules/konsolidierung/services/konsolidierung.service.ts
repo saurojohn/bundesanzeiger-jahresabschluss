@@ -14,7 +14,6 @@ import type {
 } from '../../../common/repositories/konsolidierung.repository';
 import { BilanzRepository } from '../../../common/repositories/bilanz.repository';
 import { GuVRepository } from '../../../common/repositories/guv.repository';
-import type { GuVKategorieLiteral } from '../../../common/repositories/guv.repository';
 import { AuditService } from '../../audit/services/audit.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import {
@@ -484,66 +483,103 @@ export class KonsolidierungService {
     );
     this.applyEliminationsToGuv(konsGuvPositionen, buchungen);
 
+    // 5.-7. ALLE drei Schreibvorgaenge in EINER Transaktion.
+    //
+    // Bugfix 2026-10-08: Konzern-Bilanz, Konzern-GuV und der
+    // Einheit-Status wurden in DREI unabhaengigen Transaktionen
+    // geschrieben (`createWithPositionen` oeffnet jeweils eine eigene,
+    // `updateStatus` eine dritte). Ein Fehler im letzten Schritt
+    // hinterliess eine Konzern-Bilanz OHNE Konzern-GuV — und beide
+    // waren sofort `VALIDATED` markiert, obwohl die Einheit noch
+    // nicht `COMPLETED` war.
+    //
+    // Danach war die Konsolidierung fuer dieses Jahr tot: Der
+    // partielle Unique-Index auf
+    // `(mandantId, geschaeftsjahr, konzernEinheitId)` verhindert
+    // jeden weiteren Versuch, und `kreatorSchutz` wandelt den P2002
+    // in eine verstaendliche 400 um — der Aufrufer sah „loeschen
+    // Sie den vorhandenen Satz", ohne zu wissen, WELCHER.
+    //
+    // Entweder entstehen alle drei Datensaetze, oder keiner.
+    //
     // 5. Konzern-Bilanz anlegen (mandantId = mutterMandantId).
     // Der Konzernsatz wird als EIGENER Satz mit `konzernEinheitId`
     // angelegt. Der Einzelsatz der Mutter bleibt unberuehrt bestehen
     // (HGB §301 / IDW RS 11).
-    const konzernBilanz = await this.kreatorSchutz(() =>
-      this.bilanzRepository.createWithPositionen({
-      mandantId: einheit.mutterMandantId,
-      geschaeftsjahr: einheit.geschaeftsjahr,
-      status: 'VALIDATED',
-      hinweise: `Konzern-Bilanz (Konsolidierungseinheit ${einheit.id}, ${einheit.konsolidierungsArt})`,
-      createdById: user.id,
-      // Bugfix 2026-10-07: eigener Satz NEBEN dem Einzelsatz der Mutter
-      // (HGB §301 / IDW RS 11). Vorher verdraengte der Konzernsatz den
-      // Einzelsatz, weil beide unter `mutterMandantId` fuer dasselbe Jahr
-      // gespeichert wurden.
-      konzernEinheitId: einheit.id,
-      positionen: konsBilanzPositionen.map((p, idx) => ({
-        seite: p.seite,
-        kontonummer: p.kontonummer,
-        bezeichnung: p.bezeichnung,
-        betragVorjahr: null,
-        betragAktuell: p.betragAktuell,
-        reihenfolge: idx + 1,
-        bemerkung: p.bemerkung ?? null,
-      })),
-    }),
-    );
+    const ergebnis = await this.prisma.$transaction(async (tx) => {
+      // 5. Konzern-Bilanz
+      const konzernBilanz = await this.bilanzRepository.createWithPositionen(
+        {
+          mandantId: einheit.mutterMandantId,
+          geschaeftsjahr: einheit.geschaeftsjahr,
+          status: 'VALIDATED',
+          hinweise: `Konzern-Bilanz (Konsolidierungseinheit ${einheit.id}, ${einheit.konsolidierungsArt})`,
+          createdById: user.id,
+          // Bugfix 2026-10-07: eigener Satz NEBEN dem Einzelsatz der
+          // Mutter (HGB §301 / IDW RS 11).
+          konzernEinheitId: einheit.id,
+          positionen: konsBilanzPositionen.map((p, idx) => ({
+            seite: p.seite,
+            kontonummer: p.kontonummer,
+            bezeichnung: p.bezeichnung,
+            betragVorjahr: null,
+            betragAktuell: p.betragAktuell,
+            reihenfolge: idx + 1,
+            bemerkung: p.bemerkung ?? null,
+          })),
+        },
+        tx,
+      );
 
-    // 6. Jahresergebnis aus konsolidierter GuV berechnen.
-    const jahresergebnis = this.computeGuvErgebnis(konsGuvPositionen);
+      // 6. Jahresergebnis aus konsolidierter GuV berechnen
+      const jahresergebnis = this.computeGuvErgebnis(konsGuvPositionen);
 
-    const konzernGuv = await this.kreatorSchutz(() =>
-      this.guvRepository.createWithPositionen({
-      mandantId: einheit.mutterMandantId,
-      geschaeftsjahr: einheit.geschaeftsjahr,
-      verfahren: 'GKV',
-      status: 'VALIDATED',
-      hinweise: `Konzern-GuV (Konsolidierungseinheit ${einheit.id}, ${einheit.konsolidierungsArt})`,
-      ergebnis: jahresergebnis,
-      createdById: user.id,
-      konzernEinheitId: einheit.id,
-      positionen: konsGuvPositionen.map((p, idx) => ({
-        kontonummer: p.kontonummer,
-        bezeichnung: p.bezeichnung,
-        kategorie: p.kategorie as GuVKategorieLiteral,
-        betragVorjahr: null,
-        betragAktuell: p.betragAktuell,
-        reihenfolge: idx + 1,
-        bemerkung: p.bemerkung ?? null,
-      })),
-    }),
-    );
+      // Konzern-GuV
+      const konzernGuv = await this.guvRepository.createWithPositionen(
+        {
+          mandantId: einheit.mutterMandantId,
+          geschaeftsjahr: einheit.geschaeftsjahr,
+          verfahren: 'GKV',
+          status: 'VALIDATED',
+          hinweise: `Konzern-GuV (Konsolidierungseinheit ${einheit.id}, ${einheit.konsolidierungsArt})`,
+          ergebnis: jahresergebnis,
+          createdById: user.id,
+          konzernEinheitId: einheit.id,
+          positionen: konsGuvPositionen.map((p, idx) => ({
+            kontonummer: p.kontonummer,
+            bezeichnung: p.bezeichnung,
+            kategorie: p.kategorie as never,
+            betragVorjahr: null,
+            betragAktuell: p.betragAktuell,
+            reihenfolge: idx + 1,
+            bemerkung: p.bemerkung ?? null,
+          })),
+        },
+        tx,
+      );
 
-    // 7. Salden berechnen + Status auf COMPLETED.
-    const salden = await this.calculateKonzernSalden(einheitId, user);
-    await this.konsolidierungRepository.updateStatus(einheit.id, einheit.kanzleiId, {
-      status: 'COMPLETED',
-      konzernBilanzId: konzernBilanz.id,
-      konzernGuvId: konzernGuv.id,
+      // 7. Einheit auf COMPLETED setzen — Teil derselben Transaktion.
+      await tx.konsolidierungsEinheit.update({
+        where: { id: einheit.id },
+        data: {
+          status: 'COMPLETED',
+          konzernBilanzId: konzernBilanz.id,
+          konzernGuvId: konzernGuv.id,
+        },
+      });
+
+      return { konzernBilanz, konzernGuv };
     });
+
+    const { konzernBilanz, konzernGuv } = ergebnis;
+
+    // Salden aus den bereits geschriebenen Saetzen lesen.
+    //
+    // Bugfix 2026-10-08: das `updateStatus` ist in die Transaktion
+    // gewandert (Schritt 7 dort). Der Status wird damit erst gesetzt,
+    // wenn Bilanz UND GuV existieren — vorher konnten `VALIDATED`-Saetze
+    // ohne ihre Gehaeuse entstehen.
+    const salden = await this.calculateKonzernSalden(einheitId, user);
 
     void this.auditService.record({
       userId: user.id,

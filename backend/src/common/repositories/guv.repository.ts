@@ -208,9 +208,13 @@ export class GuVRepository {
   /**
    * Erstellt eine GuV + zugehörige Positionen in einer Transaktion.
    */
-  async createWithPositionen(input: GuVCreateInput): Promise<GuVEntity> {
-    return this.prismaService.$transaction(async (tx) => {
-      const guv = await tx.guV.create({
+  async createWithPositionen(
+    input: GuVCreateInput,
+    /** Siehe `BilanzRepository.createWithPositionen`. */
+    tx?: Prisma.TransactionClient,
+  ): Promise<GuVEntity> {
+    const schreiben = async (client: Prisma.TransactionClient) => {
+      const guv = await client.guV.create({
         data: {
           mandantId: input.mandantId,
           geschaeftsjahr: input.geschaeftsjahr,
@@ -225,12 +229,13 @@ export class GuVRepository {
         },
       });
       const positionen = await this.createPositionenInTx(
-        tx,
+        client,
         guv.id,
         input.positionen ?? [],
       );
       return { ...guv, positionen };
-    });
+    };
+    return tx ? schreiben(tx) : this.prismaService.$transaction(schreiben);
   }
 
   /**

@@ -6,10 +6,11 @@ import { AnhangRepository } from './anhang.repository';
 import { SignatureRepository } from './signature.repository';
 import { KonsolidierungRepository } from './konsolidierung.repository';
 import { KanzleiRepository } from './kanzlei.repository';
+import { MandantRepository } from './mandant.repository';
 
 /**
  * Globale Bereitstellung der Repositories für Bilanz/GuV/Anhang/Signature,
- * Konsolidierung und Kanzlei/Branding.
+ * Konsolidierung, Kanzlei/Branding und den Archivzustand eines Mandanten.
  *
  * Wird vom BilanzModule, GuVModule, AnhangModule, SignaturModule,
  * KonsolidierungModule und BrandingModule importiert. PrismaModule ist
@@ -24,6 +25,7 @@ import { KanzleiRepository } from './kanzlei.repository';
     SignatureRepository,
     KonsolidierungRepository,
     KanzleiRepository,
+    MandantRepository,
   ],
   exports: [
     BilanzRepository,
@@ -32,6 +34,7 @@ import { KanzleiRepository } from './kanzlei.repository';
     SignatureRepository,
     KonsolidierungRepository,
     KanzleiRepository,
+    MandantRepository,
   ],
 })
 export class CommonRepositoriesModule {}

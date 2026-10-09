@@ -803,6 +803,106 @@ plus `entityType`/`entityId`) und ist eine eigene Entscheidung, kein
 Nebenfix. Die Konsequenz ist hier festgehalten, damit sie nicht als
 erledigt gelesen wird.
 
+**Entscheidung der Kanzlei-Fachverantwortlichen, 2026-10-09:** *keine*
+Migration. Der Audit-Trail ist der anerkannte Nachweis — er führt
+`certificateSubject`, `certificateIssuer`, `certificateSerial`,
+`certificateFingerprintSha256`, `hashBefore`, `hashAfter`,
+`signedPdfWormKey` und `timestampAuthority` vollständig mit, und das
+signierte PDF liegt unveränderlich im WORM mit `legalHold`. Die leere
+`Signature`-Tabelle wird damit als bewusst nicht genutzt dokumentiert,
+nicht als offener Mangel.
+
+Damit bleibt genau eine Konsequenz bestehen, und sie ist hier festgehalten:
+**es gibt keine „ist signiert?"-Abfrage.** `findLatestByJahresabschluss()`
+hat keinen einzigen Aufrufer im Backend. Solange das so ist, kann keine
+Regel „nach Signierung gesperrt" auf Datenlage entscheiden — sie würde
+einen Zustand abfragen, den es nicht gibt.
+
+#### Offen: soll Signieren den Bestandteil sperren?
+
+**Diese Frage ist bewusst offen geblieben** (Stand 2026-10-09) und wurde
+nicht entschieden. Es ist eine Frage der Compliance-Semantik, keine
+Technik:
+
+- **Ja** — signierte Teile sind unveränderbar. Für Audit und
+  Nachvollziehbarkeit die naheliegende Lesart. Setzt voraus, dass der
+  Signaturpfad überhaupt einen Zustand erzeugt (siehe oben).
+- **Nein** — die Signatur gilt nur für das PDF, die Daten dürfen korrigiert
+  werden. Dann braucht es aber eine Versionierung, sonst attestiert die
+  qeS-Signatur einen Inhalt, den es nicht mehr gibt.
+
+Bis zur Entscheidung ändert sich nichts. Solange `SIGNED` nirgends
+gesetzt wird, verhält sich das System wie in der zweiten Variante — ohne
+dass das so entschieden worden wäre. Das ist der Grund, warum es hier
+steht und nicht in einer Fußnote.
+
+---
+
+### Nachtrag 2026-10-09 (Nachtrag 7): Archivieren statt Löschen (Produktentscheidung umgesetzt)
+
+Nachtrag 5 hat den Löschpfad gesperrt und die Frage offengelassen: was
+passiert mit einem Mandanten, der weg muss, aber Aufbewahrung hat?
+Entschieden wurde am 2026-10-09: **archivieren statt löschen**.
+
+#### Umsetzung
+
+`Mandant.archiviertAt` (+ `archiviertVonId`), Migration
+`2026_10_09_210000_mandant_archivierung`. Bewusst **ein** Zeitstempel statt
+`archiviert Boolean` + Zeitstempel: zwei Felder, die auseinanderlaufen
+können, sind genau die Form von „grün, aber stimmt nicht", die in diesem
+Audit mehrfach teuer war.
+
+```
+PATCH /api/mandant/:id/archivierung           → 200 / 409 (bereits archiviert)
+PATCH /api/mandant/:id/archivierung/aufheben  → 200 / 409 (nicht archiviert)
+```
+
+Beide Routen `KANZLEI_ADMIN` oder `SYSTEM_ADMIN`, beide mit eigenem
+Audit-Eintrag (vorher **und** nachher). Die Storno-Wirkung soll im Trail
+als eigene Handlung lesbar sein, nicht als nachträgliche Korrektur.
+
+#### Live gemessen, komplette Kette über die öffentliche API
+
+| # | Schritt | Ergebnis |
+|---|---|---|
+| 0 | `POST /api/bilanz` vor der Archivierung | **201** ✅ |
+| 1 | `PATCH /archivierung` | 200, `archiviertAt` gesetzt |
+| 2 | `POST /api/bilanz` | **409** „Mandant ist archiviert …" |
+| 3 | `PATCH /api/bilanz/:id` | **409** |
+| 4 | `DELETE /api/bilanz/:id` | **409** |
+| 5 | `GET /api/bilanz/:id` | **200, Bestand lesbar** ✅ |
+| 6 | `POST /api/guv` | **409** |
+| 7 | `DELETE /api/mandant/:id` | **409** (Aufbewahrung greift weiter) |
+| 8 | `PATCH /archivierung` ein zweites Mal | **409** |
+| 9 | `PATCH /archivierung/aufheben` | 200, `archiviertAt` = null |
+| 10 | `POST /api/bilanz` nach Aufhebung | **201** ✅ |
+
+Schritt 5 ist der entscheidende: **Archiviert heißt nicht unlesbar.**
+Der Bestand bleibt nachvollziehbar — das ist der ganze Zweck. Eine
+Sperre, die auch das Lesen blockiert, hätte die Aufbewahrung nicht
+gelöst, sondern nur den Zugriff darauf.
+
+Schritt 7 ist ebenso wichtig: die Archivierung ist **kein Weg an der
+Aufbewahrung vorbei**. Archiviert und löschbar sind zwei verschiedene
+Dinge.
+
+#### Verdrahtung
+
+`assertMandantNichtArchiviert()` in `common/utils/mandant-archivierung.ts`,
+aufgerufen in `create`/`update`/`delete` von Bilanz, GuV und Anhang —
+**nicht** in den Lesepfaden. Der Datenzugriff liegt in einem neuen
+`MandantRepository`, weil die drei Services den Archivzustand prüfen
+müssen, ohne das `MandantModule` zu importieren.
+
+Die Fehlermeldung nennt Zeitpunkt, abgelehnte Aktion und den
+Aufhebungsweg — ein Anwender darf vor einer Sackgasse stehen bleiben,
+nicht davor.
+
+23 neue Tests (7 Regel + Verdrahtung, 16 Archivieren/Aufheben).
+Negativprobe: ohne Verdrahtung scheitern alle drei Verdrahtungstests an
+`promise resolved instead of rejecting` — der alte Code schrieb in einen
+archivierten Mandanten hinein.
+
 ---
 
 ## 1. Compliance-Übersicht
@@ -812,7 +912,7 @@ erledigt gelesen wird.
 | Unveränderbarkeit der Bücher/ Aufzeichnungen | § 146 AO + § 147 AO + GoBD Rz. 10.1 | ⚠️ Teilweise | WORM-Object-Lock COMPLIANCE-Mode + 3650 Tage Retention + Löschsperren (Nachtrag 5) + monotone Bearbeitungssperre (Nachtrag 6). **Offen:** signierte Bilanz/GuV/Anhang erzeugen keinen Signature-Record und keinen Zustand — siehe Nachtrag 6 |
 | Vollständigkeit | § 146 Abs. 1 AO + GoBD Rz. 10.1 | ✅ | Audit-Trail mit Vorher/Nachher-Snapshots |
 | Mandant-Trennung | § 146 Abs. 2 AO | ✅ | Repository-Pattern + MandantGuard + ESLint |
-| Aufbewahrungsfristen 10 Jahre | § 147 Abs. 3 AO + § 257 HGB | ⚠️ Teilweise | WORM-Retention 3650 Tage + Löschsperren (Bilanz/GuV/Anhang nur DRAFT, Mandant mit Bestand 409, Konsolidierungseinheit ab COMPLETED). **Offen:** Archivierung/Pseudonymisierung statt Löschung — Rechtsentscheidung, siehe Nachtrag 5 |
+| Aufbewahrungsfristen 10 Jahre | § 147 Abs. 3 AO + § 257 HGB | ✅ | WORM-Retention 3650 Tage + Löschsperren (Bilanz/GuV/Anhang nur DRAFT, Mandant mit Bestand 409, Konsolidierungseinheit ab COMPLETED) + **Archivierung statt Löschung** (Nachtrag 7): keine neuen Belege, Bestand bleibt lesbar und nachvollziehbar |
 | Datenzugriff (GDP-Zu, BMF 2019) | GoBD Rz. 10.2 | ✅ | E-Bilanz-XBRL-Export + DATEV-Export + PDF-Download |
 | Datenträgerüberlassung (Z3) | GoBD Rz. 11 | ✅ | E-Bilanz-XBRL + DATEV-EXTF-Export |
 | Maschinelle Auswertbarkeit (Z1, Z2) | GoBD Rz. 10.2 | ✅ | DB-Direct-Read + strukturierte Exporte |

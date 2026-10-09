@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { MandantService } from './mandant.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 
@@ -175,5 +175,127 @@ describe('Mandant-Löschung: § 147 AO sperrt Mandanten mit Buchhaltungsdaten', 
     prisma.mandant.findUnique.mockResolvedValue(null);
 
     await expect(service.delete(MANDANT, admin, ctx)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+/**
+ * PRODUKTENTSCHEIDUNG 2026-10-09 — „Archivieren statt Loeschen".
+ *
+ * Der Loeschpfad ist fuer Mandanten mit Bestand gesperrt (409). Damit ein
+ * Mandant, der weg muss, trotzdem aus dem aktiven Bestand verschwinden
+ * kann, gibt es die Archivierung: keine neuen Belege, Bestand bleibt
+ * lesbar und nachvollziehbar.
+ */
+describe('Mandant-Archivierung', () => {
+  function buildArchivService(archiviertAt: Date | null) {
+    const mandantUpdate = vi
+      .fn()
+      .mockResolvedValue({ ...mandantRow, archiviertAt, archiviertVonId: null });
+
+    const prisma = {
+      mandant: {
+        findUnique: vi.fn().mockResolvedValue({ ...mandantRow, archiviertAt, archiviertVonId: null }),
+        update: mandantUpdate,
+      },
+    };
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const cache = { invalidate: vi.fn().mockResolvedValue(undefined) };
+    const service = new MandantService(prisma as never, audit as never, cache as never);
+    return { service, mandantUpdate, audit, cache };
+  }
+
+  it('archivieren setzt Zeitpunkt und Bearbeiter', async () => {
+    const { service, mandantUpdate } = buildArchivService(null);
+
+    await service.archivieren(MANDANT, admin, ctx);
+
+    expect(mandantUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: MANDANT },
+        data: { archiviertAt: expect.any(Date), archiviertVonId: admin.id },
+      }),
+    );
+  });
+
+  it('archivieren schreibt einen Audit-Eintrag mit vorher und nachher', async () => {
+    // Ohne den Eintrag waere die Archivierung eine Handlung ohne Spur —
+    // bei einem Mandanten, der aus dem aktiven Bestand verschwindet,
+    // genau die Information, die man spaeter braucht.
+    const { service, audit } = buildArchivService(null);
+
+    await service.archivieren(MANDANT, admin, ctx);
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    const p = audit.record.mock.calls[0][0];
+    expect(p.action).toBe('UPDATE');
+    expect(p.entityType).toBe('Mandant');
+    expect(p.entityId).toBe(MANDANT);
+    expect(p.previousState).toBeDefined();
+    expect(p.newState).toMatchObject({ archiviert: true });
+  });
+
+  it('ein bereits archivierter Mandant laesst sich nicht erneut archivieren', async () => {
+    const { service, mandantUpdate } = buildArchivService(new Date('2026-01-01'));
+
+    await expect(service.archivieren(MANDANT, admin, ctx)).rejects.toBeInstanceOf(ConflictException);
+    expect(mandantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('aufheben leert Zeitpunkt UND Bearbeiter', async () => {
+    // Ein zurueckgenommenes Archiv darf keinen alten Bearbeiter stehen
+    // lassen — sonst beantwortet das Feld eine Frage, die es nicht mehr gibt.
+    const { service, mandantUpdate } = buildArchivService(new Date('2026-01-01'));
+
+    await service.archivierungAufheben(MANDANT, admin, ctx);
+
+    expect(mandantUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: MANDANT },
+        data: { archiviertAt: null, archiviertVonId: null },
+      }),
+    );
+  });
+
+  it('aufheben schreibt einen eigenen Audit-Eintrag', async () => {
+    const { service, audit } = buildArchivService(new Date('2026-01-01'));
+
+    await service.archivierungAufheben(MANDANT, admin, ctx);
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][0].newState).toMatchObject({ archiviert: false });
+  });
+
+  it('aufheben ohne Archiv ist ein Fehler, kein stiller Erfolg', async () => {
+    const { service, mandantUpdate } = buildArchivService(null);
+
+    await expect(service.archivierungAufheben(MANDANT, admin, ctx)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(mandantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('ohne KANZLEI_ADMIN geht es nicht', async () => {
+    const { service, mandantUpdate } = buildArchivService(null);
+    const steuerberater = {
+      id: '44444444-4444-4444-8444-444444444444',
+      globalRole: null,
+      mandanten: [{ id: MANDANT, rolle: 'STEUERBERATER' }],
+    } as unknown as AuthUser;
+
+    await expect(service.archivieren(MANDANT, steuerberater, ctx)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(service.archivierungAufheben(MANDANT, steuerberater, ctx)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(mandantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('die Loeschsperrt gilt auch bei archiviertem Mandanten', async () => {
+    // Archivierung ist KEIN Weg an der Aufbewahrung vorbei: der Mandant
+    // ist weiterhin nicht loeschbar, solange Bestand existiert.
+    const { service } = buildService({ bilanz: 1 });
+    // buildService kennt kein archiviertAt — der Bestand allein sperrt.
+    await expect(service.delete(MANDANT, admin, ctx)).rejects.toBeInstanceOf(ConflictException);
   });
 });

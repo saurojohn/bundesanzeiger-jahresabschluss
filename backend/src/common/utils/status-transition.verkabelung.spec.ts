@@ -29,6 +29,17 @@ const admin = {
 
 const ctx = { ip: null, userAgent: null };
 
+/**
+ * Mandant-Repository-Mock. Standardmaessig ein AKTIVER Mandant
+ * (`archiviertAt: null`) — die Tests hier pruefen die Bearbeitungssperre,
+ * nicht die Archivierung. Die Archivierung hat ihre eigene Spec.
+ */
+function mandantRepositoryMock(archiviertAt: Date | null = null) {
+  return {
+    findArchivierung: vi.fn().mockResolvedValue({ archiviertAt, firmenname: 'Muster GmbH' }),
+  } as never;
+}
+
 function bilanzMitStatus(status: string) {
   // WICHTIG fuer die Negativprobe: der Mock gibt einen vollstaendigen
   // Datensatz zurueck. Sonst scheitert die alte Fassung an einem TypeError
@@ -56,7 +67,7 @@ function bilanzMitStatus(status: string) {
     }),
     updateWithPositionen,
   };
-  const service = new BilanzService(repository as never, { record: vi.fn() } as never);
+  const service = new BilanzService(repository as never, { record: vi.fn() } as never, mandantRepositoryMock());
   return { service, updateWithPositionen };
 }
 
@@ -88,7 +99,7 @@ function guvMitStatus(status: string) {
     }),
     updateWithPositionen,
   };
-  const service = new GuVService(repository as never, { record: vi.fn() } as never);
+  const service = new GuVService(repository as never, { record: vi.fn() } as never, mandantRepositoryMock());
   return { service, updateWithPositionen };
 }
 
@@ -118,7 +129,7 @@ function anhangMitStatus(status: string) {
     }),
     updateWithAbschnitte,
   };
-  const service = new AnhangService(repository as never, { record: vi.fn() } as never);
+  const service = new AnhangService(repository as never, { record: vi.fn() } as never, mandantRepositoryMock());
   return { service, updateWithAbschnitte };
 }
 

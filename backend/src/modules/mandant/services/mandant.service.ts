@@ -367,6 +367,109 @@ export class MandantService {
   }
 
   /**
+   * Archiviert einen Mandanten: ab sofort keine neuen Belege, Bestand
+   * bleibt les- und nachvollziehbar.
+   *
+   * PRODUKTENTSCHEIDUNG 2026-10-09 („Archivieren statt Löschen"). Der
+   * Löschpfad ist für Mandanten mit Aufbewahrung gesperrt; die Archivierung
+   * ist der sanctioned Weg, einen Mandanten aus dem aktiven Bestand zu
+   * nehmen, ohne § 147 AO zu umgehen.
+   *
+   * Zwei getrennte Audit-Eintraege mit vorher/nachher, weil ein einziger
+   * Eintrag mit `previousState` und `newState` zwar auch ginge — aber die
+   * Storno-Wirkung (Archivierung zurückgenommen) soll im Trail als eigene
+   * Handlung lesbar sein, nicht als nachtraegliche Korrektur.
+   */
+  async archivieren(
+    id: string,
+    user: AuthUser,
+    context: MandantContext,
+  ): Promise<Mandant> {
+    await this.assertMandantAccess(id, user);
+    this.assertKanzleiAdmin(user);
+
+    const before = await this.prisma.mandant.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Mandant nicht gefunden');
+    if (before.archiviertAt) {
+      throw new ConflictException(
+        `Mandant ist bereits archiviert (seit ${before.archiviertAt.toISOString()}).`,
+      );
+    }
+
+    const now = new Date();
+    const updated = await this.prisma.mandant.update({
+      where: { id },
+      data: { archiviertAt: now, archiviertVonId: user.id },
+    });
+
+    void this.auditService.record({
+      userId: user.id,
+      kanzleiId: updated.kanzleiId,
+      mandantId: updated.id,
+      action: 'UPDATE',
+      entityType: 'Mandant',
+      entityId: updated.id,
+      previousState: this.toAuditDto(before),
+      newState: { ...(this.toAuditDto(updated) as object), archiviert: true },
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+
+    void this.cache.invalidate(`mandant:${id}`);
+    return updated;
+  }
+
+  /**
+   * Nimmt die Archivierung zurueck. Nennt den aufhebenden User im Audit —
+   * ein Archiv ist eine Handlung mit Verantwortungsbezug, ihre Ruecknahme
+   * ebenso.
+   */
+  async archivierungAufheben(
+    id: string,
+    user: AuthUser,
+    context: MandantContext,
+  ): Promise<Mandant> {
+    await this.assertMandantAccess(id, user);
+    this.assertKanzleiAdmin(user);
+
+    const before = await this.prisma.mandant.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Mandant nicht gefunden');
+    if (!before.archiviertAt) {
+      throw new ConflictException('Mandant ist nicht archiviert — nichts aufzuheben.');
+    }
+
+    const updated = await this.prisma.mandant.update({
+      where: { id },
+      data: { archiviertAt: null, archiviertVonId: null },
+    });
+
+    void this.auditService.record({
+      userId: user.id,
+      kanzleiId: updated.kanzleiId,
+      mandantId: updated.id,
+      action: 'UPDATE',
+      entityType: 'Mandant',
+      entityId: updated.id,
+      previousState: { ...(this.toAuditDto(before) as object), archiviert: true },
+      newState: { ...(this.toAuditDto(updated) as object), archiviert: false },
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+
+    void this.cache.invalidate(`mandant:${id}`);
+    return updated;
+  }
+
+  /** KANZLEI_ADMIN oder SYSTEM_ADMIN — wie beim Loeschen. */
+  private assertKanzleiAdmin(user: AuthUser): void {
+    if (user.globalRole === 'SYSTEM_ADMIN') return;
+    if (user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN')) return;
+    throw new ForbiddenException(
+      'Nur KANZLEI_ADMIN darf einen Mandanten archivieren oder die Archivierung aufheben',
+    );
+  }
+
+  /**
    * Hilfsfunktion: Liste der zugänglichen Mandanten-IDs (für Filter).
    */
   async getMandantenAccessibleByUser(userId: string): Promise<

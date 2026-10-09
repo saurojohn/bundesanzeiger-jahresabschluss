@@ -109,6 +109,22 @@ model Mandant {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  /// Archivierung statt Loeschung (§ 147 AO vs. DSGVO).
+  ///
+  /// BEFUND 2026-10-09: `DELETE /api/mandant/:id` war ein Hard Delete mit
+  /// `onDelete: Cascade` und riss Bilanz, GuV, Anhang, Jahresabschluss und
+  /// die qeS-Signaturen mit. Der Pfad ist jetzt gesperrt (HTTP 409 bei
+  /// Bestand). Damit ein Mandant, der weg muss, trotzdem aus dem aktiven
+  /// Bestand verschwinden kann, gibt es dieses Feld.
+  ///
+  /// Bewusst EIN Zeitstempel statt `archiviert Boolean` + Zeitstempel:
+  /// zwei Felder, die auseinanderlaufen koennen, sind genau die Art
+  /// "gruen, aber stimmt nicht", die in diesem Audit mehrfach teuer war.
+  ///
+  /// `archiviertAt != null` heisst archiviert. NULL heisst aktiv.
+  archiviertAt      DateTime?
+  archiviertVonId   String?   @db.Uuid
+
   kanzlei           Kanzlei                  @relation(fields: [kanzleiId], references: [id], onDelete: Cascade)
   userAccess        UserMandantRole[]
   bilanzen          Bilanz[]
@@ -124,6 +140,7 @@ model Mandant {
   @@index([groessenklasse])
   @@index([kanzleiId, groessenklasse])
   @@index([kanzleiId, publishChannel])
+  @@index([archiviertAt])
   @@map("mandant")
 }
 
@@ -421,6 +438,7 @@ model Jahresabschluss {
   banzBestellnummer String? // @unique - BAnz-Vorgangsnummer nach Submission
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+
   createdById       String?   @db.Uuid
   finalizedById     String?   @db.Uuid
 

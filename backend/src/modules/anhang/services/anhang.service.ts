@@ -24,6 +24,8 @@ import {
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
 import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { MandantRepository } from '../../../common/repositories/mandant.repository';
 
 /**
  * Listenansicht: alle Skalarfelder, die Anzahl der Abschnitte (`_count`) und
@@ -49,6 +51,7 @@ export class AnhangService {
   constructor(
     private readonly anhangRepository: AnhangRepository,
     private readonly auditService: AuditService,
+    private readonly mandantRepository: MandantRepository,
   ) {}
 
   /**
@@ -64,6 +67,7 @@ export class AnhangService {
     context: AnhangServiceContext,
   ): Promise<AnhangEntity> {
     this.assertMandantAccess(dto.mandantId, user);
+    await this.assertMandantBearbeitbar(dto.mandantId, 'Anhang anlegen');
 
     let anhang: AnhangEntity;
     try {
@@ -216,6 +220,7 @@ export class AnhangService {
     context: AnhangServiceContext,
   ): Promise<AnhangEntity> {
     this.assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'Anhang ändern');
 
     const previous = await this.anhangRepository.findWithAbschnitte(id, mandantId);
     if (!previous) throw new NotFoundException('Anhang nicht gefunden');
@@ -259,6 +264,7 @@ export class AnhangService {
     context: AnhangServiceContext,
   ): Promise<void> {
     this.assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'Anhang löschen');
 
     const existing = await this.anhangRepository.findById(id, mandantId);
     if (!existing) throw new NotFoundException('Anhang nicht gefunden');
@@ -293,6 +299,26 @@ export class AnhangService {
     if (!accessibleMandantIds.includes(mandantId)) {
       throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
     }
+  }
+
+  /**
+   * Der Mandant darf nicht archiviert sein.
+   *
+   * PRODUKTENTSCHEIDUNG 2026-10-09: „Archivieren statt Loeschen". Ein
+   * Mandant, der weg muss, wird archiviert — der Bestand bleibt zur
+   * Nachvollziehbarkeit lesbar (§ 147 AO), es entstehen aber keine neuen
+   * Belege mehr. Das Loeschen ist fuer Mandanten mit Bestand gesperrt
+   * (HTTP 409), damit die Zehnjahresfrist nicht mehr ueber die Anwendung
+   * umgangen werden kann.
+   *
+   * Nur die Schreibpfade (`create`/`update`/`delete`) pruefen das. Lesen
+   * bleibt zulaessig: ein archivierter Mandant muss gerade lesbar sein,
+   * sonst waere die Nachvollziehbarkeit genau das, was man verliert.
+   */
+  private async assertMandantBearbeitbar(mandantId: string, aktion: string): Promise<void> {
+    const mandant = await this.mandantRepository.findArchivierung(mandantId);
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+    assertMandantNichtArchiviert(mandant.archiviertAt, aktion);
   }
 
   private toAuditDto(anhang: AnhangEntity): Prisma.JsonValue {

@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiResponse } from '@nestjs/swagger';
+import type { Mandant } from '@prisma/client';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
@@ -119,6 +120,51 @@ export class MandantController {
     @Req() req: Request,
   ): Promise<void> {
     await this.mandantService.delete(id, user, {
+      ip: req.ip ?? null,
+      userAgent: this.userAgent(req),
+    });
+  }
+
+  /**
+   * PATCH /api/mandant/:id/archivierung
+   *
+   * Archiviert einen Mandanten: ab sofort keine neuen Belege, der Bestand
+   * bleibt les- und nachvollziehbar (§ 147 AO).
+   *
+   * PRODUKTENTSCHEIDUNG 2026-10-09 — „Archivieren statt Löschen". Ein
+   * Mandant, der weg muss, wird archiviert; `DELETE` bleibt für Mandanten
+   * mit Aufbewahrung gesperrt.
+   */
+  @Patch(':id/archivierung')
+  @Roles('KANZLEI_ADMIN')
+  @ApiResponse({ status: 200, description: 'Mandant archiviert' })
+  @ApiResponse({ status: 409, description: 'Mandant ist bereits archiviert' })
+  async archivieren(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<Mandant> {
+    return this.mandantService.archivieren(id, user, {
+      ip: req.ip ?? null,
+      userAgent: this.userAgent(req),
+    });
+  }
+
+  /**
+   * PATCH /api/mandant/:id/archivierung/aufheben
+   *
+   * Nimmt eine Archivierung zurück. Nennt den aufhebenden User im Audit.
+   */
+  @Patch(':id/archivierung/aufheben')
+  @Roles('KANZLEI_ADMIN')
+  @ApiResponse({ status: 200, description: 'Archivierung aufgehoben' })
+  @ApiResponse({ status: 409, description: 'Mandant ist nicht archiviert' })
+  async archivierungAufheben(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<Mandant> {
+    return this.mandantService.archivierungAufheben(id, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
     });

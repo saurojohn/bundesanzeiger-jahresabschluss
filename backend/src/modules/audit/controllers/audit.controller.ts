@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  ForbiddenException,
   HttpStatus,
   NotFoundException,
   Query,
@@ -49,12 +50,43 @@ export class AuditController {
     @Query('pageSize') pageSizeRaw?: string,
     @Query('cursor') cursor?: string,
   ): Promise<unknown> {
-    let effectiveMandantId = mandantId;
-    if (user.globalRole !== 'SYSTEM_ADMIN') {
+    // BEFUND 2026-10-12: `effectiveMandantId = allowedMandantIds[0]`
+    // war an zwei Stellen falsch.
+    //
+    // 1. Ein User mit MEHREREN Mandanten sah still nur das erste. Live
+    //    gemessen: kanzlei-admin hat 3 Mandanten, die Audit-Liste
+    //    enthalt Einträge zu genau 1 — HTTP 200, kein Hinweis. Für das
+    //    Audit-Trail ist eine unbeabsichtigte Auslassung fast so schlimm
+    //    wie ein fremder Eintrag: der Anwender glaubt, alles zu sehen.
+    // 2. Ein User ganz OHNE Mandant bekam `undefined` — und
+    //    `buildWhere` liest einen fehlenden Filter als "kein Filter".
+    //    Dass heute ein Guard davor 403 wirft, ist Zufall des Aufrufs,
+    //    nicht Absicht. Kontext als Schutz ist keine Absicherung.
+    //
+    //    Jetzt: alle eigenen Mandanten, und ein leerer Zugang wird
+    //    ausdrücklich verweigert.
+    let effectiveMandantIds: string[] | undefined;
+    let effectiveMandantId: string | undefined;
+    if (user.globalRole === 'SYSTEM_ADMIN') {
+      effectiveMandantId = mandantId;
+    } else {
       const allowedMandantIds = user.mandanten.map((m) => m.id);
-      if (!mandantId || !allowedMandantIds.includes(mandantId)) {
-        effectiveMandantId = allowedMandantIds[0];
+      if (allowedMandantIds.length === 0) {
+        throw new ForbiddenException(
+          'Kein Mandant zugänglich — für Sie liegen keine Audit-Einträge vor.',
+        );
       }
+      // Ein Nicht-Admin bekommt IMMER einen Filter. Auch dann, wenn er
+      // gezielt nach einem seiner Mandanten fragt — sonst blieben beide
+      // Felder leer und `buildWhere` lieferte "kein Filter".
+      //
+      // (Der erste Entwurf dieses Fixes hatte genau diesen Fehler: bei
+      // erlaubter mandantId blieb `effectiveMandantIds` undefined. Der
+      // Test dafür hat es sofort gefangen.)
+      effectiveMandantIds =
+        mandantId && allowedMandantIds.includes(mandantId)
+          ? [mandantId]
+          : allowedMandantIds;
     }
 
     const page = pageRaw ? Number.parseInt(pageRaw, 10) : undefined;
@@ -63,6 +95,7 @@ export class AuditController {
     const validAction: AuditActionLiteral | undefined = action && isAuditAction(action) ? action : undefined;
     return this.auditService.findAll({
       mandantId: effectiveMandantId,
+      mandantIds: effectiveMandantIds,
       entityType,
       action: validAction,
       from: from ? new Date(from) : undefined,

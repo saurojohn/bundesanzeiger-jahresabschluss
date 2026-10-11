@@ -1342,6 +1342,49 @@ trifft jetzt zu.
 Live nach der Korrektur: **404** „Keine Kanzlei für die Integritätsprüfung
 zugänglich."
 
+#### 12. Die Audit-Liste zeigte still nur den ERSTEN Mandanten (hoch) — dieselbe Klasse, dritte Stelle
+
+Gefunden durch dieselbe Frage wie Befund 10 und 11: was passiert, wenn die
+Auflösung eines Tenant-Scopes leer oder unvollständig ist?
+
+```ts
+const allowedMandantIds = user.mandanten.map((m) => m.id);
+if (!mandantId || !allowedMandantIds.includes(mandantId)) {
+  effectiveMandantId = allowedMandantIds[0];     // ← NUR DER ERSTE
+}
+```
+
+**Live gemessen:**
+
+```
+KANZLEI_ADMIN  (3 Mandanten)
+  GET /api/audit  ->  HTTP 200, Einträge zu genau 1 Mandant, kein Hinweis
+```
+
+Eine unbeabsichtigte Auslassung. Für das Audit-Trail ist sie fast so
+schlimm wie ein fremder Eintrag: der Anwender glaubt, alles zu sehen.
+Drei Mandanten, ein Drittel sichtbar, HTTP 200 – die grünste Form von
+„grün, aber es fehlt etwas".
+
+Die zweite Ausprägung derselben Ursache: ein User ganz **ohne** Mandant
+bekam `undefined`, und `buildWhere` liest einen fehlenden Filter als
+„kein Filter". Dass heute ein Guard davor 403 wirft, ist Zufall des
+Aufrufs. Kontext als Schutz ist keine Absicherung.
+
+**Behoben:** ein Nicht-Admin bekommt **immer** einen Filter — alle
+eigenen Mandanten, oder gezielt der angefragte, sofern erlaubt. Ohne
+Mandant wird ausdrücklich verweigert.
+
+**Ein Fehler in meinem ersten Entwurf**, vom Test sofort gefangen: bei
+erlaubter, explizit angefragter `mandantId` blieben **beide** Felder leer
+— also gar kein Filter. Genau die Lücke, die ich schließen wollte, an
+anderer Stelle wieder aufgerissen. Der Kommentar im Code hält das fest,
+damit der nächste Umbau nicht darüber stolpert.
+
+Live nach der Korrektur: `kanzlei-admin` sieht Einträge aus **allen
+drei** Mandanten (3 Einträge, 3 verschiedene Mandant-IDs) statt aus
+einem.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die

@@ -27,6 +27,19 @@ export interface RecordAuditParams {
 export interface AuditFilterParams {
   kanzleiId?: string;
   mandantId?: string;
+  /**
+   * Mehrere Mandanten eines Aufrufers.
+   *
+   * BEFUND 2026-10-12: es gab nur `mandantId` (ein Wert). Der Controller
+   * behalf sich damit durch `allowedMandantIds[0]` — ein User mit drei
+   * Mandanten sah still nur eines. Für das Audit-Trail ist eine
+   * unbeabsichtigte Auslassung fast so schlimm wie ein fremder Eintrag:
+   * der Anwender glaubt, alles zu sehen.
+   *
+   * LEERES Array wird NICHT als "kein Filter" gelesen — der Aufrufer
+   * muss das vorher abweisen.
+   */
+  mandantIds?: string[];
   userId?: string;
   entityType?: string;
   entityId?: string;
@@ -359,6 +372,12 @@ export class AuditService {
     const where: Prisma.AuditLogWhereInput = {};
     if (filter.kanzleiId) where.kanzleiId = filter.kanzleiId;
     if (filter.mandantId) where.mandantId = filter.mandantId;
+    // BEFUND 2026-10-12: `mandantIds.length > 0` ist Bedingung. Ein leeres
+    // Array ergaebe `in: []` — der Prisma-Filter lehnt das ab bzw. liefert
+    // nichts; in JEDEM Fall ist es nicht dasselbe wie "kein Filter".
+    if (filter.mandantIds && filter.mandantIds.length > 0) {
+      where.mandantId = { in: filter.mandantIds };
+    }
     if (filter.userId) where.userId = filter.userId;
     if (filter.entityType) where.entityType = filter.entityType;
     if (filter.entityId) where.entityId = filter.entityId;

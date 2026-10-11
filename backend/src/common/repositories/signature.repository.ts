@@ -48,8 +48,16 @@ export class SignatureRepository {
    * Erstellt einen neuen Signature-Record. Wird nach erfolgreicher
    * P12-Signatur + WORM-Upload aufgerufen.
    */
-  async create(input: CreateSignatureInput): Promise<SignatureEntity> {
-    return this.prismaService.signature.create({
+  async create(
+    input: CreateSignatureInput,
+    /**
+     * Bestehender Transaktionsclient — siehe `worm-object.repository.ts`.
+     * Ohne ihn konnte das WORM-Manifest persistiert sein, während der
+     * Signatur-Datensatz fehlt.
+     */
+    tx?: Prisma.TransactionClient,
+  ): Promise<SignatureEntity> {
+    return (tx ?? this.prismaService).signature.create({
       data: {
         jahresabschlussId: input.jahresabschlussId,
         userId: input.userId,

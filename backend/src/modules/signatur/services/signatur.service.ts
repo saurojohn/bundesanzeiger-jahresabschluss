@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import {
   BadRequestException,
   ForbiddenException,
@@ -632,28 +633,25 @@ export class SignaturService {
       contentType: 'application/pdf',
     });
 
-    const manifest = await this.wormObjectRepository.create({
-      objectKey: signedObjectKey,
-      entityType: this.entityTypeForSigned(entityType),
-      entityId,
-      mandantId: args.mandantId,
-      sha256Hash: meta.sha256Hash,
-      sizeBytes: meta.sizeBytes,
-      objectLockMode: this.storageService.getConfig().lockMode,
-      retentionDays: this.storageService.getConfig().retentionDays,
-      retentionExpiresAt: meta.retentionExpiresAt,
-      uploadedById: user.id,
-      legalHold: true,
-    });
-
-    // 9) Jahresabschluss-ID ableiten (für Audit-Trail + DB-Signature)
-    const jahresabschlussId = await this.resolveJahresabschlussId(
-      entityType,
-      entityId,
-      args.mandantId,
-    );
-
-    // 10) Signature-Record in DB (nur wenn Jahresabschluss bekannt)
+    // BEFUND 2026-10-11: Manifest und Signature-Record wurden in zwei
+    // unabhaengigen Schritten geschrieben. Ein Fehler im zweiten liess ein
+    // revisionssicher archiviertes, signiertes PDF ohne Signatur-Datensatz
+    // und ohne Audit-Eintrag zurueck — die Signatur fand statt und
+    // hinterliess keinen nachpruefbaren Beleg. Das ist fuer eine
+    // qeS-Strecke genau der Fall, den § 146 AO nicht zulaesst.
+    //
+    // Beide DB-Schreibvorgaenge laufen jetzt in EINER Transaktion.
+    //
+    // Was NICHT transaktional ist und auch nicht sein kann: der
+    // Objekt-Write ins WORM-Lager (Schritt 8, direkt davor). S3 kennt
+    // kein Two-Phase-Commit. Ein verwaister Objekt-Eintrag ist harmlos und
+    // sogar erwuenscht (legalHold), ein fehlender Signatur-Datensatz
+    // nicht.
+    //
+    // Alles, was die Transaktion braucht, wird VORAB berechnet. Sonst
+    // muesste der Signature-Record in einer zweiten Transaktion liegen —
+    // und dann waere der Fehlerfall wieder derselbe: Manifest committet,
+    // Signatur-Datensatz nicht.
     const signatureId = uuidv4();
     const signatureType: SignatureType =
       args.signatureType ?? certMetadata.signatureType;
@@ -661,6 +659,7 @@ export class SignaturService {
       user.mandanten.find((m) => m.id === args.mandantId)?.rolle ??
       user.globalRole ??
       'STEUERBERATER';
+    const signatureBytes = this.extractSignatureBytes(signedPdfBytes);
 
     const warnings: string[] = [];
     if (!timestampAuthority || timestampAuthority.startsWith('MOCK-')) {
@@ -669,46 +668,61 @@ export class SignaturService {
       );
     }
 
-    // Wenn eine Jahresabschluss-ID ableitbar ist, persistieren wir den
-    // Signature-Datensatz. Für Bilanz/GuV/Anhang ohne verknüpften
-    // Jahresabschluss überspringen wir den DB-Record (Audit-Trail
-    // reicht für Nachvollziehbarkeit).
-    if (jahresabschlussId) {
-      // PKCS#7-Signatur-Bytes: @signpdf liefert die PDF-Bytes, die
-      // DER-Signatur steckt im PDF-Dictionary. Wir extrahieren die
-      // Hex-Bytes aus dem Contents-Stream und speichern sie als
-      // signaturDaten (für spätere Validierung + Audit).
-      const signatureBytes = this.extractSignatureBytes(signedPdfBytes);
-      await this.signatureRepository.create({
-        jahresabschlussId,
-        userId: user.id,
-        rolle: userRolle,
-        signaturTyp: signatureType,
-        zertifikatSubject: certMetadata.subject,
-        zertifikatIssuer: certMetadata.issuer,
-        zertifikatSeriennummer: certMetadata.serialNumber,
-        zertifikatGueltigAb: certMetadata.validFrom,
-        zertifikatGueltigBis: certMetadata.validTo,
-        // `zeitstempel` ist ein reines Aufzeichnungsfeld (NOT NULL im Schema)
-        // und wird von keiner Prüfung ausgewertet. Bis 2026-10-02 stand hier
-        // `timestamp ?? new Date()` — die lokale Uhrzeit, aussehend wie ein von
-        // einer TSA bestätigter Zeitpunkt. Das ist derselbe Fehlertyp wie beim
-        // E-Bilanz-taxNumber: ein geratener Wert, der in einem
-        // Compliance-Datensatz als Wahrheit landet.
-        //
-        // Wir schreiben deshalb die Signierzeit des Vorgangs und kennzeichnen
-        // den Aussteller so, dass die Herkunft eindeutig ist: ohne TSA ist
-        // `zeitstempelIssuer` null, ein Mock nennt sich MOCK-TSA-BANZ-PILOT.
-        // Die rechtliche Bewertung läuft über `legalValidity`, nicht über
-        // dieses Feld.
-        zeitstempel: timestamp ?? signingTime,
-        zeitstempelIssuer: timestampAuthority ?? 'OHNE_TSA',
-        hashVorher: hashBefore,
-        hashNachher: hashAfter,
-        signaturDaten: signatureBytes,
-        signaturFormat: 'PKCS7',
-      });
-    }
+    // WORM-Manifest + Signature-Record in EINER Transaktion.
+    const { manifest, jahresabschlussId } = await this.prisma.$transaction(async (tx) => {
+      const manifestEintrag = await this.wormObjectRepository.create(
+        {
+          objectKey: signedObjectKey,
+          entityType: this.entityTypeForSigned(entityType),
+          entityId,
+          mandantId: args.mandantId,
+          sha256Hash: meta.sha256Hash,
+          sizeBytes: meta.sizeBytes,
+          objectLockMode: this.storageService.getConfig().lockMode,
+          retentionDays: this.storageService.getConfig().retentionDays,
+          retentionExpiresAt: meta.retentionExpiresAt,
+          uploadedById: user.id,
+          legalHold: true,
+        },
+        tx,
+      );
+
+      // Jahresabschluss-ID ableiten (für Audit-Trail + DB-Signature)
+      const abschlussId = await this.resolveJahresabschlussId(
+        entityType,
+        entityId,
+        args.mandantId,
+        tx,
+      );
+
+      // Für Bilanz/GuV/Anhang ohne verknüpften Jahresabschluss wird der
+      // DB-Record übersprungen (Audit-Trail reicht für Nachvollziehbarkeit).
+      if (abschlussId) {
+        await this.signatureRepository.create(
+          {
+            jahresabschlussId: abschlussId,
+            userId: user.id,
+            rolle: userRolle,
+            signaturTyp: signatureType,
+            zertifikatSubject: certMetadata.subject,
+            zertifikatIssuer: certMetadata.issuer,
+            zertifikatSeriennummer: certMetadata.serialNumber,
+            zertifikatGueltigAb: certMetadata.validFrom,
+            zertifikatGueltigBis: certMetadata.validTo,
+            zeitstempel: timestamp ?? signingTime,
+            zeitstempelIssuer: timestampAuthority ?? 'OHNE_TSA',
+            hashVorher: hashBefore,
+            hashNachher: hashAfter,
+            signaturDaten: signatureBytes,
+            signaturFormat: 'PKCS7',
+          },
+          tx,
+        );
+      }
+
+      return { manifest: manifestEintrag, jahresabschlussId: abschlussId };
+    });
+
 
     // 11) Audit-Trail mit Cert-Subject (NIE der Key)
     await this.auditService.record({
@@ -875,12 +889,20 @@ export class SignaturService {
     entityType: SignedEntityType,
     entityId: string,
     mandantId: string,
+    /**
+     * BEFUND 2026-10-11: Die Auflösung lief über `this.prisma` und damit
+     * über eine EIGENE Connection. Ausgeführt innerhalb der Signatur-
+     * Transaktion las sie damit einen anderen Snapshot als der, in dem
+     * geschrieben wird — zwei Verbindungen, eine vermeintliche Transaktion.
+     * Der Client wird deshalb durchgereicht.
+     */
+    tx?: Prisma.TransactionClient,
   ): Promise<string | null> {
     if (entityType === 'Abschluss') return entityId;
     // Direkter Prisma-Zugriff im Service ist toleriert (siehe
     // pdf.service.ts §2 — analoge Begründung). Wir suchen den
     // Jahresabschluss, der diese Entity referenziert.
-    const abschluss = await this.prisma.jahresabschluss.findFirst({
+    const abschluss = await (tx ?? this.prisma).jahresabschluss.findFirst({
       where: {
         mandantId,
         OR: [

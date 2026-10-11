@@ -1117,6 +1117,49 @@ Freischaltung **ausschreiben**. CI setzt die Variable jetzt mit
 Begründung. Hätte man sie weggelassen, wäre der CI-Lauf grün geblieben
 und der Weg weiter offen gewesen — die schlimmere Variante.
 
+#### 8. Signatur-Nebenwirkungen ohne Transaktion (hoch) — behoben und live belegt
+
+Der letzte offene Punkt aus dem Review, in einer eigenen Runde bearbeitet.
+
+Die Pipeline schrieb in drei Schritten: S3-Write → `wormObjectRepository.create`
+→ `signatureRepository.create`. Ein Fehler im dritten ließ ein revisionssicher
+archiviertes, **signiertes** PDF ohne Signatur-Datensatz zurück — und der
+Audit-Eintrag hinter dem Block wurde nie erreicht. Die Signatur fand statt
+und hinterließ keinen nachprüfbaren Beleg.
+
+**Zwei Fehler in meinem ersten Umbau, beide korrigiert:**
+
+1. Ich hatte *zwei* Transaktionen gebaut (Manifest+Auflösung, dann
+   Signatur-Record). Das ist **schlechter** als vorher: bei Fehler im zweiten
+   war das Manifest bereits committet. Der Signatur-Record muss *dieselbe*
+   Transaktion teilen.
+2. `resolveJahresabschlussId` nutzte `this.prisma` und damit eine **eigene
+   Connection** — innerhalb der Transaktion las sie einen anderen Snapshot.
+   Der Client wird jetzt durchgereicht.
+
+**Was nicht transaktional ist und auch nicht sein kann:** der Objekt-Write
+ins WORM-Lager. S3 kennt kein Two-Phase-Commit. Ein verwaister
+Objekt-Eintrag ist harmlos und mit `legalHold` sogar erwünscht; ein
+fehlender Signatur-Datensatz nicht.
+
+**Live belegt** (der Playwright-Test signiert eine *Bilanz*, für die der
+Signature-Record per Entscheidung entfällt — damit war nur der
+Einschreib-Pfad belegt). Über einen als Fixture erzeugten Jahresabschluss
+wurde der echte Zweischreib-Pfad durch die HTTP-Schnittstelle geprüft:
+
+```
+POST /api/signatur/sign-abschluss  ->  HTTP 200
+WORM-Manifest geschrieben    : JA
+Signature-Record geschrieben : JA
+jahresabschlussId = ab7de889…  = erwartet
+hashNachher / zertifikatSubject im Record
+=> Beide Artefakte gehören ZU DERSELBEN Abschluss
+```
+
+Negativprobe ohne den `tx`-Parameter: `promise resolved "undefined"
+instead of rejecting` — der Fehler wäre verschluckt worden, und genau das
+macht aus einer Transaktion eine Erfolgsmeldung.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die
@@ -1142,7 +1185,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 | # | Fundstelle | Befund |
 |---|---|---|
-| 8 | `signatur.service.ts:626` | WORM-Upload → `wormObjectRepository.create` → `signatureRepository.create` in drei Schritten ohne Transaktion |
 | 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |
 | 10 | `pdf.service.ts:587` | Die Footer-Korrelations-ID ist **pro Mandant konstant** („mandant" + 9 Zeichen der UUID) — alle PDF eines Mandanten tragen dieselbe Kennung |
 

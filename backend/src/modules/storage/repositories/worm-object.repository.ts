@@ -44,8 +44,20 @@ export class WormObjectRepository {
    * S3-Upload aufgerufen — fehlgeschlagene Uploads dürfen KEIN
    * Manifest erzeugen.
    */
-  async create(input: CreateWormObjectInput): Promise<WormObjectEntity> {
-    return this.prismaService.wormObject.create({
+  async create(
+    input: CreateWormObjectInput,
+    /**
+     * Bestehender Transaktionsclient.
+     *
+     * BEFUND 2026-10-11: Der Signaturpfad schrieb WORM-Manifest und
+     * Signature-Record in zwei unabhaengigen Schritten. Ein Fehler im
+     * zweiten liess ein revisionssicher archiviertes PDF ohne
+     * Signatur-Datensatz und ohne Audit-Eintrag zurueck — die Signatur
+     * fand statt und hinterliess keinen nachpruefbaren Beleg.
+     */
+    tx?: Prisma.TransactionClient,
+  ): Promise<WormObjectEntity> {
+    return (tx ?? this.prismaService).wormObject.create({
       data: {
         objectKey: input.objectKey,
         entityType: input.entityType,

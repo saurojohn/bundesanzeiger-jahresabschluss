@@ -80,17 +80,23 @@ export class AuthController {
     @Body() body: { refreshToken?: string } | undefined,
   ): Promise<void> {
     let sessionId: string | undefined;
+    const gezieltAngefordert = Boolean(body?.refreshToken);
     if (body?.refreshToken) {
       const refreshTokenHash = createHash('sha256')
         .update(body.refreshToken as string)
         .digest('hex');
       const session = await this.prisma.userSession.findUnique({
         where: { refreshTokenHash },
-        select: { id: true },
+        // BEFUND 2026-10-11: `userId` war nicht Teil der Auswahl. Wer den
+        // Refresh-Token eines fremden Users mitbrachte, lieferte dessen
+        // Session-ID — und `logout()` widerrief sie ohne Besitzerpruefung.
+        // Im Audit stand dann der aufrufende User bei einer fremden
+        // Abmeldung. Die Sperrbedingung sitzt jetzt auch hier.
+        select: { id: true, userId: true },
       });
-      sessionId = session?.id;
+      sessionId = session?.userId === user.id ? session.id : undefined;
     }
-    await this.authService.logout(user.id, sessionId);
+    await this.authService.logout(user.id, sessionId, gezieltAngefordert);
   }
 
   @UseGuards(JwtAuthGuard)

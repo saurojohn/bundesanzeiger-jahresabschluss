@@ -1050,6 +1050,41 @@ Negativprobe, wörtlich: ohne die Vorabprüfung meldet der Test
 `expected "spy" to not be called at all, but actually been called 1 times`
 — die Bilanz wurde also nachweislich geschrieben.
 
+#### 5. Logout war zu weit (mittel) — nachgemessen und behoben
+
+`POST /auth/logout` hatte zwei getrennte Fehler:
+
+1. `update({ where: { id: sessionId } })` **ohne `userId`**. Die Session-ID
+   kam aus einer Suche nach dem Hash des mitgeschickten Refresh-Tokens.
+   Wer den Token eines anderen Users mitbrachte, lieferte dessen
+   Session-ID — und die wurde widerrufen. Im Audit stand dann der
+   aufrufende User bei einer fremden Abmeldung: die Nachvollziehbarkeit
+   (§ 146 AO) war falsch. Die Sperrbedingung sitzt jetzt an beiden
+   Stellen (Auswahl im Controller **und** Update).
+2. Unbekannter Token → `sessionId` blieb `undefined` → der else-Zweig
+   widerrief **alle** Sessions des Users. Ein Client mit abgelaufenem oder
+   rotiertem Refresh-Token wurde unerwartet überall abgemeldet und bekam
+   trotzdem `204` ohne Meldung.
+
+Negativprobe, wörtlich: ohne die Härtung meldet der Test
+`expected "spy" to not be called at all, but actually been called 1 times`
+— der alte Code widerrief also nachweislich alle Sessions.
+
+Ohne Token bleibt der globale Widerruf erhalten: der Client kann dann
+nur „alles abmelden" gemeint haben.
+
+#### Ein Fehler, den das fail-closed-Gate selbst erzeugt hat
+
+`mockActivate` (siehe Befund 4 oben) machte **zwei** Playwright-Tests rot:
+`custom-domain.spec.ts` und `subscription.spec.ts` setzen den Tier über
+`mock-activate`. Ursache war nicht die Korrektur, sondern dass sie die
+Freischaltung verlangt — `BILLING_MOCK_ENABLED` war nirgends gesetzt.
+
+Das ist die gewollte Reihenfolge: erst fail-closed, dann die
+Freischaltung **ausschreiben**. CI setzt die Variable jetzt mit
+Begründung. Hätte man sie weggelassen, wäre der CI-Lauf grün geblieben
+und der Weg weiter offen gewesen — die schlimmere Variante.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die
@@ -1076,7 +1111,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 | # | Fundstelle | Befund |
 |---|---|---|
 | 5 | `bilanz.repository.ts:244` / `guv.repository.ts:181` | `countByMandant` filtert kein `konzernEinheitId: null`, die Liste schon → `total` zählt Konzernsätze mit, `items` nicht |
-| 6 | `auth.controller.ts:83` | `POST /logout` widerruft bei unbekannter Session **alle** Sessions des Users; `update({id: sessionId})` prüft die `userId` nicht |
 | 7 | `pdf.service.ts:124/164` | GuV- und Anhang-PDF ohne Vollständigkeits-Gate (0 Positionen / 0 Abschnitte werden gerendert, archiviert, signierbar) |
 | 8 | `signatur.service.ts:626` | WORM-Upload → `wormObjectRepository.create` → `signatureRepository.create` in drei Schritten ohne Transaktion |
 | 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |

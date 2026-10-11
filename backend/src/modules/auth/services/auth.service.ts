@@ -235,13 +235,36 @@ export class AuthService {
   /**
    * Logout — widerruft die aktuelle Session.
    */
-  async logout(userId: string, sessionId?: string): Promise<void> {
+  async logout(
+    userId: string,
+    sessionId?: string,
+    /**
+     * true, wenn der Aufrufer gezielt eine Session abmelden wollte (er hat
+     * einen Refresh-Token mitgeschickt). BEFUND 2026-10-11: stand dieser
+     * Parameter nicht, und ein UNBEKANNTER Refresh-Token liess `sessionId`
+     * undefined — der else-Zweig widerrief dann ALLE Sessions des Users.
+     * Ein Client mit abgelaufenem oder rotiertem Token wurde damit
+     * unerwartet ueberall abgemeldet, bekam aber `204` zurueck und keine
+     * Fehlermeldung.
+     */
+    gezieltAngefordert = false,
+  ): Promise<void> {
     if (sessionId) {
-      await this.prisma.userSession.update({
-        where: { id: sessionId },
+      // `userId` ist Teil der Bedingung: sonst konnte jemand mit einem
+      // fremden Refresh-Token dessen Session widerrufen — und der
+      // Audit-Eintrag wuerde den aufrufenden User nennen, waehrend die
+      // fremde Session endet. Die Nachvollziehbarkeit waere falsch.
+      await this.prisma.userSession.updateMany({
+        where: { id: sessionId, userId },
         data: { revokedAt: new Date() },
       });
+    } else if (gezieltAngefordert) {
+      // Der Token war unbekannt oder bereits abgeloest: es gibt nichts zu
+      // widerrufen. Absichtlich KEIN globaler Widerruf — wer "dieses Geraet"
+      // sagen wollte, hat nicht "ueberall" bestellt.
+      return;
     } else {
+      // Ohne Token bleibt die bisherige Bedeutung: alle eigenen Sessions.
       await this.prisma.userSession.updateMany({
         where: { userId, revokedAt: null },
         data: { revokedAt: new Date() },

@@ -130,6 +130,22 @@ export class PdfService {
     this.assertMandantAccess(mandantId, user);
     const guv = await this.guvRepository.findWithPositionen(guvId, mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
+    // BEFUND 2026-10-11: Das Vollstaendigkeits-Gate war nur fuer die Bilanz
+    // verdrahtet. Eine GuV OHNE Positionen erzeugte trotzdem ein PDF, das
+    // "Jahresergebnis: 0,00 EUR" behauptet — eine belegte Aussage ohne
+    // Beleg, die danach im WORM mit legalHold landet und signierbar ist.
+    //
+    // Bewusst KEIN Saldo-Gate: eine GuV muss nicht auf 0 saldiert werden
+    // (Erlöse minus Aufwendungen ergibt das Jahresergebnis, nicht null).
+    // Eine solche Prüfung wäre erfundene Buchhaltung. Geprüft wird nur das,
+    // was das Gate der Bilanz ebenfalls begründet: es muss etwas zu
+    // berichten geben.
+    if (!Array.isArray(guv.positionen) || guv.positionen.length === 0) {
+      throw new BadRequestException(
+        'Die GuV enthaelt keine Positionen. Ohne Positionen ist keine ' +
+          'Aussage moeglich — es wurde kein PDF erzeugt.',
+      );
+    }
     const mandant = await this.loadMandant(mandantId);
     const branding = await this.loadBrandingSnapshot(mandantId, user);
 
@@ -170,6 +186,14 @@ export class PdfService {
     this.assertMandantAccess(mandantId, user);
     const anhang = await this.anhangRepository.findWithAbschnitte(anhangId, mandantId);
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
+    // BEFUND 2026-10-11: wie beim GuV — ein Anhang ohne Abschnitte erzeugte
+    // ein leeres, archivierbares und signierbares Pflichtdokument.
+    if (!Array.isArray(anhang.abschnitte) || anhang.abschnitte.length === 0) {
+      throw new BadRequestException(
+        'Der Anhang enthaelt keine Abschnitte. Ohne Inhalt ist keine ' +
+          'Aussage moeglich — es wurde kein PDF erzeugt.',
+      );
+    }
     const mandant = await this.loadMandant(mandantId);
     const branding = await this.loadBrandingSnapshot(mandantId, user);
 

@@ -1088,6 +1088,23 @@ Der Test prüft die Bedingung im `where`, nicht das Ergebnis: ein Mock,
 der unabhängig von der Bedingung eine Zahl liefert, würde einen falschen
 Filter als richtigen aussehen lassen.
 
+#### 7. Leere Pflichtdokumente waren archivier- und signierbar (mittel) — behoben
+
+`generateBilanzPdf` ruft `assertBilanzVollstaendigUndSaldostimmig` auf und
+verweigert ein PDF ohne Positionen — begründet mit „ohne Positionen ist
+keine Aussage möglich". Dieselbe Begründung gilt für GuV und Anhang; dort
+stand kein Gate.
+
+Eine GuV ohne Positionen erzeugte also ein PDF, das **„Jahresergebnis:
+0,00 EUR"** behauptet — eine belegte Aussage ohne Beleg, die danach im
+WORM mit `legalHold` landet und qeS-signierbar ist. Ein Anhang ohne
+Abschnitte ebenso.
+
+**Bewusst kein Saldo-Gate für die GuV.** Erlöse minus Aufwendungen ergibt
+das Jahresergebnis, nicht null; eine GuV „saldo-stimmig" zu verlangen wäre
+erfundene Buchhaltung. Geprüft wird nur, was das Bilanz-Gate ebenfalls
+begründet: es muss etwas zu berichten geben.
+
 #### Ein Fehler, den das fail-closed-Gate selbst erzeugt hat
 
 `mockActivate` (siehe Befund 4 oben) machte **zwei** Playwright-Tests rot:
@@ -1125,7 +1142,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 | # | Fundstelle | Befund |
 |---|---|---|
-| 7 | `pdf.service.ts:124/164` | GuV- und Anhang-PDF ohne Vollständigkeits-Gate (0 Positionen / 0 Abschnitte werden gerendert, archiviert, signierbar) |
 | 8 | `signatur.service.ts:626` | WORM-Upload → `wormObjectRepository.create` → `signatureRepository.create` in drei Schritten ohne Transaktion |
 | 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |
 | 10 | `pdf.service.ts:587` | Die Footer-Korrelations-ID ist **pro Mandant konstant** („mandant" + 9 Zeichen der UUID) — alle PDF eines Mandanten tragen dieselbe Kennung |

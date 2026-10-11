@@ -601,16 +601,35 @@ export class PdfService {
   }
 
   /**
-   * Korrelations-ID fuer den PDF-Footer: die ersten 16 Zeichen des
-   * WORM-Objektschluessels, ohne Sonderzeichen.
+   * Korrelations-ID fuer den PDF-Footer: 16 Zeichen aus dem eindeutigen
+   * Teil des WORM-Objektschluessels.
    *
-   * Bewusst KEIN SHA-256 — siehe Kommentar an der Aufrufstelle. Der
-   * echte Hash des finalen Puffers steht im Manifest und in der
-   * API-Antwort.
+   * BEFUND 2026-10-11 — es wurden die ERSTEN 16 Zeichen des bereinigten
+   * Schluessels genommen. Bei
+   *
+   *   mandant/<uuid>/<typ>/<jahr>/<uuid4>.pdf
+   *
+   * sind das "mandant" + die ersten 9 Zeichen der Mandanten-UUID. Der
+   * eindeutige Teil — die uuid4 am Ende — wurde abgeschnitten.
+   *
+   * Gemessen: vier verschiedene Dokumente EINES Mandanten (Bilanz 2025,
+   * Bilanz 2026, GuV 2025, Abschluss 2025) ergaben alle die Kennung
+   * `mandant9e69d380c`. Der Footer behauptete damit fuer vier
+   * WORM-Objekte dieselbe Zuordnung — sie war keine.
+   *
+   * Der Kommentar an der Aufrufstelle nennt als Zweck "eine
+   * Korrelations-ID auf den WORM-Eintrag — sie ist VOR dem Rendern
+   * bekannt". Genau dieser Zweck war verfehlt.
+   *
+   * Behoben: die LETZTEN 16 Zeichen des bereinigten Schluessels. Das ist
+   * der uuid4-Anteil und damit je Dokument verschieden. Weiterhin kein
+   * SHA-256 — die Begruendung dort betraf den INHALTS-Hash (Self-
+   * Referenz), nicht den Obketschluessel; sie gilt fuer diese ID also
+   * nicht und wird gar nicht erst beruehrt.
    */
   private buildKorrelationsId(objectKey: string): string {
     const bereinigt = objectKey.replace(/[^A-Za-z0-9]/g, '');
-    return bereinigt.slice(0, 16).padEnd(16, '0');
+    return bereinigt.slice(-16).padStart(16, '0');
   }
 
   /**

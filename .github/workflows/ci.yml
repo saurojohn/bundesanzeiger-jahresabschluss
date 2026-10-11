@@ -62,6 +62,17 @@ jobs:
       CACHE_PROVIDER: memory
       # Leer -> Signaturpfad nutzt den Mock-TSA und weist das in der Antwort aus.
       TSA_URL: ''
+      # BEFUND 2026-10-11: `mockActivate` ist jetzt fail-closed. Vorher
+      # genuegte, dass STRIPE_SECRET_KEY fehlt — der Provider heisst dann
+      # 'mock', und JEDER KANZLEI_ADMIN konnte sich ohne Zahlung PREMIUM
+      # geben (live gemessen: PILOT -> PREMIUM mit einem erfundenen Token
+      # `mock_garantiert_erfunden`).
+      #
+      # Die Freischaltung muss damit BEWUSST gesetzt werden. In CI ist sie
+      # gesetzt, weil die Playwright-Suite den Mock-Checkout braucht
+      # (custom-domain.spec.ts und subscription.spec.ts setzen den Tier
+      # darueber). Fehlt die Variable, antwortet die Route 404.
+      BILLING_MOCK_ENABLED: 'true'
       PORT: '3000'
       NODE_ENV: test
       # CORS: main.ts erlaubt per Default nur http://localhost:3000.
@@ -165,6 +176,17 @@ jobs:
       S3_PRESIGN_EXPONENT: '1'
       CACHE_PROVIDER: memory
       TSA_URL: ''
+      # BEFUND 2026-10-11: `mockActivate` ist jetzt fail-closed. Vorher
+      # genuegte, dass STRIPE_SECRET_KEY fehlt — der Provider heisst dann
+      # 'mock', und JEDER KANZLEI_ADMIN konnte sich ohne Zahlung PREMIUM
+      # geben (live gemessen: PILOT -> PREMIUM mit einem erfundenen Token
+      # `mock_garantiert_erfunden`).
+      #
+      # Die Freischaltung muss damit BEWUSST gesetzt werden. In CI ist sie
+      # gesetzt, weil die Playwright-Suite den Mock-Checkout braucht
+      # (custom-domain.spec.ts und subscription.spec.ts setzen den Tier
+      # darueber). Fehlt die Variable, antwortet die Route 404.
+      BILLING_MOCK_ENABLED: 'true'
       PORT: '3000'
       NODE_ENV: test
       # CORS: main.ts erlaubt per Default nur http://localhost:3000.

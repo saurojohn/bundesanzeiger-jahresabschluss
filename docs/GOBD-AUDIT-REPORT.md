@@ -1160,6 +1160,44 @@ Negativprobe ohne den `tx`-Parameter: `promise resolved "undefined"
 instead of rejecting` — der Fehler wäre verschluckt worden, und genau das
 macht aus einer Transaktion eine Erfolgsmeldung.
 
+#### 9. Die Footer-Korrelations-ID war je Mandant konstant (niedrig, aber eindeutig) — behoben
+
+`buildKorrelationsId` nahm die **ersten** 16 Zeichen des bereinigten
+WORM-Objektschlüssels. Bei
+
+```
+mandant/<uuid>/<typ>/<jahr>/<uuid4>.pdf
+```
+
+sind das `"mandant"` + die ersten 9 Zeichen der Mandanten-UUID — der
+eindeutige uuid4-Anteil am Ende wurde abgeschnitten.
+
+**Gemessen**, vier Dokumente desselben Mandanten:
+
+```
+bilanz/2025/1111….pdf      -> mandant9e69d380c
+bilanz/2026/2222….pdf      -> mandant9e69d380c
+guv/2025/3333….pdf         -> mandant9e69d380c
+abschluss/2025/4444….pdf   -> mandant9e69d380c
+```
+
+Vier verschiedene WORM-Objekte, eine Kennung. Der Footer behauptete damit
+eine Zuordnung, die es nicht gab — und der Aufrufkommentar benennt genau
+diese als Zweck: „eine Korrelations-ID auf den WORM-Eintrag".
+
+Behoben auf die **letzten** 16 Zeichen, also den uuid4-Anteil. Weiterhin
+kein SHA-256: die Begründung dort betraf den *Inhalts*-Hash
+(Self-Referenz), nicht den Objektschlüssel — sie wird gar nicht erst
+berührt. Die ID bleibt zudem nachprüfbar: wer den WORM-Schlüssel hat,
+rechnet sie nach.
+
+Negativprobe, wörtlich:
+
+```
+IDs waren: mandant9e69d380c, mandant9e69d380c,
+           mandant9e69d380c, mandant9e69d380c: expected 1 to be 4
+```
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die
@@ -1186,7 +1224,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 | # | Fundstelle | Befund |
 |---|---|---|
 | 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |
-| 10 | `pdf.service.ts:587` | Die Footer-Korrelations-ID ist **pro Mandant konstant** („mandant" + 9 Zeichen der UUID) — alle PDF eines Mandanten tragen dieselbe Kennung |
 
 ---
 

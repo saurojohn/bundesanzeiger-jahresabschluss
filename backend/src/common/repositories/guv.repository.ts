@@ -245,8 +245,15 @@ export class GuVRepository {
     id: string,
     mandantId: string,
     input: GuVUpdateInput,
+    /**
+     * Bestehender Transaktionsclient (siehe BilanzRepository).
+     *
+     * BEFUND 2026-10-11: Der DATEV-Import schrieb Bilanz und GuV in zwei
+     * getrennten Transaktionen. Siehe Kommentar dort.
+     */
+    txClient?: Prisma.TransactionClient,
   ): Promise<GuVEntity> {
-    return this.prismaService.$transaction(async (tx) => {
+    const lauf = async (tx: Prisma.TransactionClient) => {
       const existing = await tx.guV.findFirst({
         where: { id, mandantId },
       });
@@ -279,7 +286,8 @@ export class GuVRepository {
         orderBy: { reihenfolge: 'asc' },
       });
       return { ...updated, positionen };
-    });
+    };
+    return txClient ? lauf(txClient) : this.prismaService.$transaction(lauf);
   }
 
   /**

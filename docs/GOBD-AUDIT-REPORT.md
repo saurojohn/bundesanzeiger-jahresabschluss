@@ -1024,6 +1024,32 @@ konnte darüber weiterhin Belege erhalten. Behoben mit einer eigenen
 Pruefung neben `assertMandantAccess` — Zugriff und Bearbeitbarkeit sind
 zwei unabhaengige Fragen.
 
+#### 4. Der DATEV-Import war nicht atomar (hoch) — nachgemessen und behoben
+
+Dieser Punkt stand im Review unter „nicht verifiziert". Nachgemessen:
+**bestätigt**.
+
+Schritt 5 schrieb die Bilanz, Schritt 5b die GuV — und die DRAFT-Prüfung
+der GuV stand in 5b, also **nach** dem Schreiben der Bilanz. Bestand
+„Bilanz DRAFT + GuV VALIDATED" mit `overwriteExisting: true`:
+
+1. Bilanzpositionen werden **ersetzt** (`deleteMany` + Neuanlage)
+2. der GuV-Zweig wirft 400
+3. der Audit-Eintrag wird nie erreicht
+
+Ergebnis: eine GoBD-relevante Mutation ohne Nachweis, bei einem
+HTTP-Fehler, der das Gegenteil suggeriert.
+
+Behoben auf zwei Ebenen: beide DRAFT-Prüfungen laufen **vor** dem ersten
+Schreibvorgang, und beide Schreibvorgänge laufen in **einer**
+Transaktion (`updateWithPositionen`/`createWithPositionen` von Bilanz und
+GuV nehmen dafür einen optionalen `tx`-Client — dasselbe Muster wie beim
+Konsolidierungs-Fix vom 2026-10-08).
+
+Negativprobe, wörtlich: ohne die Vorabprüfung meldet der Test
+`expected "spy" to not be called at all, but actually been called 1 times`
+— die Bilanz wurde also nachweislich geschrieben.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die
@@ -1049,7 +1075,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 | # | Fundstelle | Befund |
 |---|---|---|
-| 3 | `datev-import.service.ts` | Bilanz und GuV in getrennten Transaktionen; bricht der GuV-Zweig, ist die Bilanz überschrieben — **ohne** Audit-Eintrag |
 | 5 | `bilanz.repository.ts:244` / `guv.repository.ts:181` | `countByMandant` filtert kein `konzernEinheitId: null`, die Liste schon → `total` zählt Konzernsätze mit, `items` nicht |
 | 6 | `auth.controller.ts:83` | `POST /logout` widerruft bei unbekannter Session **alle** Sessions des Users; `update({id: sessionId})` prüft die `userId` nicht |
 | 7 | `pdf.service.ts:124/164` | GuV- und Anhang-PDF ohne Vollständigkeits-Gate (0 Positionen / 0 Abschnitte werden gerendert, archiviert, signierbar) |

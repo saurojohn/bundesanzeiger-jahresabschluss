@@ -322,8 +322,18 @@ export class BilanzRepository {
     id: string,
     mandantId: string,
     input: BilanzUpdateInput,
+    /**
+     * Bestehender Transaktionsclient (siehe `createWithPositionen`).
+     *
+     * BEFUND 2026-10-11: Der DATEV-Import schrieb Bilanz und GuV in zwei
+     * getrennten Transaktionen und pruefte den DRAFT-Status der GuV ERST
+     * danach. Ein Bestand "Bilanz DRAFT + GuV VALIDATED" fuehrte dazu,
+     * dass die Bilanz ueberschrieben wurde und der Import dann mit 400
+     * abbrach — eine GoBD-relevante Mutation ohne Audit-Eintrag.
+     */
+    txClient?: Prisma.TransactionClient,
   ): Promise<BilanzEntity> {
-    return this.prismaService.$transaction(async (tx) => {
+    const lauf = async (tx: Prisma.TransactionClient) => {
       // Existenz-Check mit mandantId-Filter.
       const existing = await tx.bilanz.findFirst({
         where: { id, mandantId },
@@ -352,7 +362,8 @@ export class BilanzRepository {
         orderBy: { reihenfolge: 'asc' },
       });
       return { ...updated, positionen };
-    });
+    };
+    return txClient ? lauf(txClient) : this.prismaService.$transaction(lauf);
   }
 
   /**

@@ -217,53 +217,65 @@ export class DatevImportService {
       );
     }
 
-    // 5. Create/Update Bilanz
-    let bilanzId: string | null = null;
+    // 5a. BEIDE DRAFT-Pruefungen VOR dem ersten Schreibvorgang.
+    //
+    // BEFUND 2026-10-11: Die GuV-Pruefung stand frueher in Schritt 5b,
+    // also NACH dem Schreiben der Bilanz. Bei einem Bestand "Bilanz DRAFT +
+    // GuV VALIDATED" wurde die Bilanz ueberschrieben und der Import brach
+    // danach mit 400 ab — eine GoBD-relevante Mutation ohne Audit-Eintrag.
+    // Beide Pruefungen stehen jetzt vorab; zusaetzlich laeuft alles in EINER
+    // Transaktion (siehe unten), sodass auch ein Fehler beim Schreiben
+    // selbst nichts halbfertig laesst.
+    if (plan.bilanzPositionen.length > 0 && existingBilanz[0] && existingBilanz[0].status !== 'DRAFT') {
+      throw new BadRequestException(
+        `Bestehende Bilanz für das Status ist bereits "${existingBilanz[0].status}". Überschreiben nur in DRAFT-Phase möglich.`,
+      );
+    }
+    if (plan.guvPositionen.length > 0 && existingGuV[0] && existingGuV[0].status !== 'DRAFT') {
+      throw new BadRequestException(
+        `Bestehende GuV für das Status ist bereits "${existingGuV[0].status}". Überschreiben nur in DRAFT-Phase möglich.`,
+      );
+    }
+
+    // 5. Create/Update Bilanz + GuV in EINER Transaktion
+    const ids = await this.prisma.$transaction(async (tx) => {
+      let bilanzId: string | null = null;
     if (plan.bilanzPositionen.length > 0) {
       if (existingBilanz.length > 0 && existingBilanz[0]) {
-        // Update bestehende Bilanz (nur DRAFT-Phase erlaubt)
-        const existing = existingBilanz[0];
-        if (existing.status !== 'DRAFT') {
-          throw new BadRequestException(
-            `Bestehende Bilanz für das Status ist bereits "${existing.status}". Überschreiben nur in DRAFT-Phase möglich.`,
-          );
-        }
         const updated = await this.bilanzRepository.updateWithPositionen(
-          existing.id,
+          existingBilanz[0].id,
           dto.mandantId,
           {
             updatedById: user.id,
             positionen: plan.bilanzPositionen,
           },
+          tx,
         );
         bilanzId = updated.id;
       } else {
-        const created = await this.bilanzRepository.createWithPositionen({
-          mandantId: dto.mandantId,
-          geschaeftsjahr: dto.geschaeftsjahr,
-          status: 'DRAFT',
-          createdById: user.id,
-          positionen: plan.bilanzPositionen,
-        });
+        const created = await this.bilanzRepository.createWithPositionen(
+          {
+            mandantId: dto.mandantId,
+            geschaeftsjahr: dto.geschaeftsjahr,
+            status: 'DRAFT',
+            createdById: user.id,
+            positionen: plan.bilanzPositionen,
+          },
+          tx,
+        );
         bilanzId = created.id;
       }
     }
 
-    // 5b. Create/Update GuV
-    let guvId: string | null = null;
+      // 5b. Create/Update GuV
+      let guvId: string | null = null;
     if (plan.guvPositionen.length > 0) {
       // Jahresergebnis berechnen
       const ergebnis = this.computeErgebnis(plan.guvPositionen);
 
       if (existingGuV.length > 0 && existingGuV[0]) {
-        const existing = existingGuV[0];
-        if (existing.status !== 'DRAFT') {
-          throw new BadRequestException(
-            `Bestehende GuV für das Status ist bereits "${existing.status}". Überschreiben nur in DRAFT-Phase möglich.`,
-          );
-        }
         const updated = await this.guvRepository.updateWithPositionen(
-          existing.id,
+          existingGuV[0].id,
           dto.mandantId,
           {
             ergebnis: ergebnis.toString(),
@@ -271,6 +283,7 @@ export class DatevImportService {
             updatedById: user.id,
             positionen: plan.guvPositionen,
           },
+          tx,
         );
         guvId = updated.id;
       } else {
@@ -283,10 +296,15 @@ export class DatevImportService {
           ergebnis: ergebnis.toString(),
           createdById: user.id,
           positionen: plan.guvPositionen,
-        });
+        },
+        tx);
         guvId = created.id;
       }
     }
+      return { bilanzId, guvId };
+    });
+    const bilanzId = ids.bilanzId;
+    const guvId = ids.guvId;
 
     // 6. Audit-Trail
     void this.auditService.record({

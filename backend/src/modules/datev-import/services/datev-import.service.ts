@@ -63,6 +63,7 @@ import type {
   ImportPreviewDto,
   ImportResultDto,
 } from '../dto/datev-import-response.dto';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 export interface DatevImportContext {
   ip?: string | null;
@@ -102,6 +103,29 @@ export class DatevImportService {
   ) {}
 
   /**
+   * Der Mandant darf nicht archiviert sein.
+   *
+   * BEFUND 2026-10-11: Die Archivierung wurde am 2026-10-09 in Bilanz, GuV
+   * und Anhang verdrahtet — der DATEV-Import blieb aus. Ein archivierter
+   * Mandant, der aus dem aktiven Bestand verschwunden ist, konnte damit
+   * ueber den Import weiterhin neue und ueberschriebene Saetze bekommen.
+   * Das ist kein theoretischer Rest: `execute` schreibt Bilanz UND GuV und
+   * ersetzt Positionen. Die Archivierung wae damit umgangen.
+   *
+   * Wichtig: das ist eine eigene Pruefung und nicht `assertMandantAccess`.
+   * Der Import laeuft ueber den Mandanten der Datei, nicht ueber einen
+   * aktiven Mandant-Kontext — die beiden Fragen sind unabhaengig.
+   */
+  private async assertMandantNichtArchiviert(mandantId: string): Promise<void> {
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { archiviertAt: true },
+    });
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+    assertMandantNichtArchiviert(mandant.archiviertAt, 'DATEV-Import ausführen');
+  }
+
+  /**
    * Vorschau: parst CSV und liefert Mapping-Vorschlag.
    *
    * Schreibt KEINE Audit-Logs (Read-Operation).
@@ -111,6 +135,7 @@ export class DatevImportService {
     user: AuthUser,
   ): Promise<ImportPreviewDto> {
     this.assertMandantAccess(dto.mandantId, user);
+    await this.assertMandantNichtArchiviert(dto.mandantId);
 
     const parsed = this.parseCsv(dto.csvBase64);
     const saldovortrag = DatevCsvParser.calculateSaldovortrag(
@@ -152,6 +177,7 @@ export class DatevImportService {
     context: DatevImportContext,
   ): Promise<ImportResultDto> {
     this.assertMandantAccess(dto.mandantId, user);
+    await this.assertMandantNichtArchiviert(dto.mandantId);
 
     const parsed = this.parseCsv(dto.csvBase64);
     const saldovortrag = DatevCsvParser.calculateSaldovortrag(

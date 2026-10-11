@@ -28,6 +28,7 @@ import {
 } from '../dto/webhook-subscription.dto';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
 
 /**
  * Kontext für Webhook-Mutationen (Audit).
@@ -512,15 +513,20 @@ export class WebhookService {
     user: AuthUser,
   ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const isKanzleiAdmin = user.mandanten.some(
-      (m) => m.rolle === 'KANZLEI_ADMIN',
+
+    // Der Kommentar oben beschreibt den Befund: "Admin IRGENDWO" + ein
+    // separater Kanzlei-Zugriff. Beides zusammen bindet die Rolle nicht an
+    // die Kanzlei. `testDelivery` loest einen echten HTTP-Request aus —
+    // die Luecke war damit auch ein SSRF-Vektor in fremde Kanzleien hinein.
+    const mandanten = await this.prisma.mandant.findMany({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+      select: { id: true },
+    });
+    assertAdminInKanzlei(
+      mandanten.map((m) => m.id),
+      user.mandanten,
+      'Nur KANZLEI_ADMIN dieser Kanzlei darf Webhooks verwalten',
     );
-    if (!isKanzleiAdmin) {
-      throw new ForbiddenException(
-        'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Webhooks verwalten',
-      );
-    }
-    await this.assertKanzleiAccess(kanzleiId, user);
   }
 
   /**

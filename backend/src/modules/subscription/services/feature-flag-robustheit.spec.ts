@@ -141,6 +141,8 @@ describe('Billing-Provider-Quelle: unplausible Werte nie in die DB', () => {
       { record: vi.fn().mockResolvedValue(undefined) } as never,
       { getProviderName: () => 'mock' } as never,
       new FeatureFlagService(),
+      // BILLING_MOCK_ENABLED wird im mockActivate-Pfad fail-closed geprüft.
+      { get: (k: string) => (k === 'BILLING_MOCK_ENABLED' ? 'true' : undefined) } as never,
     );
 
     await service.applyTierChange(
@@ -175,6 +177,8 @@ describe('Billing-Provider-Quelle: unplausible Werte nie in die DB', () => {
       { record: vi.fn().mockResolvedValue(undefined) } as never,
       { getProviderName: () => 'mock' } as never,
       new FeatureFlagService(),
+      // BILLING_MOCK_ENABLED wird im mockActivate-Pfad fail-closed geprüft.
+      { get: (k: string) => (k === 'BILLING_MOCK_ENABLED' ? 'true' : undefined) } as never,
     );
 
     await service.applyTierChange(
@@ -207,6 +211,8 @@ describe('Billing-Provider-Quelle: unplausible Werte nie in die DB', () => {
       { record: vi.fn().mockResolvedValue(undefined) } as never,
       { getProviderName: () => 'mock' } as never,
       new FeatureFlagService(),
+      // BILLING_MOCK_ENABLED wird im mockActivate-Pfad fail-closed geprüft.
+      { get: (k: string) => (k === 'BILLING_MOCK_ENABLED' ? 'true' : undefined) } as never,
     );
 
     await service.applyTierChange(

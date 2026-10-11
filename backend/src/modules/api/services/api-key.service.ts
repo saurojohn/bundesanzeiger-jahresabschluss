@@ -30,6 +30,7 @@ import {
 } from '../dto/api-key.dto';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { assertFeatureEntitled } from '../../../common/utils/entitlements';
+import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
 
 /**
  * Kontext für einen authentifizierten API-Key.
@@ -437,27 +438,19 @@ export class ApiKeyService {
     user: AuthUser,
   ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const isKanzleiAdmin = user.mandanten.some(
-      (m) => m.rolle === 'KANZLEI_ADMIN',
-    );
-    if (!isKanzleiAdmin) {
-      throw new ForbiddenException(
-        'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf API-Keys verwalten',
-      );
-    }
-    // Ziel-Kanzlei muss eine sein, in der der User einen Mandanten hat.
-    const mandant = await this.prisma.mandant.findFirst({
+    // BEFUND 2026-10-11: Der Kanzlei-Zugriff stand neben der Rollenpruefung,
+    // ohne sie zu binden. Admin in Kanzlei A + Mandant in Kanzlei B ergab
+    // daraus API-Key-Verwaltung fuer Kanzlei B.
+    // Ziel-Kanzlei muss eine sein, in der der User einen Mandaten hat.
+    const mandanten = await this.prisma.mandant.findMany({
       where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
       select: { id: true },
     });
-    if (!mandant) {
-      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
-    }
-    // Mandant-Trennung: User muss einen Mandanten der Kanzlei haben.
-    // Da user.mandanten nur Mandant-IDs enthält, prüfen wir pragmatisch:
-    // jeder User mit KANZLEI_ADMIN-Rolle darf die API-Keys "seiner"
-    // Kanzlei verwalten. SYSTEM_ADMIN darf alles.
-    void kanzleiId;
+    assertAdminInKanzlei(
+      mandanten.map((m) => m.id),
+      user.mandanten,
+      'Nur KANZLEI_ADMIN dieser Kanzlei darf API-Keys verwalten',
+    );
   }
 }
 

@@ -61,6 +61,16 @@ function buildService(opts: { updateDeliveryThrows: boolean }) {
             ? { id: 'mandant-1' }
             : null,
       ),
+      // BEFUND 2026-10-11: Der Service fragt jetzt `findMany` ab, weil die
+      // Admin-Rolle an die Kanzlei gebunden wird. `findFirst` bleibt im
+      // Mock, damit aeltere Aufrufer nicht stillschweigend `undefined`
+      // bekommen und der Test an einer unerwarteten Stelle scheitert.
+      findMany: vi.fn().mockImplementation(
+        async ({ where }: { where: { kanzleiId: string; id: { in: string[] } } }) =>
+          where.id.in.includes('mandant-1') && where.kanzleiId === KANZLEI_ID
+            ? [{ id: 'mandant-1' }]
+            : [],
+      ),
     },
   };
 
@@ -221,6 +231,12 @@ describe('WebhookService: Kanzlei-Trennung der Zugriffsprüfung', () => {
             where.kanzleiId === KANZLEI_A && where.id.in.includes('mandant-1')
               ? { id: 'mandant-1' }
               : null,
+        ),
+        findMany: vi.fn().mockImplementation(
+          async ({ where }: { where: { kanzleiId: string; id: { in: string[] } } }) =>
+            where.kanzleiId === KANZLEI_A && where.id.in.includes('mandant-1')
+              ? [{ id: 'mandant-1' }]
+              : [],
         ),
       },
     };

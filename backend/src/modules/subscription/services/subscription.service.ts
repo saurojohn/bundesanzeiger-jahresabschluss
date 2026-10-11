@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 import { AuditService } from '../../audit/services/audit.service';
@@ -22,6 +23,7 @@ import type {
   SubscriptionResponseDto,
   CheckoutResponseDto,
 } from '../dto/subscription.dto';
+import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
 
 /**
  * Subscription-State in der DB (Prisma).
@@ -56,6 +58,7 @@ export class SubscriptionService {
     private readonly auditService: AuditService,
     private readonly billingProvider: BillingProviderService,
     private readonly featureFlags: FeatureFlagService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -127,11 +130,33 @@ export class SubscriptionService {
   }
 
   /**
-   * Mock-Mode Direkt-Aktivierung (Dev/Pilot only).
+   * Mock-Mode Direkt-Aktivierung — nur wenn EXPLIZIT freigeschaltet.
    *
-   * Setzt den Tier direkt ohne Stripe-Checkout. Sicherheit: nur wenn
-   * der Provider-Name 'mock' ist und ein gültiger Mock-Session-Token
-   * vorliegt.
+   * BEFUND 2026-10-11: Die alte Sperre prüfte
+   *
+   *     if (this.billingProvider.getProviderName() !== 'mock') throw ...
+   *
+   * Das ist keine Entscheidung, sondern eine NEBENWIRKUNG der
+   * Konfiguration: der Provider heisst genau dann 'mock', wenn
+   * `STRIPE_SECRET_KEY` nicht gesetzt ist. Damit war der Weg frei, sobald
+   * jemand den Key im Pilot vergisst — und im Pilot IST er nicht gesetzt.
+   *
+   * Live gemessen, gegen den laufenden Pilot:
+   *
+   *     POST /api/subscription/:id/mock-activate
+   *     { tier: 'PREMIUM', mockSession: 'mock_garantiert_erfunden' }
+   *     -> HTTP 200, tier=PILOT -> PREMIUM, status=ACTIVE
+   *
+   * Der "Token" wurde dabei nur an `startsWith('mock_')` geprüft — das ist
+   * kein Geheimnis, sondern ein im Frontend-Test sichtbares Praefix. Jeder
+   * KANZLEI_ADMIN konnte sich damit ohne Zahlung PREMIUM geben, und
+   * PREMIUM schaltet `custom-domain`, `public-api` und `white-label-branding`
+   * frei (Entitlements seit 2026-10-07).
+   *
+   * BEHEBUNG: fail-closed ueber ein explizites Flag.
+   * `BILLING_MOCK_ENABLED` muss bewusst auf 'true' gesetzt werden. Fehlt
+   * es, ist der Weg zu — unabhaengig davon, was Stripe gerade tut. Damit
+   * kann eine Konfigurationslaecke den Abo-Preis nicht mehr aufheben.
    */
   async mockActivate(
     kanzleiId: string,
@@ -141,6 +166,14 @@ export class SubscriptionService {
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<SubscriptionResponseDto> {
     await this.assertKanzleiAdminAccess(kanzleiId, user);
+
+    // Fail-closed: die Freischaltung ist eine Entscheidung, keine Folge.
+    const freigeschaltet =
+      (this.configService.get<string>('BILLING_MOCK_ENABLED') ?? 'false').toLowerCase() === 'true';
+    if (!freigeschaltet) {
+      throw new NotFoundException('Nicht gefunden');
+    }
+
     if (this.billingProvider.getProviderName() !== 'mock') {
       throw new BadRequestException(
         'mockActivate ist nur im Mock-Provider-Mode verfügbar (STRIPE_SECRET_KEY nicht gesetzt)',
@@ -429,13 +462,20 @@ export class SubscriptionService {
     user: AuthUser,
   ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const isAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
-    if (!isAdmin) {
-      throw new ForbiddenException(
-        'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Subscription ändern',
-      );
-    }
-    await this.assertKanzleiAccess(kanzleiId, user);
+
+    // BEFUND 2026-10-11: vorher `user.mandanten.some(m => m.rolle ===
+    // 'KANZLEI_ADMIN')` UND `assertKanzleiAccess` — zwei unabhaengige
+    // Pruefungen. Zusammen belegten sie "Admin irgendwo" + "Mandant
+    // irgendwo in der Ziel-Kanzlei", nicht "Admin IN dieser Kanzlei".
+    const mandanten = await this.prisma.mandant.findMany({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+      select: { id: true },
+    });
+    assertAdminInKanzlei(
+      mandanten.map((m) => m.id),
+      user.mandanten,
+      'Nur KANZLEI_ADMIN dieser Kanzlei darf die Subscription ändern',
+    );
   }
 }
 

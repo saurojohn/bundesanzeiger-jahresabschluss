@@ -273,7 +273,18 @@ export class GuVService {
     }
 
     // Re-berechne Jahresergebnis wenn Positionen sich ändern.
-    let ergebnis: number | undefined = dto.ergebnis;
+    //
+    // BEFUND 2026-10-11: stand hier `let ergebnis = dto.ergebnis`. Das Feld
+    // stand im UpdateGuVDto und wurde ungeprueft uebernommen, wenn keine
+    // Positionen mitgeschickt wurden. Live: PATCH { ergebnis: 999999.99 }
+    // -> HTTP 200, DB 999999.99 — und der Wert landete in GuV-PDF,
+    // Abschluss-PDF und E-Bilanz-XBRL (`netIncome`).
+    //
+    // `ergebnis` ist ABGELEITET. Ohne Positionsaenderung wird es nicht neu
+    // berechnet und der bestehende Datenbankwert bleibt unberuehrt; das
+    // Feld ist jetzt auch aus dem DTO entfernt, sodass ein Versuch ueber
+    // `forbidNonWhitelisted` mit 400 endet.
+    let ergebnis: number | undefined = undefined;
     if (dto.positionen !== undefined) {
       const tempGuv = this.buildTempGuV(
         mandantId,

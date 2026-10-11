@@ -39,6 +39,14 @@ function buildService(opts: { updateWirft?: boolean } = {}) {
             ? { id: 'mandant-1' }
             : null,
       ),
+      // BEFUND 2026-10-11: Der Service fragt `findMany` ab, weil die
+      // Admin-Rolle an die Kanzlei gebunden wird.
+      findMany: vi.fn().mockImplementation(
+        async ({ where }: { where: { kanzleiId: string; id: { in: string[] } } }) =>
+          where.kanzleiId === KANZLEI_A && where.id.in.includes('mandant-1')
+            ? [{ id: 'mandant-1' }]
+            : [],
+      ),
     },
     kanzlei: {
       findUnique: vi

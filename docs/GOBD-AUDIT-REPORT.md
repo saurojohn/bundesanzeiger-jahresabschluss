@@ -957,6 +957,108 @@ dieser Datei; sie ist hier nur dokumentiert, nicht umgebaut.
 
 ---
 
+### Nachtrag 2026-10-11 (Nachtrag 9): Code-Review — zwei Rechte-Lücken, ein abgeleitetes Feld
+
+Ein unabhängiges Review über den Gesamtbaum (252 Dateien) plus eigene
+Nachprüfung jedes Befunds. Zwei Funde wurden bestätigt und behoben, einer
+war eine **Folge der eigenen Arbeit vom Vortag**.
+
+#### 1. Kanzlei-übergreifende Rechteausweitung (hoch)
+
+Vier Services hatten dieselbe Lücke:
+
+```ts
+const isAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');  // Admin IRGENDWO
+await this.assertKanzleiAccess(kanzleiId, user);                          // Mandant IRGENDWO
+```
+
+Zwei Prüfungen, unabhängig voneinander. Zusammen belegen sie „Admin
+irgendwo" + „Mandant in der Ziel-Kanzlei" — **nicht** „Admin in dieser
+Kanzlei". Wer in Kanzlei A `KANZLEI_ADMIN` ist und in Kanzlei B
+`STEUERBERATER`, besteht beide Prüfungen für B.
+
+Betroffen: `subscription` (Kündigung), `api-key` (Anlegen/Widerrufen),
+`webhook` (inkl. `testDelivery`, das einen echten HTTP-Request auslöst —
+die Lücke war damit auch ein SSRF-Vektor in fremde Kanzleien hinein) und
+`dns` (Custom-Domain-Verifikation, also Branding-Übernahme).
+
+Die Kommentare an den Fundstellen kannten das Problem — in
+`webhook.service.ts` steht wörtlich, die Rollenprüfung belege „nur Admin
+IRGENDWO". Der Fix vom 2026-10-06 hat den `kanzleiId`-Zugriff ergänzt, die
+Rolle aber nicht daran gebunden.
+
+Behoben mit `common/utils/kanzlei-rolle.ts` — eine Quelle der Wahrheit für
+alle vier. Die Negativprobe liefert den direkten Beweis: ohne das Binding
+erreicht `createApiKey` die **Entitlement-Prüfung** („public-api ist im
+Tarif nicht enthalten") und `createSubscription` den eigentlichen
+Schreibvorgang. Die Autorisierung lief also durch.
+
+#### 2. `ergebnis` der GuV war clientgesteuert (hoch)
+
+`CreateGuVDto` kannte das Feld nicht, `UpdateGuVDto` schon. Im Service stand
+`let ergebnis = dto.ergebnis`, neu berechnet wurde nur mitgeschickt bei
+Positionen. Damit genügte EIN Request:
+
+```
+PATCH { ergebnis: 999999.99 }   ->   HTTP 200, DB 999999.99
+```
+
+Der Wert fliesst von dort in das GuV-PDF (`guv.template.ts:167`), in das
+Abschluss-PDF (`abschluss.template.ts:330`) und in die E-Bilanz-XBRL als
+`netIncome` (`xbrl-generator.service.ts:187`). Das PDF landet im WORM mit
+`legalHold` und ist qeS-signierbar — das **Jahresergebnis eines signierten
+Abschlusses war frei setzbar**. `/validate` meldete weiterhin den
+korrekt berechneten Wert: das System widersprach sich selbst, ohne zu
+melden.
+
+`ergebnis` ist abgeleitet (Erlöse minus Aufwendungen) und gehört nicht in
+einen Eingabe-DTO. Entfernt: jetzt `400 property ergebnis should not exist`,
+fail-closed über `forbidNonWhitelisted`, ohne Sonderlogik im Service.
+
+#### 3. Der DATEV-Import umging die Archivierung (mittel) — Folge eigener Arbeit
+
+Die Archivierung vom 2026-10-09 war in Bilanz, GuV und Anhang verdrahtet,
+**nicht** im Import-Pfad. Das ist keine theoretische Lücke: `execute` legt
+Bilanz **und** GuV an und ersetzt die Positionen. Ein archivierter Mandant
+konnte darüber weiterhin Belege erhalten. Behoben mit einer eigenen
+Pruefung neben `assertMandantAccess` — Zugriff und Bearbeitbarkeit sind
+zwei unabhaengige Fragen.
+
+#### Zwei eigene Fehler beim Nachprüfen des Reviews
+
+Beides ist hier festgehalten, weil beide Tests erzeugt haben, die
+falsch gruen waren:
+
+1. **Die erste Negativprobe der Rollenbindung war grün** — 17 Tests
+   bestanden, obwohl das Binding entfernt war. Die vorhandenen Specs haben
+   einen User mit genau EINEM Mandanten; bei einem Mandanten kann die alte
+   Pruefungsfolge nie auseinanderfallen. Verwendbar war erst ein
+   Verdrahtungstest mit der verwundbaren Konfiguration (Admin in A, Berater
+   in B). Ein Regeltest wäre gruen, auch wenn niemand sie aufruft.
+2. **Der Verdrahtungstest war selbst aus dem falschen Grund gruen.**
+   `createSubscription` nimmt ein Objekt, ich hatte positional übergeben —
+   `kanzleiId` war `undefined`, der Test lief in die Kanzlei-Sperre statt in
+   die Rollenprüfung. Behoben, indem die Assertions jetzt auf die
+   **Meldung** prüfen (`/KANZLEI_ADMIN dieser Kanzlei/`) und nicht nur auf
+   die Fehlerklasse.
+
+#### Ohne Beleg, aber dokumentiert — aus dem Review, nicht nachgemessen
+
+Diese Punkte sind plausibel, aber **nicht empirisch reproduziert**. Sie
+sind nicht behoben und nicht als erledigt zu lesen:
+
+| # | Fundstelle | Befund |
+|---|---|---|
+| 3 | `datev-import.service.ts` | Bilanz und GuV in getrennten Transaktionen; bricht der GuV-Zweig, ist die Bilanz überschrieben — **ohne** Audit-Eintrag |
+| 5 | `bilanz.repository.ts:244` / `guv.repository.ts:181` | `countByMandant` filtert kein `konzernEinheitId: null`, die Liste schon → `total` zählt Konzernsätze mit, `items` nicht |
+| 6 | `auth.controller.ts:83` | `POST /logout` widerruft bei unbekannter Session **alle** Sessions des Users; `update({id: sessionId})` prüft die `userId` nicht |
+| 7 | `pdf.service.ts:124/164` | GuV- und Anhang-PDF ohne Vollständigkeits-Gate (0 Positionen / 0 Abschnitte werden gerendert, archiviert, signierbar) |
+| 8 | `signatur.service.ts:626` | WORM-Upload → `wormObjectRepository.create` → `signatureRepository.create` in drei Schritten ohne Transaktion |
+| 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |
+| 10 | `pdf.service.ts:587` | Die Footer-Korrelations-ID ist **pro Mandant konstant** („mandant" + 9 Zeichen der UUID) — alle PDF eines Mandanten tragen dieselbe Kennung |
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -13,6 +12,7 @@ import { AuditService } from '../../audit/services/audit.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { assertFeatureEntitled } from '../../../common/utils/entitlements';
+import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
 
 /**
  * Domain-Verifikations-Service (M4 Sprint 3).
@@ -268,25 +268,26 @@ export class DomainVerificationService {
     user: AuthUser,
   ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const isAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
-    if (!isAdmin) {
-      throw new ForbiddenException(
-        'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Custom-Domain verifizieren',
-      );
-    }
     // Bugfix 2026-10-06: `kanzleiId` wurde bisher gar nicht verwendet.
     // Die Rollenpruefung bewies nur „Admin IRGENDWO" — der Admin von
     // Kanzlei A konnte Domain-Verifikation fuer Kanzlei B starten und
     // bestaetigen, also das Branding einer fremden Kanzlei uebernehmen.
     //
     // `user.mandanten[].id` ist eine MANDANT-UUID, nicht die kanzleiId.
-    const mandant = await this.prisma.mandant.findFirst({
+    //
+    // BEFUND 2026-10-11: Der Bugfix vom 2026-10-06 hat den Kanzlei-Bezug
+    // ergaenzt, die Rolle aber nicht daran gebunden. "Admin irgendwo" +
+    // "Mandant in der Ziel-Kanzlei" ergab zusammen nicht "Admin in der
+    // Ziel-Kanzlei".
+    const mandanten = await this.prisma.mandant.findMany({
       where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
       select: { id: true },
     });
-    if (!mandant) {
-      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
-    }
+    assertAdminInKanzlei(
+      mandanten.map((m) => m.id),
+      user.mandanten,
+      'Nur KANZLEI_ADMIN dieser Kanzlei darf die Custom-Domain verifizieren',
+    );
   }
 
   /**

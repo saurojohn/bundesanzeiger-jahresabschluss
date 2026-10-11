@@ -1198,6 +1198,45 @@ IDs waren: mandant9e69d380c, mandant9e69d380c,
            mandant9e69d380c, mandant9e69d380c: expected 1 to be 4
 ```
 
+#### 9. `User.isActive` war ein totes Feld (hoch) — behoben, live in beide Richtungen belegt
+
+`JwtStrategy.validate()` prüfte **nur** Signatur und Payload-Form und
+konsultierte die Datenbank nie. `isActive` stand im Schema, wurde aber
+nirgends ausgewertet – und es gab weder einen Deaktivierungsweg noch eine
+Token-Version, die alte Tokens sofort entwerten würde.
+
+Interessant war die Kontrolle beim **Login**: `auth.service.ts:76`
+filtert `where: { email, isActive: true }`. Die Absicht war also
+dokumentiert und umgesetzt – nur der JWT-Pfad hat sie nicht ausgeführt.
+Gemessen, **mit dem alten Code**:
+
+```
+Token geholt.                    /api/mandant -> HTTP 200
+Setze isActive=false …
+GLEICHES Token nach Deaktivierung -> HTTP 200   ❌ NOCH AKTIV
+Neuanmeldung                      -> HTTP 401
+```
+
+Deaktiviert hieß: keine neue Anmeldung, aber die bestehende Sitzung lief
+weiter – bis zum Token-Ablauf. Genau die halbe Kontrolle, die am
+auffälligsten wirkt, weil die andere Hälfte nachweislich funktioniert.
+
+Nach der Korrektur: **401**, sowohl für das alte Token als auch für die
+Neuanmeldung.
+
+**Fail-closed, auch bei Datenbankausfall.** Das ist der teure Punkt: ein
+DB-Ausfall sperrt das System. Absicht — eine Kontrolle, die davon abhängt,
+dass alles glückt, ist genau die Fehlerklasse, die dieses Audit mehrfach
+gefunden hat.
+
+**Bewusst unverändert:** Mandant-Rollen kommen weiter aus dem
+Token-Snapshot. Ein Rollenentzug wirkt bis zum Ablauf
+(`JWT_ACCESS_TOKEN_TTL`, Default 15 min). Das ist eine Abwägung zwischen
+Latenz und Konsistenz und **kein** Fehler — im Unterschied zu `isActive`,
+wo das Schema eine Kontrolle versprach, die es nicht gab. Ebenso benannt:
+`logout` entzieht den Refresh-Token; ein ausgestelltes Access-Token bleibt
+bis zum Ablauf gültig.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die
@@ -1223,7 +1262,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 | # | Fundstelle | Befund |
 |---|---|---|
-| 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |
 
 ---
 

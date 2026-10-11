@@ -1073,6 +1073,21 @@ Negativprobe, wörtlich: ohne die Härtung meldet der Test
 Ohne Token bleibt der globale Widerruf erhalten: der Client kann dann
 nur „alles abmelden" gemeint haben.
 
+#### 6. `total` zählte Konzernsätze mit, `items` nicht (mittel) — behoben
+
+`findByMandantPaginated` filtert `konzernEinheitId: null` und sagt im
+Kommentar ausdrücklich warum: der Konzernsatz gehört zur
+Konsolidierungseinheit, nicht in die Liste der Jahresabschlüsse des
+Mandanten. `countByMandant` hatte denselben Filter **nicht**.
+
+Für einen Muttermandanten einer Konsolidierungseinheit galt damit
+`total: 3` bei `items: 2` — die letzte Seite war leer, und die Oberfläche
+zeigte „Seite 2 von 2". Betraf Bilanz **und** GuV.
+
+Der Test prüft die Bedingung im `where`, nicht das Ergebnis: ein Mock,
+der unabhängig von der Bedingung eine Zahl liefert, würde einen falschen
+Filter als richtigen aussehen lassen.
+
 #### Ein Fehler, den das fail-closed-Gate selbst erzeugt hat
 
 `mockActivate` (siehe Befund 4 oben) machte **zwei** Playwright-Tests rot:
@@ -1110,7 +1125,6 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 | # | Fundstelle | Befund |
 |---|---|---|
-| 5 | `bilanz.repository.ts:244` / `guv.repository.ts:181` | `countByMandant` filtert kein `konzernEinheitId: null`, die Liste schon → `total` zählt Konzernsätze mit, `items` nicht |
 | 7 | `pdf.service.ts:124/164` | GuV- und Anhang-PDF ohne Vollständigkeits-Gate (0 Positionen / 0 Abschnitte werden gerendert, archiviert, signierbar) |
 | 8 | `signatur.service.ts:626` | WORM-Upload → `wormObjectRepository.create` → `signatureRepository.create` in drei Schritten ohne Transaktion |
 | 9 | `jwt.strategy.ts:36` | Rollen werden aus dem Token-Snapshot geprüft; ein entzogener `UserMandantRole` wirkt erst nach Token-Ablauf |

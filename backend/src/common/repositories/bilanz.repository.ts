@@ -241,9 +241,16 @@ export class BilanzRepository {
     mandantId: string;
     jahr?: number;
   }): Promise<number> {
+    // BEFUND 2026-10-11: Der Filter `konzernEinheitId: null` fehlte hier,
+    // obwohl `findByMandantPaginated` ihn setzt — mit ausdruecklichem
+    // Kommentar, warum der Konzernsatz nicht in die Mandantenliste
+    // gehoert. Folge fuer einen Muttermandanten: `total` zaehlte den
+    // Konzernsatz mit, `items` lieferte ihn nie. Die letzte Seite war
+    // leer und der Paginator zaehlte falsch.
     return this.prismaService.bilanz.count({
       where: {
         mandantId: args.mandantId,
+        konzernEinheitId: null,
         ...(typeof args.jahr === 'number' ? { geschaeftsjahr: args.jahr } : {}),
       },
     });

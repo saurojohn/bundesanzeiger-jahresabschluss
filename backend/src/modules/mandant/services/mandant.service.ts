@@ -117,17 +117,43 @@ export class MandantService {
     // (assertKanzleiAdminAccess, branding.service, subscription.service,
     // domain-verification.service, api-key.service). Die Liste war die
     // einzige Stelle mit der engeren Regel — sie wird jetzt angeglichen.
+    const istSystemAdmin = user.globalRole === 'SYSTEM_ADMIN';
     const istKanzleiAdmin =
-      user.globalRole === 'SYSTEM_ADMIN' ||
-      user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
-    const kanzleiId = istKanzleiAdmin
-      ? await this.resolveKanzleiId(user)
-      : null;
+      istSystemAdmin || user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+    // `resolveKanzleiId` WIRFT, wenn nichts auflösbar ist — es liefert nie
+    // leer. Damit ist der alte `{}`-Zweig (kein Filter = alle Mandanten
+    // aller Kanzleien) nicht erreichbar und wird hier entfernt: er war
+    // eine latente Falle, keine Absicht.
+    const eigeneKanzleiId = istKanzleiAdmin ? await this.resolveKanzleiId(user) : null;
+
+    // BEFUND 2026-10-11: `pagination.kanzleiId` stammt aus dem Query-String
+    // und ÜBERSCHrieb zuvor den aufgelösten Wert. Live gemessen:
+    //
+    //   GET /api/mandant                     -> 3 Mandanten (eigene Kanzlei)
+    //   GET /api/mandant?kanzleiId=<fremd>   -> "Fremd-Mandant GmbH"
+    //
+    // Ein KANZLEI_ADMIN konnte damit die Mandantenliste einer fremden
+    // Kanzlei abrufen — Firmenname, USt-Id, Adresse. Das ist ein
+    // Mandantentrennungs-Bruch (§ 146 AO), ausgeloest durch genau die
+    // "pragmatische" Rollenbehandlung von 2026-10-05.
+    //
+    // SYSTEM_ADMIN darf weiterhin kanzleiübergreifend filtern (Pilot-
+    // Annahme). Für KANZLEI_ADMIN ist die eigene Kanzlei gesetzt — und ein
+    // abweichender Widerspruch wird abgelehnt statt still ignoriert: ein
+    // stilles Ignorieren laesst den Aufrufer glauben, er habe die fremde
+    // Kanzlei gesehen.
+    if (
+      !istSystemAdmin &&
+      pagination?.kanzleiId &&
+      pagination.kanzleiId !== eigeneKanzleiId
+    ) {
+      throw new ForbiddenException(
+        'Die angeforderte Kanzlei gehört nicht zu Ihrem Mandanten.',
+      );
+    }
 
     const where: Prisma.MandantWhereInput = istKanzleiAdmin
-      ? pagination?.kanzleiId || kanzleiId
-        ? { kanzleiId: pagination?.kanzleiId ?? kanzleiId! }
-        : {}
+      ? { kanzleiId: istSystemAdmin ? (pagination?.kanzleiId ?? eigeneKanzleiId!) : eigeneKanzleiId! }
       : { id: { in: user.mandanten.map((m) => m.id) } };
 
     // Backwards-Compat (M3-Regression-Fix): Ohne explizite Pagination liefern

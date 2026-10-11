@@ -1237,6 +1237,59 @@ wo das Schema eine Kontrolle versprach, die es nicht gab. Ebenso benannt:
 `logout` entzieht den Refresh-Token; ein ausgestelltes Access-Token bleibt
 bis zum Ablauf gültig.
 
+#### 10. `?kanzleiId=` umging die Mandantentrennung (hoch) — eigenständige Recherche, live belegt
+
+Nicht aus dem Review, sondern beim Anschauen der Public-API gefunden — und
+es ist die schärfste Stelle des ganzen Audits.
+
+`MandantService.findAll` baute den Filter so:
+
+```ts
+istKanzleiAdmin
+  ? pagination?.kanzleiId || kanzleiId
+    ? { kanzleiId: pagination?.kanzleiId ?? kanzleiId! }
+    : {}                                  // ← kein Filter
+  : { id: { in: user.mandanten.map(m => m.id) } };
+```
+
+`pagination.kanzleiId` stammt aus dem **Query-String** und *überschrieb*
+den aufgelösten Wert. Der Controller nimmt es ungeprüft entgegen
+(`@Query('kanzleiId') kanzleiId?: string`).
+
+**Live gemessen** (zweite Kanzlei als Fixture):
+
+```
+GET /api/mandant                     -> 3 Mandanten (eigene Kanzlei)
+GET /api/mandant?kanzleiId=<fremd>   -> "Fremd-Mandant GmbH"   ❌
+```
+
+Ein `KANZLEI_ADMIN` konnte die Mandantenliste einer **fremden Kanzlei**
+abrufen — Firmenname, USt-Id, Adresse. Das ist ein
+Mandantentrennungs-Bruch (§ 146 AO) durch genau die „pragmatische"
+Rollenbehandlung, die am 2026-10-05 die Liste reparieren sollte.
+
+Zwei Korrekturen:
+
+1. Für `KANZLEI_ADMIN` ist die **eigene** Kanzlei gesetzt; ein
+   abweichender Wert wird **abgelehnt**, nicht still ignoriert — sonst
+   glaubt der Aufrufer, er habe die fremde Kanzlei gesehen.
+   `SYSTEM_ADMIN` darf weiterhin kanzleiübergreifend filtern
+   (Pilot-Annahme).
+2. Der leere `{}`-Zweig ist **entfernt**, nicht nur unerreichbar gemacht.
+   `resolveKanzleiId` wirft statt leer zu liefern, deshalb war er
+   aktuell harmlos — aber liefe die Methode je einmal `null`, wäre er
+   sofort der Cross-Tenant-Zugriff. Eine Falle, die nur durch eine
+   ferne Zusage unauffällig bleibt, ist keine.
+
+Negativprobe:
+
+```
+eine FREMDE kanzlei wird abgelehnt → promise resolved instead of rejecting
+```
+
+Nach der Korrektur live: **403** „Die angeforderte Kanzlei gehört nicht zu
+Ihrem Mandanten."
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die

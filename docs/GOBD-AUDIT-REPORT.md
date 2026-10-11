@@ -1290,6 +1290,58 @@ eine FREMDE kanzlei wird abgelehnt → promise resolved instead of rejecting
 Nach der Korrektur live: **403** „Die angeforderte Kanzlei gehört nicht zu
 Ihrem Mandanten."
 
+#### 11. Die Integritätsprüfung lief ohne Tenant-Filter (hoch) — live belegt
+
+Gefunden bei derselben Recherche, die Befund 10 ausgelöst hat: dieselbe
+Frage nach einer zweiten Stelle, an der ein Filter aus der Eingabe einen
+aufgelösten Tenant-Scope ersetzt.
+
+`resolveKanzleiIds` arbeitet **richtig**: ein angefragter `kanzleiId` wird
+bei Nicht-Admins nur übernommen, wenn er in der Menge der eigenen Kanzleien
+liegt — sonst ein **leeres** Array.
+
+Der Controller machte daraus:
+
+```ts
+const kanzleiIds = await this.resolveKanzleiIds(user, kanzleiId);
+const effectiveKanzleiId = kanzleiIds[0];        // undefined
+const result = await this.integrityService.verifyIntegrity({
+  kanzleiId: effectiveKanzleiId,                 // undefined
+```
+
+und `verifyIntegrity` setzt den Filter nur bei gesetzter ID:
+
+```ts
+if (args?.kanzleiId) where['kanzleiId'] = args.kanzleiId;
+```
+
+Ein leeres Ergebnis wurde damit als **„kein Filter"** gelesen, nicht als
+**„Zugriff verweigert"**. Live gemessen:
+
+```
+KANZLEI_ADMIN
+  ohne Parameter      : HTTP 200  status=BROKEN  entriesChecked=27  kanzleiId=<eigen>
+  ?kanzleiId=<fremd> : HTTP 200  status=BROKEN  entriesChecked=27  kanzleiId=(keiner)
+```
+
+`kanzleiId: (keiner)` ist der Beweis: der Service bekam `undefined` und
+fragte **alle** Audit-Einträge aller Mandanten ab. Die sichtbare
+Gleichheit von `entriesChecked` ist Zufall — wo die Kette reißt, hängt von
+Daten ab, die der Aufrufer nicht kontrolliert. Bei einem anderen
+Datenstand hätte `brokenAt.auditLogId` eine fremde UUID samt
+`expectedHash`/`actualHash` preisgegeben.
+
+Behoben: eine leere Auflösung wirft jetzt 404. Fail-closed, und es gilt
+auch für einen Nutzer ganz ohne Mandanten — für ihn gibt es nichts zu
+prüfen. `SYSTEM_ADMIN` darf unverändert jede Kanzlei prüfen.
+
+Der Kommentar am Controller behauptete zuvor „Non-SYSTEM_ADMIN: auf eigene
+Kanzlei einschränken" — das war genau die Aussage, die nicht zutraf. Sie
+trifft jetzt zu.
+
+Live nach der Korrektur: **404** „Keine Kanzlei für die Integritätsprüfung
+zugänglich."
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die

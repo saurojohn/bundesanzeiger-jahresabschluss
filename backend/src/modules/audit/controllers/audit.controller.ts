@@ -3,6 +3,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -153,6 +154,29 @@ export class AuditController {
     // Einträge, `status: "OK"` — die Integritätsprüfung war für jeden
     // Nicht-SYSTEM_ADMIN wirkungslos und meldete dabei „intakt".
     const kanzleiIds = await this.resolveKanzleiIds(user, kanzleiId);
+
+    // BEFUND 2026-10-11: `resolveKanzleiIds` liefert für einen Nicht-Admin
+    // ein LEERES Array, wenn eine fremde `kanzleiId` angefragt wurde. Aus
+    // `kanzleiIds[0]` wurde dann `undefined`, und `verifyIntegrity` setzt
+    // den Filter nur, wenn `kanzleiId` gesetzt ist:
+    //
+    //     if (args?.kanzleiId) where['kanzleiId'] = args.kanzleiId;
+    //
+    // Die Prüfung lief also über ALLE Audit-Einträge aller Mandanten.
+    // Live gemessen: die Antwort meldete `kanzleiId: (keiner)` bei
+    // `entriesChecked: 27` — die Kette wird über fremde Einträge
+    // bewertet, und `brokenAt.auditLogId` sowie `oldestUnhashedEntry`
+    // werden daraus gebildet.
+    //
+    // Fail-closed: eine leere Auflösung ist kein "prüfe alles", sondern
+    // "zugriff verweigert". Das gilt auch für einen Nutzer ganz ohne
+    // Mandanten — für ihn gibt es nichts zu prüfen.
+    if (kanzleiIds.length === 0) {
+      throw new NotFoundException(
+        'Keine Kanzlei für die Integritätsprüfung zugänglich.',
+      );
+    }
+
     const effectiveKanzleiId = kanzleiIds[0];
     const result = await this.integrityService.verifyIntegrity({
       kanzleiId: effectiveKanzleiId,

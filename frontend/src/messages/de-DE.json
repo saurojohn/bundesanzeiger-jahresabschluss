@@ -588,7 +588,11 @@
       "dropzone": "CSV-Datei hier ablegen",
       "chooseFile": "Datei auswählen",
       "selected": "Ausgewählt",
-      "parsing": "Wird geparst …"
+      "parsing": "Wird geparst …",
+      "kontenrahmen": "Kontenrahmen der DATEV-Datei",
+      "skr04": "SKR04 — Standard-Kontenrahmen 04",
+      "skr03": "SKR03 — Standard-Kontenrahmen 03",
+      "kontenrahmenHint": "Pflichtangabe: Bestimmt, wie die Sachkonten den HGB-Positionen zugeordnet werden. Bei falscher Angabe werden Buchungen still auf die falsche GuV-Position gebucht."
     },
     "parsePreview": {
       "header": "Header-Daten",

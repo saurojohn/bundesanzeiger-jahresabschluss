@@ -818,90 +818,142 @@ hat keinen einzigen Aufrufer im Backend. Solange das so ist, kann keine
 Regel „nach Signierung gesperrt" auf Datenlage entscheiden — sie würde
 einen Zustand abfragen, den es nicht gibt.
 
-#### Offen: soll Signieren den Bestandteil sperren?
+#### Signatur: sperrt sie den Bestandteil? — ENTSCHIEDEN am 2026-10-10
 
-**Diese Frage ist bewusst offen geblieben** (Stand 2026-10-09) und wurde
-nicht entschieden. Es ist eine Frage der Compliance-Semantik, keine
-Technik:
+**Antwort: nein. Die Daten bleiben nach der Signatur aenderbar.**
 
-- **Ja** — signierte Teile sind unveränderbar. Für Audit und
-  Nachvollziehbarkeit die naheliegende Lesart. Setzt voraus, dass der
-  Signaturpfad überhaupt einen Zustand erzeugt (siehe oben).
-- **Nein** — die Signatur gilt nur für das PDF, die Daten dürfen korrigiert
-  werden. Dann braucht es aber eine Versionierung, sonst attestiert die
-  qeS-Signatur einen Inhalt, den es nicht mehr gibt.
+Das ist eine bewusste Wahl und keine Verlegenheit. Sie besagt: die
+qeS-Signatur **bescheinigt einen Zeitpunkt**, nicht den Endzustand. Die
+Signatur bleibt kryptografisch gueltig — sie bezeugt das PDF, das
+unveraenderlich im WORM liegt.
 
-Bis zur Entscheidung ändert sich nichts. Solange `SIGNED` nirgends
-gesetzt wird, verhält sich das System wie in der zweiten Variante — ohne
-dass das so entschieden worden wäre. Das ist der Grund, warum es hier
-steht und nicht in einer Fußnote.
+**Die Folge, die daraus folgt und die niemand uebersehen sollte:** ob der
+zugrunde liegende Datensatz nach der Signierung veraendert wurde, ist
+ausschliesslich aus dem **Audit-Trail** ersichtlich. Bei dieser Entscheidung
+ist der Audit-Trail damit nicht Nebenschauplatz, sondern der einzige Ort,
+an dem die Veraenderung sichtbar wird. Genau deshalb wird am Signaturpfad
+auch nichts geaendert: er schreibt bereits vollstaendig (Zertifikat, Hash
+vorher/nachher, WORM-Key, Zeitstempel-Aussteller), und jede spaetere
+Aenderung an der Bilanz erzeugt einen eigenen Audit-Eintrag mit
+`previousState` und `newState`.
+
+Festgehalten in
+`backend/src/modules/bilanz/services/signatur-nicht-sperrend.spec.ts`.
+Ein Test, der festhaelt, dass **bewusst nicht** gesperrt wird, verhindert,
+dass jemand die Sperre spaeter "sicherheitshalber" einbaut — das wuerde die
+Entscheidung zur genau anderen Seite hin umdrehen, ohne dass jemand sie
+nochmal getroffen hat. Der Test grenzt dabei ab: "Daten duerfen sich
+aendern" heisst ausdruecklich **nicht** "die DRAFT-Sperre faellt weg".
+
+Der Preis dieser Entscheidung, offen benannt: ein Dritter, der nur das PDF
+in der Hand hat, kann nicht erkennen, dass sich die Zahlen danach geaendert
+haben. Er muss den Audit-Trail hinzuziehen. Wer das im Pilot nicht
+akzeptiert, muss zu Versionierung wechseln — dann aber mit den Daten aus
+Nachtrag 6 (`Signature` ohne `entityType`/`entityId` ist der Grund, warum
+das gerade nicht geht).
 
 ---
 
-### Nachtrag 2026-10-09 (Nachtrag 7): Archivieren statt Löschen (Produktentscheidung umgesetzt)
+### Nachtrag 2026-10-10 (Nachtrag 8): Kontenrahmen — Import und Export sprachen verschiedene
 
-Nachtrag 5 hat den Löschpfad gesperrt und die Frage offengelassen: was
-passiert mit einem Mandanten, der weg muss, aber Aufbewahrung hat?
-Entschieden wurde am 2026-10-09: **archivieren statt löschen**.
+Entscheidung der Fachverantwortlichen vom 2026-10-10: **SKR03 wird
+unterstützt.** Die Umsetzung förderte zwei Dinge zutage, die vorher nicht
+bekannt waren.
 
-#### Umsetzung
+#### Der Import kannte keinen Kontenrahmen
 
-`Mandant.archiviertAt` (+ `archiviertVonId`), Migration
-`2026_10_09_210000_mandant_archivierung`. Bewusst **ein** Zeitstempel statt
-`archiviert Boolean` + Zeitstempel: zwei Felder, die auseinanderlaufen
-können, sind genau die Form von „grün, aber stimmt nicht", die in diesem
-Audit mehrfach teuer war.
+Der Export akzeptierte `skrPlan: 'SKR03' | 'SKR04'`. Der Import hatte **kein
+`skrPlan`-Feld** und löste ausschließlich über die SKR04-Reverse-Tabelle
+auf. Eine SKR03-Datei lief dadurch durch die SKR04-Auflösung.
+
+#### Der README-Befund war richtig, aber nicht der schlimmste Fall
+
+Der README nannte `7000` als Beispiel. Ausgezählt über die **Reverse-**
+Tabellen (den Tabellen, die der Import tatsächlich benutzt) sind es **sechs**
+Nummern, die in beiden Rahmen vorkommen — und bei **zwei** landen sie auf
+einer anderen GuV-Position:
+
+| Konto | SKR03 | SKR04 | Folge beim Import vor dem Fix |
+|---|---|---|---|
+| `5000` Materialaufwand | `5a.` | `5a.` | keine |
+| `6000` Personalaufwand | `6a.` | `6.` | andere Unterposition |
+| `6200` Abschreibungen | `7a.` | `7a.` | keine |
+| `7000` sonstige betriebl. Aufw. | `8.` | `8.` Werbekosten | **nur der Name** |
+| `7300` | `13.` **Zinsen/Aufwand** | `8.` **Versicherungen** | **falsche GuV-Position** |
+| `7600` Steuern | `14.` | `14.` | keine |
+
+`7000` war kein gutes Beispiel: es landet in beiden Rahmen auf GuV-Zeile 8.,
+nur der Name unterscheidet sich. `7300` ist der echte Fall — **Zinsaufwand
+wurde als Versicherung gebucht.** Der alte Befund war also nicht falsch,
+aber er hätte die Hälfte des Schadens beschrieben.
+
+#### Live belegt, komplette Kette
 
 ```
-PATCH /api/mandant/:id/archivierung           → 200 / 409 (bereits archiviert)
-PATCH /api/mandant/:id/archivierung/aufheben  → 200 / 409 (nicht archiviert)
+skrPlan: SKR03  →  7300 = 13.  Zinsen und ähnliche Aufwendungen   ✅
+skrPlan: SKR04  →  7300 =  8.  Versicherungen          ← was vorher IMMER geschah
+ohne skrPlan    →  HTTP 400
 ```
 
-Beide Routen `KANZLEI_ADMIN` oder `SYSTEM_ADMIN`, beide mit eigenem
-Audit-Eintrag (vorher **und** nachher). Die Storno-Wirkung soll im Trail
-als eigene Handlung lesbar sein, nicht als nachträgliche Korrektur.
+#### Behoben
 
-#### Live gemessen, komplette Kette über die öffentliche API
+- **`skrPlan` ist Pflicht** in `ImportDatevDto` und `PreviewDatevImportDto`.
+  Ein Default „SKR04" wäre nur eine andere Tarnung desselben Fehlers: ein
+  Aufrufer, der den Rahmen nicht kennt, würde raten — und Raten war der
+  Befund. Lieber 400 mit klarer Meldung.
+- **`getReverseMapping(konto, rahmen)`** — der Kontenrahmen ist Teil des
+  Aufrufs. Rückwärtskompatibilität gibt es bewusst nicht.
+- **Neue Tabelle `skr03-reverse.ts`**, 9 Konten, jede Zeile nennt die
+  GKV-GuV-Zeile, auf die sie sich bezieht. Drei davon (`8050`, `8100`,
+  `7300`) standen im Vorwärts-Mapping auf Positionen, die etwas anderes
+  bedeuten — im Reverse wird auf die tatsächliche GuV-Zeile aufgelöst.
+- **Konten ohne Eintrag landen in `unmappedKonten`.** `skr03.ts` ist eine
+  verkürzte Tabelle ohne Bilanzkonten; diese landen sichtbar in der manuellen
+  Zuordnung, statt still auf eine SKR04-Position zu fallen.
+- **Oberfläche:** Auswahl im DATEV-Import-Dialog, Standard SKR04, mit
+  Hinweistext, dass eine falsche Angabe still auf die falsche GuV-Position
+  bucht.
 
-| # | Schritt | Ergebnis |
-|---|---|---|
-| 0 | `POST /api/bilanz` vor der Archivierung | **201** ✅ |
-| 1 | `PATCH /archivierung` | 200, `archiviertAt` gesetzt |
-| 2 | `POST /api/bilanz` | **409** „Mandant ist archiviert …" |
-| 3 | `PATCH /api/bilanz/:id` | **409** |
-| 4 | `DELETE /api/bilanz/:id` | **409** |
-| 5 | `GET /api/bilanz/:id` | **200, Bestand lesbar** ✅ |
-| 6 | `POST /api/guv` | **409** |
-| 7 | `DELETE /api/mandant/:id` | **409** (Aufbewahrung greift weiter) |
-| 8 | `PATCH /archivierung` ein zweites Mal | **409** |
-| 9 | `PATCH /archivierung/aufheben` | 200, `archiviertAt` = null |
-| 10 | `POST /api/bilanz` nach Aufhebung | **201** ✅ |
+#### Ein zweiter Defekt, gefunden beim Nachrechnen
 
-Schritt 5 ist der entscheidende: **Archiviert heißt nicht unlesbar.**
-Der Bestand bleibt nachvollziehbar — das ist der ganze Zweck. Eine
-Sperre, die auch das Lesen blockiert, hätte die Aufbewahrung nicht
-gelöst, sondern nur den Zugriff darauf.
+`4700`/`4720` („Erlöse aus Beteiligungen") zeigten auf `13.` =
+**„Zinsen und ähnliche AUFWENDUNGEN"** — ein Ertrag auf einer Aufwandszeile.
+Das lag am **SKR04-Pfad** und hätte heute jeden SKR04-Import betroffen.
 
-Schritt 7 ist ebenso wichtig: die Archivierung ist **kein Weg an der
-Aufbewahrung vorbei**. Archiviert und löschbar sind zwei verschiedene
-Dinge.
+Der Fehler war **strukturell unsichtbar**: beide Positionen tragen
+`kategorie: 'FINANZ'`, ein Kategorie-Vergleich kann ihn nicht finden. Nur
+der Vergleich der Position mit der GuV-Zeile deckt ihn auf. Behoben auf `9.`
+(„Erträge aus Beteiligungen").
 
-#### Verdrahtung
+#### Tests
 
-`assertMandantNichtArchiviert()` in `common/utils/mandant-archivierung.ts`,
-aufgerufen in `create`/`update`/`delete` von Bilanz, GuV und Anhang —
-**nicht** in den Lesepfaden. Der Datenzugriff liegt in einem neuen
-`MandantRepository`, weil die drei Services den Archivzustand prüfen
-müssen, ohne das `MandantModule` zu importieren.
+Der Vorgänger-`it.fails` ist durch Tests ersetzt, die die **echten
+Produktionsfunktionen** prüfen — er hatte sich eine `IMPORT_AUFLÖSUNG`-Kopie
+im Spec gebaut. Ein Test, der eine Nachbildung prüft, sagt nichts über das
+Original aus.
 
-Die Fehlermeldung nennt Zeitpunkt, abgelehnte Aktion und den
-Aufhebungsweg — ein Anwender darf vor einer Sackgasse stehen bleiben,
-nicht davor.
+Dazu eine strukturelle Absicherung: jede Reverse-Zuordnung muss auf eine
+existierende GKV-Position zeigen. **Und die Grenze dieser Absicherung steht
+im Test**: sie fängt Tippfehler und Drift, aber **nicht** eine Position, die
+existiert und etwas anderes bedeutet — genau der Fall von `4700`. Strukturelle
+Tests sind eine notwendige, keine hinreichende Bedingung.
 
-23 neue Tests (7 Regel + Verdrahtung, 16 Archivieren/Aufheben).
-Negativprobe: ohne Verdrahtung scheitern alle drei Verdrahtungstests an
-`promise resolved instead of rejecting` — der alte Code schrieb in einen
-archivierten Mandanten hinein.
+59 Tests in dieser Datei. Zwei Negativproben: `4700` zurück auf `13.` →
+Test rot mit `zeigt auf "Zinsen und ähnliche Aufwendungen" — das ist ein
+Aufwand`; SKR03-`7300` zurück auf `12.` → Test rot.
+
+#### Nebenbefund mit eigener Klasse
+
+`e2e/datev-import.e2e.spec.ts` baut in `beforeAll` ein vollständiges
+Nest-Application, benutzt es aber **nie**: `BASE` zeigt auf
+`http://localhost:3000`, und alle Requests gehen per `fetch` an den laufenden
+Dev-Server. Beim Umsetzen dieses Befunds hat das die Änderung am DTO
+vollständig verdeckt — der Test war grün, weil er einen **anderen Prozess**
+geprüft hat. In CI ist ein Server vorhanden, deshalb fällt es dort nicht auf.
+
+Ein Test, der gegen einen neben ihm laufenden Server prüft, prüft den Code
+unter Test nicht. Das ist kein DATEV-Problem, sondern eine Eigenschaft
+dieser Datei; sie ist hier nur dokumentiert, nicht umgebaut.
 
 ---
 

@@ -188,6 +188,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64: Buffer.from('test').toString('base64'),
         mandantId: '00000000-0000-4000-8000-000000000000',
         geschaeftsjahr: 2026,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(401);
@@ -206,6 +207,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64: Buffer.from(buildMiniCsv()).toString('base64'),
         mandantId: loginRes.user.mandanten[0]!.id,
         geschaeftsjahr: 2026,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(403);
@@ -227,6 +229,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64: Buffer.from(buildMiniCsv()).toString('base64'),
         mandantId: mandant.id,
         geschaeftsjahr: 2026,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(200);
@@ -294,6 +297,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64: Buffer.from(lines.join('\r\n')).toString('base64'),
         mandantId: mandant.id,
         geschaeftsjahr: 2026,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(200);
@@ -330,6 +334,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64,
         mandantId: mandant.id,
         geschaeftsjahr: 2026,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(400);
@@ -357,6 +362,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64,
         mandantId: mandant.id,
         geschaeftsjahr: 2026,
+        skrPlan: 'SKR04',
       }),
     });
     // Empty Version wird als Parsing-Error interpretiert → 400
@@ -385,6 +391,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64,
         mandantId: mandant.id,
         geschaeftsjahr,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(201);
@@ -435,6 +442,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64,
         mandantId: mandant.id,
         geschaeftsjahr: 2098,
+        skrPlan: 'SKR04',
         userMappingOverrides: { '9999': '4.' }, // Sammelkonto → "Sonstige betriebliche Erträge"
       }),
     });
@@ -481,6 +489,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64,
         mandantId: mandant.id,
         geschaeftsjahr: 2097,
+        skrPlan: 'SKR04',
         // Kein userMappingOverrides — 9999 wird skipped
       }),
     });
@@ -507,6 +516,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         // Existiert NICHT
         mandantId: '11111111-1111-4111-8111-111111111111',
         geschaeftsjahr: 2096,
+        skrPlan: 'SKR04',
       }),
     });
     expect(res.status).toBe(403); // MandantGuard / assertMandantAccess schlägt vorher zu
@@ -530,7 +540,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
     const firstRes = await fetch(`${BASE}/api/datev-import/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ csvBase64, mandantId: mandant.id, geschaeftsjahr }),
+      body: JSON.stringify({ csvBase64, mandantId: mandant.id, geschaeftsjahr, skrPlan: 'SKR04' }),
     });
     expect(firstRes.status).toBe(201);
 
@@ -538,7 +548,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
     const conflictRes = await fetch(`${BASE}/api/datev-import/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ csvBase64, mandantId: mandant.id, geschaeftsjahr }),
+      body: JSON.stringify({ csvBase64, mandantId: mandant.id, geschaeftsjahr, skrPlan: 'SKR04' }),
     });
     expect(conflictRes.status).toBe(400);
 
@@ -550,6 +560,7 @@ describe('DATEV-Import E2E (M3 Sprint 0)', () => {
         csvBase64,
         mandantId: mandant.id,
         geschaeftsjahr,
+        skrPlan: 'SKR04',
         overwriteExisting: true,
       }),
     });

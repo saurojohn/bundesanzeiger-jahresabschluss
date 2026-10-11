@@ -72,6 +72,9 @@ const STEPS = [
 
 type StepKey = (typeof STEPS)[number];
 
+/** Unterstützte Kontenrahmen — spiegelt `ImportKontenrahmen` im Backend. */
+type SkrPlan = 'SKR03' | 'SKR04';
+
 export function DatevImportDialog({
   geschaeftsjahr,
   onClose,
@@ -84,6 +87,9 @@ export function DatevImportDialog({
   const t = useTranslations();
   const [step, setStep] = useState<StepKey>('upload');
   const [csvBase64, setCsvBase64] = useState<string>('');
+  // Standard ist SKR04 (der verbreitetere Rahmen). Der Wert ist aber
+  // ausdrücklich wählbar — siehe Befund im UploadStep.
+  const [skrPlan, setSkrPlan] = useState<SkrPlan>('SKR04');
   const [fileName, setFileName] = useState<string>('');
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [userOverrides, setUserOverrides] = useState<Record<string, string>>({});
@@ -130,6 +136,7 @@ export function DatevImportDialog({
           csvBase64,
           mandantId,
           geschaeftsjahr,
+          skrPlan,
         }),
       });
       setPreview(result);
@@ -156,6 +163,7 @@ export function DatevImportDialog({
           csvBase64,
           mandantId,
           geschaeftsjahr,
+          skrPlan,
           userMappingOverrides: userOverrides,
           overwriteExisting,
         }),
@@ -237,6 +245,8 @@ export function DatevImportDialog({
               onNext={() => void loadPreview()}
               busy={busy}
               ready={!!csvBase64}
+              skrPlan={skrPlan}
+              setSkrPlan={setSkrPlan}
             />
           )}
 
@@ -306,6 +316,8 @@ function UploadStep({
   onNext,
   busy,
   ready,
+  skrPlan,
+  setSkrPlan,
 }: {
   fileName: string;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -313,6 +325,8 @@ function UploadStep({
   onNext: () => void;
   busy: boolean;
   ready: boolean;
+  skrPlan: SkrPlan;
+  setSkrPlan: (p: SkrPlan) => void;
 }) {
   const t = useTranslations();
   return (
@@ -340,6 +354,30 @@ function UploadStep({
             {t('datevImport.upload.selected')}: <strong>{fileName}</strong>
           </p>
         )}
+      </div>
+      {/* Kontenrahmen: Pflicht, seit der Import ihn nicht mehr erraten kann.
+          BEFUND 2026-10-10 — ohne diese Angabe lief eine SKR03-Datei durch
+          die SKR04-Auflösung und buchte z. B. Zinsaufwand als Versicherung,
+          ohne Fehlermeldung. */}
+      <div className="mt-4">
+        <label
+          htmlFor="datev-skr-plan"
+          className="block text-sm font-medium text-slate-700 mb-1"
+        >
+          {t('datevImport.upload.kontenrahmen')}
+        </label>
+        <select
+          id="datev-skr-plan"
+          value={skrPlan}
+          onChange={(e) => setSkrPlan(e.target.value as SkrPlan)}
+          className="w-full px-3 py-2 border border-slate-300 rounded text-sm bg-white"
+        >
+          <option value="SKR04">{t('datevImport.upload.skr04')}</option>
+          <option value="SKR03">{t('datevImport.upload.skr03')}</option>
+        </select>
+        <p className="text-xs text-slate-500 mt-1">
+          {t('datevImport.upload.kontenrahmenHint')}
+        </p>
       </div>
       <div className="mt-6 flex justify-end gap-2">
         <button

@@ -58,7 +58,7 @@ import type {
   ReverseMapping,
 } from '../mappings/skr04-reverse.types';
 import type { PreviewDatevImportDto } from '../dto/preview-datev-import.dto';
-import type { ImportDatevDto } from '../dto/import-datev.dto';
+import type { ImportDatevDto, ImportKontenrahmen } from '../dto/import-datev.dto';
 import type {
   ImportPreviewDto,
   ImportResultDto,
@@ -118,11 +118,12 @@ export class DatevImportService {
     );
 
     const usedKonten = [...saldovortrag.keys()];
-    const unmapped = getUnmappedKonten(usedKonten);
+    const unmapped = getUnmappedKonten(usedKonten, dto.skrPlan);
 
     const mappedPositionen = this.buildMappedPositionen(
       saldovortrag,
       undefined,
+      dto.skrPlan,
     );
 
     return {
@@ -161,6 +162,7 @@ export class DatevImportService {
     const plan = this.buildImportPlan(
       saldovortrag,
       dto.userMappingOverrides ?? {},
+      dto.skrPlan,
     );
 
     // Mandant-Existenz prüfen
@@ -276,7 +278,7 @@ export class DatevImportService {
         guvPositionenCount: plan.guvPositionen.length,
         mappedCount: plan.mappedCount,
         skippedCount: plan.skippedCount,
-        unmappedKontenCount: getUnmappedKonten([...saldovortrag.keys()]).length,
+        unmappedKontenCount: getUnmappedKonten([...saldovortrag.keys()], dto.skrPlan).length,
         userOverridesCount: dto.userMappingOverrides
           ? Object.keys(dto.userMappingOverrides).length
           : 0,
@@ -340,10 +342,11 @@ export class DatevImportService {
   private buildMappedPositionen(
     saldovortrag: Map<string, SaldovortragEntry>,
     userOverrides: Record<string, string> | undefined,
+    rahmen: ImportKontenrahmen,
   ): MappedPosition[] {
     const result: MappedPosition[] = [];
     for (const entry of saldovortrag.values()) {
-      const autoMapping = getReverseMapping(entry.konto);
+      const autoMapping = getReverseMapping(entry.konto, rahmen);
       const userOverride = userOverrides?.[entry.konto];
 
       let mapping: ReverseMapping | null = autoMapping;
@@ -467,6 +470,7 @@ export class DatevImportService {
   private buildImportPlan(
     saldovortrag: Map<string, SaldovortragEntry>,
     userOverrides: Record<string, string>,
+    rahmen: ImportKontenrahmen,
   ): ImportPlan {
     const bilanzPositionen: BilanzPositionInput[] = [];
     const guvPositionen: GuVPositionInput[] = [];
@@ -485,7 +489,7 @@ export class DatevImportService {
         continue;
       }
 
-      const autoMapping = getReverseMapping(entry.konto);
+      const autoMapping = getReverseMapping(entry.konto, rahmen);
       const userOverride = userOverrides[entry.konto];
 
       let mapping: ReverseMapping | null = null;

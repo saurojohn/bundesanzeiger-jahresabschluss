@@ -46,10 +46,17 @@ export const SKR04_REVERSE_ERTRAG: readonly ReverseMapping[] = [
     notes: 'Kann auch als Umsatzerlöse interpretiert werden — manuell prüfen.',
   },
   {
+    // BEFUND 2026-10-10: stand auf `13.` = "Zinsen und ähnliche AUFWENDUNGEN".
+    // Das ist eine Aufwandsposition — Beteiligungserträge sind ein ERTRAG.
+    // In `HGB_GUV_GKV` ist der Ertrag die Position `9.`
+    // ("Erträge aus Beteiligungen"). Der Fehler war strukturell unsichtbar:
+    // beide Positionen tragen `kategorie: 'FINANZ'`, ein Kategorie-Vergleich
+    // kann ihn also nicht finden. Nur der Vergleich der POSITION mit der
+    // GuV-Zeile deckt ihn auf.
     datevKonto: '4700',
     datevKontoName: 'Erlöse aus Beteiligungen (steuerfrei § 8b KStG)',
-    hgbPosition: '13.',
-    hgbKontoNr: 'Beteiligungserträge',
+    hgbPosition: '9.',
+    hgbKontoNr: 'Erträge aus Beteiligungen',
     kategorie: 'FINANZ',
     side: 'NEUTRAL',
     isPflicht: false,
@@ -58,8 +65,8 @@ export const SKR04_REVERSE_ERTRAG: readonly ReverseMapping[] = [
   {
     datevKonto: '4720',
     datevKontoName: 'Erträge aus Beteiligungen (steuerfrei)',
-    hgbPosition: '13.',
-    hgbKontoNr: 'Beteiligungserträge',
+    hgbPosition: '9.',
+    hgbKontoNr: 'Erträge aus Beteiligungen',
     kategorie: 'FINANZ',
     side: 'NEUTRAL',
     isPflicht: false,

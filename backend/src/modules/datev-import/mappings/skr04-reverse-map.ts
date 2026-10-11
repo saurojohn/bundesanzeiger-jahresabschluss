@@ -1,19 +1,27 @@
 /**
- * Aggregator + Lookup für SKR04 → HGB Reverse-Mapping.
+ * Aggregator + Lookup für SKR → HGB Reverse-Mapping, RAHMENABHÄNGIG.
  *
- * Kombiniert die drei Mapping-Tabellen (Ertrag/Aufwand/Bilanz) zu einem
- * konsolidierten Lookup mit O(1)-Zugriff pro DATEV-Konto.
+ * BEFUND 2026-10-10: Es gab nur eine SKR04-Tabelle und `getReverseMapping`
+ * kannte keinen Kontenrahmen. Jede DATEV-Datei — auch SKR03 — lief dadurch
+ * durch die SKR04-Auflösung. Bei Konten, die in beiden Rahmen vorkommen und
+ * dort etwas anderes bedeuten, war das ein still falsch gebuchter Betrag:
  *
- * Wichtige Eigenschaften:
- *   - Strikte 1:1-Zuordnung: jedes DATEV-Konto hat höchstens EIN Reverse-Mapping.
- *     Falls ein DATEV-Konto in mehreren Tabellen vorkommt, gewinnt der erste
- *     Treffer (Ertrag > Aufwand > Bilanz).
- *   - Confidence-Score dient der UI-Anzeige (Auto-Mapping > 0.8 ohne Confirm).
+ *   7300  SKR03 "Zinsaufwendungen"  -> 13. Zinsen und ähnliche Aufwendungen
+ *         SKR04 "Versicherungen"     ->  8. Sonstige betriebliche Aufwendungen
+ *
+ * Der Kontenrahmen ist deshalb jetzt Teil des Aufrufs. Er ist Pflicht, nicht
+ * optional: Raten war der Fehler.
+ *
+ * Beide Tabellen zielen auf GKV (`HGB_GUV_GKV`), siehe `skr03-reverse.ts`.
  */
 import type { ReverseMapping } from './skr04-reverse.types';
 import { SKR04_REVERSE_ERTRAG } from './skr04-reverse-ertrag';
 import { SKR04_REVERSE_AUFWAND } from './skr04-reverse-aufwand';
 import { SKR04_REVERSE_BILANZ } from './skr04-reverse-bilanz';
+import { SKR03_REVERSE_MAPPINGS, SKR03_REVERSE_BY_KONTO } from './skr03-reverse';
+
+/** Unterstützte Kontenrahmen für den Import. */
+export type ImportKontenrahmen = 'SKR03' | 'SKR04';
 
 /**
  * Aggregierte Reverse-Mapping-Tabelle (alle Kategorien).
@@ -40,16 +48,27 @@ export const SKR04_REVERSE_BY_KONTO: ReadonlyMap<string, ReverseMapping> = (() =
 })();
 
 /**
- * Liefert das Reverse-Mapping für ein DATEV-Konto (z. B. "4400" → Erloes-Mapping).
+ * Liefert das Reverse-Mapping für ein DATEV-Konto im angegebenen Rahmen.
  *
- * @returns ReverseMapping oder null, wenn kein Mapping existiert.
+ * @param datevKonto  z. B. "7300"
+ * @param rahmen      SKR03 oder SKR04 — Pflicht. Ohne diesen Parameter
+ *                    wüsste die Funktion nicht, welches Konto gemeint ist.
+ * @returns ReverseMapping oder null, wenn der Rahmen das Konto nicht kennt.
  */
-export function getReverseMapping(datevKonto: string): ReverseMapping | null {
+export function getReverseMapping(
+  datevKonto: string,
+  rahmen: ImportKontenrahmen,
+): ReverseMapping | null {
   // Normalisierung: führende Nullen entfernen, damit "1800" === "0001800"
   const normalized = datevKonto.replace(/^0+/, '') || '0';
+  const tabelle =
+    rahmen === 'SKR03' ? SKR03_REVERSE_BY_KONTO : SKR04_REVERSE_BY_KONTO;
+
   return (
-    SKR04_REVERSE_BY_KONTO.get(datevKonto) ??
-    SKR04_REVERSE_BY_KONTO.get(normalized) ??
+    tabelle.get(datevKonto) ??
+    tabelle.get(normalized) ??
+    // Manche DATEV-Dateien schreiben vierstellig "0730" statt "730".
+    tabelle.get(datevKonto.padStart(4, '0')) ??
     null
   );
 }
@@ -57,8 +76,8 @@ export function getReverseMapping(datevKonto: string): ReverseMapping | null {
 /**
  * Liefert alle verfügbaren Reverse-Mappings (für Admin-UIs).
  */
-export function getAllReverseMappings(): ReverseMapping[] {
-  return [...SKR04_REVERSE_MAPPINGS];
+export function getAllReverseMappings(rahmen: ImportKontenrahmen = 'SKR04'): ReverseMapping[] {
+  return rahmen === 'SKR03' ? [...SKR03_REVERSE_MAPPINGS] : [...SKR04_REVERSE_MAPPINGS];
 }
 
 /**
@@ -71,13 +90,18 @@ export function getReverseMappingsByKategorie(
 }
 
 /**
- * Liefert die Liste der DATEV-Konten, die KEIN Auto-Mapping haben.
+ * Liefert die Liste der DATEV-Konten, die im gewählten Rahmen KEIN
+ * Auto-Mapping haben.
  *
  * @param usedKonten Liste der im Import vorkommenden DATEV-Konten.
+ * @param rahmen     SKR03 oder SKR04 — Pflicht (siehe `getReverseMapping`).
  * @returns Liste der Konten ohne Auto-Mapping (müssen manuell zugeordnet werden).
  */
-export function getUnmappedKonten(usedKonten: string[]): string[] {
-  return usedKonten.filter((konto) => getReverseMapping(konto) === null);
+export function getUnmappedKonten(
+  usedKonten: string[],
+  rahmen: ImportKontenrahmen,
+): string[] {
+  return usedKonten.filter((konto) => getReverseMapping(konto, rahmen) === null);
 }
 
 /**

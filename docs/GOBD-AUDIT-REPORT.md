@@ -1438,6 +1438,58 @@ archivieren → Kennzeichnung → **Persistenz nach Reload** → aufheben →
 aufräumen. Der Reload-Schritt ist der wichtige: er trennt gespeicherten
 Zustand von bloßem UI-Zustand.
 
+#### 15. Refresh-Token wird nicht rotiert (hoch) — dokumentiert, NICHT behoben
+
+Eigenständige Recherche am Auth-Pfad, danach bewusst nicht umgesetzt.
+
+**Der Befund.** `refresh()` gibt am Ende zurück:
+
+```ts
+return {
+  accessToken,
+  refreshToken: dto.refreshToken,   // ← derselbe Token
+  ...
+};
+```
+
+Damit gilt:
+
+- **Keine Rotation.** Ein gestohlener Refresh-Token bleibt bis zum Ablauf
+  gültig. Voreinstellung `JWT_REFRESH_TOKEN_TTL` = **7 Tage**.
+- **Keine Wiederverwendungserkennung.** Wird ein Token nach dem Ablauf
+  erneut eingespielt, ist nichts erkennbar — es gibt weder ein
+  Token-Familien-Feld noch eine Historie im `UserSession`-Modell.
+- **Kein Widerrufssignal.** Wird ein Refresh-Token kompromittiert, hilft
+  nur, alle Sessions des Users zu widerrufen (`logout` ohne
+  `sessionId`).
+
+Der Rest des Pfads ist korrekt: `revokedAt`, `expiresAt` und
+`user.isActive` werden geprüft, der Token wird nur als SHA-256-Hash
+gespeichert (48 Bytes Zufall, base64url). Der Fehler ist nicht die
+Speicherung, sondern die fehlende Rotation.
+
+**Warum hier nicht umgesetzt.** Drei Gründe, die gegen eine
+Spontan-Änderung sprechen:
+
+1. **Client-Abstimmung nötig.** Der Refresh-Token wird im **Body**
+   übergeben (`@Body() body: { refreshToken?: string }`), nicht als
+   Cookie. Eine Rotation ist für den Client nur dann unsichtbar, wenn er
+   den neuen Token zuverlässig speichert. Das ist eine Änderung an der
+   Sitzungsverwaltung des Frontends.
+2. **Migration für echte Erkennung.** Wiederverwendungserkennung braucht
+   eine Token-Familie oder eine Historie — das `UserSession`-Modell hat
+   heute nur `refreshTokenHash` (unique). Ohne diese Struktur ist
+   Rotation allein nur halb wirksam: ein kopierter Token bleibt gültig,
+   solange die Session lebt.
+3. **Es ist eine Sicherheitsentscheidung, keine Korrektheitsfrage.**
+   Rotation mit Reuse-Erkennung, kürzere TTL oder ein
+   HttpOnly-Cookie sind drei verschiedene Antworten auf dieselbe Frage —
+   mit unterschiedlichen Folgen für den Anwender (erneute Anmeldung auf
+   anderen Geräten).
+
+**Zwischendokumentation:** Der Befund ist hier festgehalten, damit er
+beim nächsten Sicherheits-Review nicht verloren geht.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die

@@ -946,14 +946,41 @@ Aufwand`; SKR03-`7300` zurück auf `12.` → Test rot.
 
 `e2e/datev-import.e2e.spec.ts` baut in `beforeAll` ein vollständiges
 Nest-Application, benutzt es aber **nie**: `BASE` zeigt auf
-`http://localhost:3000`, und alle Requests gehen per `fetch` an den laufenden
-Dev-Server. Beim Umsetzen dieses Befunds hat das die Änderung am DTO
-vollständig verdeckt — der Test war grün, weil er einen **anderen Prozess**
-geprüft hat. In CI ist ein Server vorhanden, deshalb fällt es dort nicht auf.
+`http://localhost:3000`, und alle Requests gehen per `fetch` an den
+laufenden Server. Beim Umsetzen des Befunds weiter oben hat das die
+Änderung am DTO vollständig verdeckt — der Test war grün, weil er einen
+**anderen Prozess** prüfte, noch mit dem alten Code.
 
-Ein Test, der gegen einen neben ihm laufenden Server prüft, prüft den Code
-unter Test nicht. Das ist kein DATEV-Problem, sondern eine Eigenschaft
-dieser Datei; sie ist hier nur dokumentiert, nicht umgebaut.
+**Korrektur der Deutung, 2026-10-12.** Diese Notiz behauptete zunächst,
+ein Test gegen einen neben ihm laufenden Server prüfe den Code unter
+Test nicht. Das ist zu weit gefasst:
+
+- Der CI-Job startet **bewusst** einen echten Server
+  (`nohup npx ts-node src/main.ts`), und die Specs prüfen ihn per HTTP.
+  Damit ist die Abdeckung **echtes End-to-End** — inklusive `main.ts`-
+  Bootstrap, globaler Pipes, Guards, Interceptor, CORS und
+  Exception-Filtern. Das ist mehr, als `app.inject()` auf einer
+  TestingModule liefern würde.
+- Der CI-Lauf bestätigt das: 683/683 grün.
+
+Richtig ist:
+
+1. Der `createNestApplication()`-Block in 16 von 18 Specs ist **toter
+   Code**. Er deklariert `ValidationPipe` und den globalen Präfix
+   **erneut von Hand** — eine Nachbildung der `main.ts`-Konfiguration.
+   Ändert sich `main.ts` (etwa eine neue Pipe oder Interceptor-Option),
+   prüfen die Specs weiter die alte Konfiguration, ohne zu warnen.
+2. Die Specs hängen an einem Server auf `:3000`. Der CI-Schritt
+   „Backend starten" muss mit der Suite mitgehen — sonst schlägt die
+   ganze Datei mit `ECONNREFUSED` fehl (gemessen: 112 rote Tests, als
+   der Server fehlte).
+
+Der oben genannte Satz „ein Test gegen einen neben ihm laufenden
+Server prüft den Code unter Test nicht" ist damit **zurückgenommen**:
+Getestet wird der Code, nur über einen realen HTTP-Server statt
+in-process. Zu Recht ist der Widerspruch zwischen dem toten
+`beforeAll`-Block und dem realen Serverpfad — er hat den Test hier
+genau eine lokale Änderung durchsehen lassen.
 
 ---
 

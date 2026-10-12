@@ -181,7 +181,14 @@
       "edit": "Mandant bearbeiten",
       "delete": "Mandant löschen",
       "deleteConfirm": "Sind Sie sicher, dass Sie diesen Mandanten löschen möchten? Diese Aktion kann nicht rückgängig gemacht werden."
-    }
+    },
+    "archive": "Archivieren",
+    "unarchive": "Archiv aufheben",
+    "archived": "Archiviert",
+    "archivedHint": "Archiviert seit {date}. Es werden keine neuen Belege mehr angelegt; der Bestand bleibt zur Nachvollziehbarkeit lesbar.",
+    "deleteHint": "Nur möglich, wenn keine Buchhaltungsdaten vorhanden sind. Andernfalls bitte archivieren — die Aufbewahrung nach § 147 AO untersagt das Löschen.",
+    "confirmArchive": "'{name}' archivieren? Es werden keine neuen Belege mehr angelegt. Der Bestand bleibt zur Nachvollziehbarkeit lesbar.",
+    "confirmUnarchive": "Archivierung von '{name}' aufheben? Es können wieder Belege angelegt werden."
   },
   "bilanz": {
     "title": "Bilanz",

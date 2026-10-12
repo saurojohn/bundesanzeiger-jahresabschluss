@@ -1409,6 +1409,35 @@ ein archivierter Mandant noch geprüft und kommentiert werden darf, ist
 eine fachliche Frage (ein Prüfer muss einen Altbestand kommentieren
 können), keine logische. Als offen dokumentiert.
 
+#### 14. Die Archivierung war im Frontend nicht erreichbar (Feature-Lücke)
+
+Kein Defekt, sondern eine unfertige Funktion: `PATCH
+/api/mandant/:id/archivierung` existierte seit dem 2026-10-09, aber
+
+- `MandantSummary` im Frontend hatte **kein** `archiviertAt` — das Feld kam
+  aus der API, war aber nicht typisiert,
+- es gab keinen Knopf, keinen Weg, sie auszulösen,
+- ein archivierter Mandant war für die Oberfläche nicht als solcher
+  erkennbar.
+
+Damit war die Antwort auf die Produktfrage „was passiert mit einem
+Mandanten, der weg muss?" im Produkt nicht auffindbar — der Nutzer, dem
+das Löschen mit 409 beantwortet wird, bekam keinen Weg weiter.
+
+Ergänzt: Archivieren/Aufheben in der Mandantenverwaltung, Kennzeichnung
+archivierter Mandanten mit Zeitstempel im Titel, Tooltip am Lösen-Knopf,
+der auf die Aufbewahrungspflicht hinweist.
+
+Der Kennzeichnung kommt eigene Bedeutung zu: ohne sie wäre nicht
+erkennbar, **warum** eine Eingabe mit 409 abgelehnt wird. Ein
+Fehlgeschlagener Schreibvorgang an einem archivierten Mandant sieht
+sonst wie ein Fehler aus.
+
+Playwright `e2e/mandant-archiv.spec.ts` prüft den vollen Weg: anlegen →
+archivieren → Kennzeichnung → **Persistenz nach Reload** → aufheben →
+aufräumen. Der Reload-Schritt ist der wichtige: er trennt gespeicherten
+Zustand von bloßem UI-Zustand.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die

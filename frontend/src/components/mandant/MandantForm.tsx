@@ -32,6 +32,13 @@ type MandantSummary = {
   steuernummer: string | null;
   ustId: string | null;
   groessenklasse: string;
+  /**
+   * BEFUND 2026-10-09: Das Feld stand im API-Response, war hier aber nicht
+   * typisiert und wurde nirgends angezeigt. Der Archivzustand war damit
+   * für die Oberfläche unsichtbar — der Anwender konnte nicht erkennen,
+   * dass ein Mandant nicht mehr fortgeschrieben wird.
+   */
+  archiviertAt?: string | null;
 };
 
 type MandantListResponse = MandantSummary[] | { items: MandantSummary[] };
@@ -197,6 +204,35 @@ export function MandantForm() {
     }
   }
 
+  /**
+   * Archivieren / Archiv aufheben.
+   *
+   * Ersetzt NICHT das Löschen: der Bestand eines Mandanten mit
+   * Buchhaltungsdaten darf nach § 147 AO nicht vernichtet werden. Archiv
+   * heißt — keine neuen Belege mehr, Bestand bleibt lesbar.
+   */
+  async function handleArchivieren(
+    id: string,
+    name: string,
+    archiviert: boolean,
+  ): Promise<void> {
+    const frage = archiviert
+      ? t('mandant.confirmUnarchive', { name })
+      : t('mandant.confirmArchive', { name });
+    if (!window.confirm(frage)) return;
+    setError(null);
+    try {
+      const token = getAccessToken();
+      await apiFetch(`/mandant/${id}/archivierung${archiviert ? '/aufheben' : ''}`, {
+        method: 'PATCH',
+        accessToken: token ?? undefined,
+      });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   const inputCls =
     'mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
   const labelCls = 'block text-sm font-medium text-slate-700';
@@ -263,13 +299,45 @@ export function MandantForm() {
                       </td>
                       <td className="px-4 py-2 text-slate-700">{m.groessenklasse}</td>
                       <td className="px-4 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete(m.id, m.firmenname)}
-                          className="text-sm text-red-600 hover:text-red-800"
-                        >
-                          {t('common.delete')}
-                        </button>
+                        {/* Ein archivierter Mandant wird gekennzeichnet: er
+                            ist nicht fortgeschreibbar. Ohne diese Spur
+                            wäre nicht erkennbar, warum eine Eingabe
+                            mit 409 abgelehnt wird. */}
+                        {m.archiviertAt ? (
+                          <span
+                            className="mr-3 inline-flex items-center rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700"
+                            title={t('mandant.archivedHint', {
+                              date: new Date(m.archiviertAt).toLocaleString('de-DE'),
+                            })}
+                          >
+                            {t('mandant.archived')}
+                          </span>
+                        ) : null}
+                        <div className="inline-flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleArchivieren(
+                                m.id,
+                                m.firmenname,
+                                Boolean(m.archiviertAt),
+                              )
+                            }
+                            className="text-sm text-slate-600 hover:text-slate-900"
+                          >
+                            {m.archiviertAt
+                              ? t('mandant.unarchive')
+                              : t('mandant.archive')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(m.id, m.firmenname)}
+                            className="text-sm text-red-600 hover:text-red-800"
+                            title={t('mandant.deleteHint')}
+                          >
+                            {t('common.delete')}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

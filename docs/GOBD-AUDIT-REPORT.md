@@ -1385,6 +1385,30 @@ Live nach der Korrektur: `kanzlei-admin` sieht Einträge aus **allen
 drei** Mandanten (3 Einträge, 3 verschiedene Mandant-IDs) statt aus
 einem.
 
+#### 13. Die Konsolidierung umging die Archivsperre (hoch) — ein Loch in einer eigenen Woche alten Fix
+
+Der Archiv-Endpunkt `DELETE /api/mandant/:id` hatte den Satz „kein
+Löschen, sondern archivieren" eingeführt und die Sperre in **Bilanz, GuV,
+Anhang und DATEV-Import** verdrahtet. Der Konsolidierungs-Pfad fehlte —
+und dort legt `applyKonsolidierung` eine neue Konzern-Bilanz **und** eine
+Konzern-GuV an (`createWithPositionen`).
+
+Ein archivierter Mandant bekam damit doch wieder neue Dokumente. Das ist
+kein Ermessen des Konsolidierungs-Pfads, sondern ein **Widerspruch zur
+selbst geschriebenen Regel**. Geprüft wurde zuerst, ob es überhaupt ein
+Loch ist: `POST /api/public/v1/banz-submissions` liefert 501 und legt
+nichts an — dort ist keins. `konsolidierung`, `signatur` und `wp` prüfen
+alle drei kein `archiviertAt`.
+
+Behoben für Mutter **und** Tochter: nur die Mutter zu sperren wäre über
+eine Seitenlücke umgehbar.
+
+**Für `signatur` und `wp` bewusst NICHT entschieden.** Beide erzeugen
+keine neuen Belege — sie beglaubigen oder kommentieren Bestehendes. Ob
+ein archivierter Mandant noch geprüft und kommentiert werden darf, ist
+eine fachliche Frage (ein Prüfer muss einen Altbestand kommentieren
+können), keine logische. Als offen dokumentiert.
+
 #### Zwei eigene Fehler beim Nachprüfen des Reviews
 
 Beides ist hier festgehalten, weil beide Tests erzeugt haben, die

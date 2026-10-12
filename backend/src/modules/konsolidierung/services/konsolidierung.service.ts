@@ -29,6 +29,7 @@ import type {
   KonsolidierungsBuchungDto,
   KonzernSaldenDto,
 } from '../dto/konsolidierung-response.dto';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 export interface KonsolidierungServiceContext {
   ip?: string | null;
@@ -83,17 +84,37 @@ export class KonsolidierungService {
     // Kanzlei des Mutter-Mandanten ermitteln.
     const mutterMandant = await this.prisma.mandant.findUnique({
       where: { id: dto.mutterMandantId },
-      select: { id: true, kanzleiId: true },
+      select: { id: true, kanzleiId: true, firmenname: true, archiviertAt: true },
     });
     if (!mutterMandant) {
       throw new NotFoundException('Mutter-Mandant nicht gefunden');
     }
 
+    // BEFUND 2026-10-12: Die Archivsperre war in Bilanz, GuV, Anhang und
+    // DATEV-Import verdrahtet — hier nicht. `applyKonsolidierung` legt
+    // aber neue Konzern-Bilanz UND Konzern-GuV an (createWithPositionen).
+    // Ein archivierter Mandant bekam damit doch wieder neue Dokumente —
+    // ein Widerspruch zur dokumentierten Regel der Archivierung
+    // ("es entstehen keine neuen Belege mehr").
+    //
+    // Das ist KEINE neue Fachfrage, sondern die Durchsetzung einer bereits
+    // entschiedenen Regel. Für die TOCHTER gilt dasselbe.
+    assertMandantNichtArchiviert(
+      mutterMandant.archiviertAt,
+      'Konsolidierungseinheit anlegen',
+    );
+
     // Prüfe: alle Tochtermandanten existieren und sind in derselben Kanzlei.
     const tochtermandanten = await this.prisma.mandant.findMany({
       where: { id: { in: dto.tochterMandantIds } },
-      select: { id: true, kanzleiId: true },
+      select: { id: true, kanzleiId: true, firmenname: true, archiviertAt: true },
     });
+    for (const t of tochtermandanten) {
+      assertMandantNichtArchiviert(
+        t.archiviertAt,
+        'Konsolidierungseinheit anlegen',
+      );
+    }
     if (tochtermandanten.length !== dto.tochterMandantIds.length) {
       throw new NotFoundException('Mindestens ein Tochtermandant nicht gefunden');
     }

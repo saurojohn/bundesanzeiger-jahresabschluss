@@ -6,7 +6,7 @@
  *   Die e2e-Specs legen Buchungen mit FESTEN Geschäftsjahren an (2024/2025).
  *   Die Tabellen haben einen Unique-Constraint auf (mandantId, geschaeftsjahr).
  *   Ein zweiter `vitest run` auf derselben DB kollidiert deshalb mit
- *     400 "Für diesen Mandanten existiert bereits eine Bilanz für das
+ *     409 "Für diesen Mandanten existiert bereits eine Bilanz für das
  *        Geschäftsjahr 2024."
  *   und die Fehlerzahl wächst von Lauf zu Lauf (gemessen: 104/22 im ersten
  *   Lauf, 112/14 im zweiten). Eine grüne Zahl war damit ein Artefakt des

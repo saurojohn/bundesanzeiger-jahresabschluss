@@ -142,6 +142,46 @@ describe('GuV E2E (Sprint 1.x)', () => {
   });
 
   // ===========================================================================
+  // 3b. POST /api/guv mit bereits belegtem GJ → 409 (Konflikt, nicht 400)
+  // ===========================================================================
+  it('POST /api/guv mit bereits belegtem Geschaeftsjahr → 409 Conflict', async () => {
+    const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
+    const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Beispiel GmbH');
+    if (!mandant) throw new Error('Beispiel GmbH nicht gefunden');
+    const headers = await authHeaders(loginRes.accessToken);
+
+    const koerper = {
+      mandantId: mandant.id,
+      geschaeftsjahr: 2076,
+      verfahren: 'GKV',
+      positionen: [
+        { kontonummer: '1.', bezeichnung: 'Umsatzerloese', kategorie: 'ERLOES', betragAktuell: 1000, reihenfolge: 1 },
+        { kontonummer: '5a.', bezeichnung: 'Material', kategorie: 'MATERIAL', betragAktuell: 400, reihenfolge: 2 },
+      ],
+    };
+
+    const erst = await fetch(`${BASE}/api/guv`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(koerper),
+    });
+    expect(erst.status, 'erster Anlauf muss 201 sein').toBe(201);
+
+    const zweit = await fetch(`${BASE}/api/guv`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(koerper),
+    });
+
+    // Der Unique-Constraint (mandantId, geschaeftsjahr) ist ein Zustands-
+    // konflikt, keine fehlerhafte Anfrage: 409 nach RFC 9110 §15.5.10.
+    // Vorher 400 — und ungetestet, weshalb es niemand aufgefallen ist.
+    expect(zweit.status).toBe(409);
+    const body = (await zweit.json()) as { message: string };
+    expect(body.message).toContain('existiert bereits');
+  });
+
+  // ===========================================================================
   // 4. POST /api/guv mit UKV → 201
   // ===========================================================================
   it('POST /api/guv mit UKV → 201', async () => {

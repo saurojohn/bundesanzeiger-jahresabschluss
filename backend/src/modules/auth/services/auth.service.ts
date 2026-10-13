@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'node:crypto';
+import { MANDANTEN_SORTIERUNG } from '../../../common/utils/mandanten-sortierung';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/services/audit.service';
 import { LoginDto } from '../dto/login.dto';
@@ -77,6 +78,7 @@ export class AuthService {
       include: {
         mandantRoles: {
           where: { revokedAt: null },
+          orderBy: MANDANTEN_SORTIERUNG,
           include: { mandant: { select: { id: true, firmenname: true } } },
         },
       },
@@ -173,6 +175,7 @@ export class AuthService {
           include: {
             mandantRoles: {
               where: { revokedAt: null },
+              orderBy: MANDANTEN_SORTIERUNG,
               include: { mandant: { select: { id: true, firmenname: true } } },
             },
           },
@@ -287,6 +290,7 @@ export class AuthService {
       include: {
         mandantRoles: {
           where: { revokedAt: null },
+          orderBy: MANDANTEN_SORTIERUNG,
           include: { mandant: { select: { id: true, firmenname: true } } },
         },
       },
@@ -310,6 +314,7 @@ export class AuthService {
   async getMandantenAccessibleByUser(userId: string): Promise<AuthMandantDto[]> {
     const roles = await this.prisma.userMandantRole.findMany({
       where: { userId, revokedAt: null },
+      orderBy: MANDANTEN_SORTIERUNG,
       include: { mandant: { select: { id: true, firmenname: true } } },
     });
     return roles.map((r) => ({
@@ -331,6 +336,7 @@ export class AuthService {
       include: {
         mandantRoles: {
           where: { revokedAt: null },
+          orderBy: MANDANTEN_SORTIERUNG,
           include: { mandant: { select: { id: true, firmenname: true } } },
         },
       },

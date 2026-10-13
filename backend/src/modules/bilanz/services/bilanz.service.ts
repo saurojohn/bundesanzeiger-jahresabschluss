@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -94,6 +95,13 @@ export class BilanzService {
 
     // Eindeutigkeit (mandantId, geschaeftsjahr) — Repository wirft
     // einen Prisma-Fehler, das fangen wir hier ab.
+    //
+    // 409 statt 400 (2026-10-13): Die Anfrage war wohlgeformt, sie stiess nur
+    // mit dem vorhandenen Zustand zusammen (RFC 9110 §15.5.10). 400 bedeutet
+    // "deine Eingabe ist falsch" — das fuehrt bei einem Klick auf "Bilanz
+    // anlegen" in die Irre, weil der Nutzer seine Eingaben prueft statt die
+    // Frage zu beantworten, ob das Jahr schon belegt ist. Dieselbe Umstellung
+    // gilt fuer GuV, Anhang und Konsolidierung.
     let bilanz: BilanzEntity;
     try {
       bilanz = await this.bilanzRepository.createWithPositionen({
@@ -116,7 +124,7 @@ export class BilanzService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        throw new BadRequestException(
+        throw new ConflictException(
           `Für diesen Mandanten existiert bereits eine Bilanz für das Geschäftsjahr ${dto.geschaeftsjahr}.`,
         );
       }

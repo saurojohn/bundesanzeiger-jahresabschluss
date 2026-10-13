@@ -195,7 +195,47 @@ describe('Bilanz E2E (Sprint 1.x)', () => {
   });
 
   // ===========================================================================
-  // 6. POST /api/bilanz mit Aktiva != Passiva → 201 + Warning
+  // 6b. POST /api/bilanz mit bereits belegtem GJ → 409 (Konflikt, nicht 400)
+  // ===========================================================================
+  it('POST /api/bilanz mit bereits belegtem Geschaeftsjahr → 409 Conflict', async () => {
+    const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
+    const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Beispiel GmbH');
+    if (!mandant) throw new Error('Beispiel GmbH nicht gefunden');
+    const headers = await authHeaders(loginRes.accessToken);
+
+    const koerper = {
+      mandantId: mandant.id,
+      geschaeftsjahr: 2075,
+      positionen: [
+        { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+        { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+      ],
+    };
+
+    const erst = await fetch(`${BASE}/api/bilanz`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(koerper),
+    });
+    expect(erst.status, 'erster Anlauf muss 201 sein').toBe(201);
+
+    const zweit = await fetch(`${BASE}/api/bilanz`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(koerper),
+    });
+
+    // 409, nicht 400: Die Anfrage ist wohlgeformt und stoesst nur mit dem
+    // vorhandenen Zustand zusammen (RFC 9110 §15.5.10). Bis 2026-10-13 stand
+    // hier 400 — und weil KEIN Test diesen Status je behauptet hat, fiel die
+    // Aenderung nicht auf. Genau dieser Test schliesst die Luecke.
+    expect(zweit.status).toBe(409);
+    const body = (await zweit.json()) as { message: string };
+    expect(body.message).toContain('existiert bereits');
+  });
+
+  // ===========================================================================
+  // 7. POST /api/bilanz mit Aktiva != Passiva → 201 + Warning
   // ===========================================================================
   it('POST /api/bilanz mit unausgeglichenem Saldo → 201 + warnungen', async () => {
     const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');

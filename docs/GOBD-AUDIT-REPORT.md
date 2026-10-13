@@ -1586,6 +1586,182 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 ---
 
+### Nachtrag 2026-10-13 (Nachtrag 12): Der Mandant-Picker der WP-Seite war wirkungslos
+
+**Befund:** `WPView` haelt den gewaehlten Mandanten nur im React-State und
+schreibt `localStorage` nicht. `apiFetch` setzt `x-mandant-id` aber
+**aus `localStorage`**, und der Header hat im Backend Vorrang vor dem
+Query-Parameter. Nach einem Wechsel im Picker stand der neue Mandant im
+Feld, geladen wurde aber der Bestand des Header-Mandanten.
+
+Gemessen:
+
+```
+GET /api/bilanz?mandantId=<Demo GmbH>  +  x-mandant-id: <Beispiel GmbH>  -> 0 Treffer
+GET /api/bilanz?mandantId=<Demo GmbH>,  kein Header                     -> 1 Treffer
+```
+
+Der Picker war also keine Auswahl, sondern eine Beschriftung. Behoben mit
+`setActiveMandantId()` im `onChangeMandant` — der Seitenzustand und der
+Header-Kontext muessen denselben Mandanten nennen.
+
+**Der Weg, auf dem der Befund auffiel, ist der bemerkenswerte Teil.** Der
+Playwright-Test `wp-strecke` brach nach Nachtrag 10 ab. Der erste Verdacht
+war die Sortierung. Der **Kontrollversuch** — Produktänderung zurueckbauen,
+Test erneut fahren — schlug **identisch** fehl. Damit war die Sortierung als
+Ursache **widerlegt**, und der Verdacht wanderte weiter statt sich zu
+verhärten.
+
+Der Test scheiterte dabei auch **allein laufend**, ohne meine Änderung: er
+bekam seine Bilanzen von Spezifikationen, die vorher liefen. Er war nie
+isoliert lauffähig — und die Art, wie er sichtbar wurde, war ein anderer
+Mandant.
+
+**Zwei Lehren, die sich ergaenzen:**
+
+1. Ein Fehlschlag, der nach einer eigenen Aenderung auftritt, ist erst dann
+   diese Aenderung, wenn der **Kontrollversuch** sie ausgeschlossen hat.
+2. Ein Test, der nur im Verbund mit anderen gruen ist, prueft den
+   Verbund. `wp-strecke` war seit Einfuehrung von der Reihenfolge abhaengig.
+
+**Nicht verfolgt:** `KonsolidierungView` waehlt ebenfalls einen Mandanten
+(die Mutter). Das ist ein **Parameter** einer Konzerneinheit auf
+Kanzlei-Ebene, kein Tenant-Kontext. Gemessen akzeptiert das Backend eine
+Einheit, deren Mutter vom Header-Mandanten abweicht, solange beide derselben
+Kanzlei angehoeren — bei einer mandantenuebergreifenden Konsolidierung ist
+das der erwartete Fall. **Kein Defekt belegt**, deshalb hier nur vermerkt.
+
+---
+
+### Nachtrag 2026-10-13 (Nachtrag 10): Die Mandantenliste war nicht sortiert — und ein Kommentar behauptete das Gegenteil
+
+**Befund:** Sechs Abfragen ueber `UserMandantRole` — Login, Refresh, `me`,
+`resolveAuthUser` und `getMandantenAccessibleByUser` in **zwei** Services —
+lieferten ihre Mandanten **ohne `orderBy`**. Prisma gibt ohne `ORDER BY`
+keine Reihenfolge zu; gemessen wurde fuer `steuerberater@kanzlei.de`:
+
+```
+Demo GmbH | Beispiel GmbH | Test AG
+```
+
+Das ist weder alphabetisch noch die Seed-Reihenfolge garantiert. Ein
+`UPDATE` schreibt eine neue Heap-Version ans Zeilenende, die Reihenfolge
+wechselt also mit, sobald jemand einen Mandanten umbenennt.
+
+**Warum das ein Produktdefekt ist und nicht nur ein Testproblem:** Die API
+liefert ein Array, und jedes Array hat eine Position. Ohne zugesicherte
+Sortierung steht jedes clientseitige `mandanten[0]` auf nicht zugesagtem
+Verhalten. In den e2e-Specs gab es rund 30 solcher Stellen.
+
+**Der Kommentar, der es schlimmer machte:** `wp.e2e.spec.ts` schrieb, die API
+sortiere alphabetisch und `mandanten[0]` sei deshalb Beispiel GmbH. Das war
+eine **Annahme als Befund formuliert** — sie traf nicht zu, es gab kein
+`orderBy`. Der Kommentar ist korrigiert und benennt jetzt die Quelle der
+Garantie.
+
+**Behoben:** `MANDANTEN_SORTIERUNG` (Firmenname, dann ID als eindeutiger
+zweiter Schluessel — zwei Mandanten duerfen denselben Firmennamen haben),
+angewandt auf alle sechs Stellen.
+
+**Nachweis der Wirkung:** Nach dem Einbau liefert die API
+`Beispiel GmbH | Demo GmbH | Test AG`. Das verschiebt, was `mandanten[0]`
+ist — und legt damit zwei weitere Fehler offen, die vorher nur Latenz hatten
+(siehe Nachtrag 11).
+
+#### Eine Lücke, die erst der Laufzeittest findet
+
+Die erste Fassung stand als Objekt:
+
+```ts
+orderBy: { mandant: { firmenname: 'asc' }, mandantId: 'asc' }
+```
+
+`npm run typecheck` war **gruen**, `npx eslint src` auch. Zur Laufzeit:
+
+```
+Argument `orderBy`: Invalid value provided.
+Expected UserMandantRoleOrderByWithRelationInput[], provided Object.
+```
+
+Prisma typisiert `orderBy` als `Input | Input[]`, deshalb akzeptiert `tsc`
+beide Formen — fuer eine Sortierung ueber eine **Relation** verlangt Prisma 5
+aber das Array. Der Login lief danach mit HTTP 500. **Merksatz:** Ein
+statischer Check kann eine Form akzeptieren, die die Bibliothek zur Laufzeit
+ablehnt; bei Datenbank-Interaktionen ist der Aufruf selbst der Test.
+
+---
+
+### Nachtrag 2026-10-13 (Nachtrag 11): Ein gruener Test, der den Fehler nicht ausloesen konnte
+
+**Befund:** `pagination.e2e.spec.ts` baute seinen Testbestand so auf:
+
+```ts
+const vorhandenListe = /* GET /api/bilanz?...&geschaeftsjahr=2090 */;
+for (let gj = 2030; gj < 2030 + Math.max(0, 6 - vorhandenListe.length); gj++) { /* POST */ }
+```
+
+Gezaehlt wurde die Menge fuer **GJ 2090** — erzeugt werden sollte der Bereich
+**2030-2035**. Zwei verschiedene Mengen. Solange 2090 leer war, stimmte der
+Zufall; sobald dort etwas lag, wurde zu wenig oder nichts erzeugt, und der
+Test meldete an anderer Stelle „Zu wenig Daten" — eine Meldung, die die
+eigentliche Ursache nicht nennt.
+
+**Der ausgeloeste Fehler:** Nach dem Einbau der Sortierung (Nachtrag 10)
+bekommt `mandanten[0]` Beispiel GmbH — und genau dort hat `bilanz.e2e`
+GJ 2031 angelegt. Der Test wollte 2031 erneut anlegen. Negativprobe, mit
+zurueckgebautem Fix:
+
+```
+× POST … GJ 2031 konnte nicht angelegt werden: 400
+```
+
+Behoben: der Bestand wird je Jahr im Zielbereich geprueft, vorhandene Jahre
+werden uebersprungen statt doppelt angelegt, und die Fehlermeldung nennt
+Status **und** Body — `409` heisst „GJ belegt", `400` „Validierung", und die
+Meldung unterschied das vorher nicht.
+
+**Und der Status, der sich dabei zeigte:** `400`, nicht `409`. Ein
+Eindeutigkeitskonflikt auf `(mandantId, geschaeftsjahr)` ist ein
+**Zustandskonflikt**, keine fehlerhafte Anfrage (RFC 9110 §15.5.10). 400
+sagt „deine Eingabe ist falsch" — bei einem Klick auf „Bilanz anlegen"
+fuehrt das in die Irre, weil der Nutzer seine Eingaben prueft statt die
+Frage zu beantworten, ob das Jahr schon belegt ist.
+
+Umgestellt auf 409 in **fuenf** Stellen: Bilanz, GuV, Anhang und zwei in der
+Konsolidierung. Das Frontend zweigt an keiner Stelle auf 400, ein
+Playwright-Test ebenfalls nicht.
+
+**Die eigentliche Luecke dabei:** Nach der Umstellung blieben **alle 686
+Tests gruen**. Weil **kein Test diesen Status je behauptet hatte** — die
+Aenderung fiel niemandem auf, auch nicht mir. Vier Tests behaupten ihn jetzt
+(Bilanz, GuV, Anhang, Konsolidierung), und der erste davon war die
+Negativprobe fuer die Umstellung selbst:
+
+```
+- Expected  409
++ Received  400
+```
+
+#### Eine eigene Fehlannahme, die messbar war
+
+Der erste Verdacht war der Throttler: 429, weil alle Specs einen Server auf
+`:3000` und dieselbe Client-IP teilen. Gemessen statt vermutet:
+
+| Fenster | Requests |
+|---|---|
+| 60 s, voller Suite-Lauf | **322** |
+
+Die Grenze liegt bei 600 (`app.module.ts`), der `SkipThrottle` auf `/health`
+ausgenommen — was ein Test mit `/health` **nicht** haette zeigen koennen.
+Hypothese **widerlegt**, kein Fehler behoben.
+
+Zweiter Versuch, die Ursache des *erstmalig* aufgetretenen, nicht
+reproduzierten Fehlschlags festzustellen: nicht gelungen. Der obige Fall ist
+die **deterministische** Form desselben Fehlerbildes und mit demselben Eingriff
+geschlossen; dass er die urspruengliche Ausloesung war, ist **nicht belegt**.
+
+---
+
 ## 1. Compliance-Übersicht
 
 | Anforderung | GoBD-Referenz | Status | Beleg |
@@ -1732,16 +1908,20 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 
 ## 7. Tests + Verifikation
 
-### 7.1 Quality Gates (Stand 2026-10-09)
+### 7.1 Quality Gates (Stand 2026-10-13)
 
 | Metrik | Stand |
 |---|---|
 | Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
 | Backend eslint-Warnings | 0 (`--max-warnings 0`) |
-| Backend Unit-Tests | **524 / 524 grün** (52 Dateien) |
+| Backend Unit-Tests | **690 / 690 grün** (73 Dateien) |
+| Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
-| Playwright e2e | **62 / 62 grün**, 0 übersprungen |
-| Migrationen auf leerer DB | 6 angewandt, `migrate diff` ohne Abweichung |
+| Playwright e2e | **63 / 63 grün**, 0 übersprungen |
+| Migrationen auf leerer DB | 7 angewandt, `migrate diff` ohne Abweichung |
+| Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
+| Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
+| Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |
 | CI (backend + frontend) | ✅ beide Jobs grün |

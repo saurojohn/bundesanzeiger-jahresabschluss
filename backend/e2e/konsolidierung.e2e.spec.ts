@@ -242,6 +242,46 @@ describe('Konsolidierung E2E (M3 Sprint 1)', () => {
   });
 
   // ===========================================================================
+  // 6b. POST mit bereits belegtem GJ der Mutter → 409 (Konflikt, nicht 400)
+  // ===========================================================================
+  it('POST /api/konsolidierung/einheiten mit belegtem GJ der Mutter → 409 Conflict', async () => {
+    const loginRes = await loginAs('wp@kanzlei.de', 'Demo123!');
+    const headers = await authHeaders(loginRes.accessToken);
+    const mandanten = (await (
+      await fetch(`${BASE}/api/mandant`, { headers })
+    ).json()) as Array<{ id: string; firmenname: string }>;
+    if (mandanten.length < 2) throw new Error('Pilot benötigt ≥ 2 Mandanten in der Kanzlei');
+
+    const koerper = {
+      mutterMandantId: mandanten[0].id,
+      tochterMandantIds: [mandanten[1].id],
+      geschaeftsjahr: 2071,
+      beteiligungsquote: 100,
+      konsolidierungsArt: 'VOLLKONSOLIDIERUNG',
+    };
+
+    const erst = await fetch(`${BASE}/api/konsolidierung/einheiten`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(koerper),
+    });
+    expect(erst.status, 'erster Anlauf muss 201 sein').toBe(201);
+
+    const zweit = await fetch(`${BASE}/api/konsolidierung/einheiten`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(koerper),
+    });
+
+    // Der Unique-Constraint (mutterMandantId, geschaeftsjahr) ist ein
+    // Zustandskonflikt, keine fehlerhafte Anfrage: 409 nach RFC 9110 §15.5.10.
+    // Vorher 400 — und ungetestet, weshalb es niemand aufgefallen ist.
+    expect(zweit.status).toBe(409);
+    const body = (await zweit.json()) as { message: string };
+    expect(body.message).toContain('existiert bereits');
+  });
+
+  // ===========================================================================
   // 7. GET /api/konsolidierung/einheiten/:id → 200
   // ===========================================================================
   it('GET /api/konsolidierung/einheiten/:id → 200 + Einheit', async () => {

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -112,7 +113,7 @@ export class GuVService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        throw new BadRequestException(
+        throw new ConflictException(
           `Für diesen Mandanten existiert bereits eine GuV für das Geschäftsjahr ${dto.geschaeftsjahr}.`,
         );
       }

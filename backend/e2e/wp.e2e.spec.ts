@@ -96,9 +96,19 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
   }
 
   /** Mandant-ID eines Login-Ergebnisses (Demo GmbH — dort legt der Seed an).
-   *  Bewusst per NAME statt `mandanten[0]`: die API sortiert alphabetisch,
-   *  `mandanten[0]` ist daher Beispiel GmbH, wo der Seed NICHTS anlegt.
-   *  Diese Kopplung an die Reihenfolge hat den Test zum Scheitern gebracht. */
+   *  Bewusst per NAME statt `mandanten[0]`.
+   *
+   *  KORREKTUR 2026-10-13: Dieser Kommentar behauptete, die API sortiere
+   *  alphabetisch. Das war eine ANNAHME, kein Befund — gemessen lieferte sie
+   *  `Demo GmbH, Beispiel GmbH, Test AG`. Es gab schlicht kein `orderBy`.
+   *  Die Sortierung ist erst seit dem 13.10. zugesichert
+   *  (`MANDANTEN_SORTIERUNG`), vorher hing sie an der Heap-Reihenfolge.
+   *
+   *  Selbst mit garantierter Sortierung bleibt die Namenswahl hier richtig:
+   *  "Demo GmbH" ist eine fachliche Bedingung des Tests (der Seed legt dort
+   *  an), keine Positionsangabe. Eine Position zu benutzen hiesse, den
+   *  Test daran zu binden, dass ein fremder Mandant nicht zufaellig vor
+   *  diesem einsortiert wird. */
   function mandantOf(u: { user: { mandanten?: Array<{ id: string; firmenname: string }> } }): string {
     const id = u.user.mandanten?.find((m) => m.firmenname === 'Demo GmbH')?.id;
     expect(id, 'Demo GmbH muss im Mandanten des Users liegen').toBeTruthy();

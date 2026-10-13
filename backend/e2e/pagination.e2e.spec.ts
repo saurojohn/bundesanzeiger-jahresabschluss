@@ -105,15 +105,27 @@ describe('Pagination E2E (M3+)', () => {
 
     // Der Test braucht garantiert genug Datensaetze. Statt darauf zu vertrauen,
     // dass der Seed eine bestimmte Menge anlegt (und im Zweifel still zu
-    // ueberspringen), erzeugt er seinen eigenen Bestand fuer GJ 2090.
-    const jahr = 2090;
-    const vorhanden = await fetch(
-      `${BASE}/api/bilanz?mandantId=${mandant.id}&geschaeftsjahr=${jahr}&pageSize=100`,
-      { headers },
-    );
-    const vorhandenListe = ((await vorhanden.json()) as PaginatedResponse<BilanzSummary>)
-      .items ?? [];
-    for (let gj = 2030; gj < 2030 + Math.max(0, 6 - vorhandenListe.length); gj += 1) {
+    // ueberspringen), erzeugt er seinen eigenen Bestand fuer GJ 2030-2035.
+    //
+    // BEFUND 2026-10-13: Der Vorgaenger fragte GJ 2090 ab und benutzte dessen
+    // Trefferzahl fuer die Anzahl der zu erzeugenden Bilanzen im Bereich
+    // 2030-2035. Das sind zwei verschiedene Mengen. Solange 2090 leer war,
+    // stimmte der Zufall; sobald eine Bilanz fuer 2090 existierte, wurde
+    // weniger oder nichts erzeugt und der Test sagte an anderer Stelle "Zu
+    // wenig Daten" — eine Meldung, die die eigentliche Ursache nicht nannte.
+    const beruecksichtigte = new Set<number>();
+    for (let gj = 2030; gj <= 2035; gj += 1) {
+      const vorhanden = await fetch(
+        `${BASE}/api/bilanz?mandantId=${mandant.id}&geschaeftsjahr=${gj}&pageSize=100`,
+        { headers },
+      );
+      const treffer =
+        (((await vorhanden.json()) as PaginatedResponse<BilanzSummary>).items ?? []);
+      if (treffer.length > 0) beruecksichtigte.add(gj);
+    }
+
+    for (let gj = 2030; gj <= 2035 && beruecksichtigte.size < 6; gj += 1) {
+      if (beruecksichtigte.has(gj)) continue;
       const r = await fetch(`${BASE}/api/bilanz?mandantId=${mandant.id}`, {
         method: 'POST',
         headers,
@@ -126,7 +138,14 @@ describe('Pagination E2E (M3+)', () => {
           ],
         }),
       });
-      if (!r.ok) throw new Error(`Bilanz GJ ${gj} konnte nicht angelegt werden: ${r.status}`);
+      if (!r.ok) {
+        // Nur der Status reicht nicht als Diagnose: 409 heisst "GJ existiert
+        // schon", 429 "Throttler", 400 "Validation". Der Body sagt, welcher.
+        throw new Error(
+          `Bilanz GJ ${gj} konnte nicht angelegt werden: ${r.status} ${r.statusText} — ${await r.text()}`,
+        );
+      }
+      beruecksichtigte.add(gj);
     }
 
     const first = await fetch(

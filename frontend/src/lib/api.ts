@@ -132,3 +132,31 @@ export function getActiveMandantId(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('activeMandantId');
 }
+
+/**
+ * Aktiven Mandanten setzen — das Gegenstueck zu `getActiveMandantId()`.
+ *
+ * BEFUND 2026-10-13: Die WP-Seite hat einen eigenen Mandant-Picker. Der hat
+ * seinen Wert nur in React-State gehalten und `localStorage` **nicht**
+ * geschrieben. `apiFetch` setzt `x-mandant-id` aber genau aus
+ * `localStorage`, und der Header hat im Backend Vorrang vor dem
+ * Query-Parameter. Gemessen:
+ *
+ *   GET /api/bilanz?mandantId=<Demo GmbH> + x-mandant-id: <Beispiel GmbH>
+ *     -> 0 Treffer
+ *   GET /api/bilanz?mandantId=<Demo GmbH>, kein Header
+ *     -> 1 Treffer
+ *
+ * Der Picker sah also nach einem Wechsel nach "Demo GmbH" aus, geladen
+ * wurden aber die Bilanzen des Header-Mandanten — oder, wie hier, gar
+ * keine. Jede Komponente mit eigener Mandant-Wahl muss diesen setter
+ * benutzen, sonst zeigt ihre Auswahl etwas anderes an, als sie sendet.
+ */
+export function setActiveMandantId(id: string | null): void {
+  if (typeof window === 'undefined') return;
+  if (id) {
+    localStorage.setItem('activeMandantId', id);
+  } else {
+    localStorage.removeItem('activeMandantId');
+  }
+}

@@ -394,6 +394,30 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
     expect(eintrag, 'die Liste darf die Abschnittsinhalte nicht mitliefern').not.toHaveProperty('abschnitte');
   });
 
+  it('POST /api/anhang mit bereits belegtem Geschaeftsjahr → 409 Conflict', async () => {
+    await createAnhang(2090);
+
+    const res = await fetch(`${BASE}/api/anhang?mandantId=${mandantId}`, {
+      method: 'POST',
+      headers: headerOnly(),
+      // Vollstaendiger Body — sonst bricht schon die ValidationPipe mit 400 ab
+      // und der Test prueft den Falschen. Siehe `createAnhang`.
+      body: JSON.stringify({
+        mandantId,
+        geschaeftsjahr: 2090,
+        bilanzierungsMethoden: 'nach Vorjahresabschluss',
+        abschnitte: [],
+      }),
+    });
+
+    // Der Unique-Constraint (mandantId, geschaeftsjahr) ist ein Zustands-
+    // konflikt, keine fehlerhafte Anfrage: 409 nach RFC 9110 §15.5.10.
+    // Vorher 400 — und ungetestet, weshalb es niemand aufgefallen ist.
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toContain('existiert bereits');
+  });
+
   // ===========================================================================
   // 6c. Branding-Mutation: KANZLEI_ADMIN muss die EIGENE Kanzlei ändern
   //     können — und ausdrücklich nicht die einer fremden.

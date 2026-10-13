@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
+import { apiFetch, getAccessToken, getActiveMandantId, setActiveMandantId as persistActiveMandantId } from '@/lib/api';
 
 type SessionUser = {
   id: string;
@@ -369,6 +369,11 @@ export function WPView() {
         activeMandantId={activeMandantId}
         bilanzen={bilanzen}
         onChangeMandant={(id) => {
+          // Auch in localStorage spiegeln: `apiFetch` schickt `x-mandant-id`
+          // aus localStorage, und der Header hat Backend-Vorrang vor dem
+          // Query-Parameter. Ohne das zeigte der Picker einen Mandanten an,
+          // geladen wurde ein anderer (siehe `setActiveMandantId`).
+          persistActiveMandantId(id);
           setActiveMandantId(id);
           setActiveBilanzId(null);
           setPruefung(null);

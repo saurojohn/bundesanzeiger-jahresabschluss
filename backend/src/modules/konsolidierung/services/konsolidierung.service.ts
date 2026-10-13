@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -172,7 +173,7 @@ export class KonsolidierungService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        throw new BadRequestException(
+        throw new ConflictException(
           `Für die Mutter existiert bereits eine Konsolidierungs-Einheit für das Geschäftsjahr ${dto.geschaeftsjahr}.`,
         );
       }
@@ -353,7 +354,7 @@ export class KonsolidierungService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        throw new BadRequestException(
+        throw new ConflictException(
           'Für dieses Geschäftsjahr wurden zwischenzeitlich bereits Sätze ' +
             'angelegt. Bitte die vorhandenen Bilanz-/GuV-Sätze prüfen und ' +
             'erneut versuchen.',

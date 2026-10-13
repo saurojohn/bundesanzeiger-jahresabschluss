@@ -8,6 +8,7 @@ import {
 import { Prisma, Mandant } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CacheManagerService } from '../../../common/cache/cache-manager.service';
+import { MANDANTEN_SORTIERUNG } from '../../../common/utils/mandanten-sortierung';
 import { PaginationService } from '../../../common/services/pagination.service';
 import { CursorCodec, type PaginatedResult } from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
@@ -503,6 +504,7 @@ export class MandantService {
   > {
     const roles = await this.prisma.userMandantRole.findMany({
       where: { userId, revokedAt: null },
+      orderBy: MANDANTEN_SORTIERUNG,
       include: { mandant: { select: { id: true, firmenname: true } } },
     });
     return roles.map((r) => ({

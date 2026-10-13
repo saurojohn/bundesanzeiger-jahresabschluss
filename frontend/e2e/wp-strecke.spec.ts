@@ -440,3 +440,68 @@ test('WP: STEUERBERATER sieht keine WP-Aktionen (kein 403 durch Anklicken)', asy
   const schreibzugriffe = aufrufe.filter((a) => a.methode !== 'GET');
   expect(schreibzugriffe, 'keine Schreibzugriffe ohne Aktion').toHaveLength(0);
 });
+
+/**
+ * BEFUND 2026-10-13: Der Mandant-Picker der WP-Seite war wirkungslos.
+ *
+ * Er hielt seinen Wert nur im React-State und schrieb `localStorage` nicht.
+ * `apiFetch` setzt `x-mandant-id` aber aus `localStorage`, und der Header
+ * hat im Backend Vorrang vor dem Query-Parameter. Gemessen:
+ *
+ *   GET /api/bilanz?mandantId=<Demo GmbH>  +  x-mandant-id: <Beispiel GmbH>
+ *     -> 0 Treffer
+ *   GET /api/bilanz?mandantId=<Demo GmbH>,  kein Header
+ *     -> 1 Treffer
+ *
+ * Nach einem Wechsel stand "Demo GmbH" im Picker, geladen wurde der
+ * Bestand des Header-Mandanten — oder gar keiner. Behoben mit
+ * `setActiveMandantId()` im `onChangeMandant`.
+ *
+ * Dieser Test waehlt bewusst NACH NAMEN. Eine Positionsangabe haette genau
+ * den Fehler verdeckt, der hier behoben wird: Die Mandantenliste war vorher
+ * unsortiert, und Index 1 bezeichnete je nach DB-Zustand einen anderen
+ * Mandanten.
+ */
+test('WP: Mandant-Wechsel auf der WP-Seite laedt tatsaechlich dessen Bilanzen', async ({ page }) => {
+  await anmelden(page, 'wp@kanzlei.de');
+  await page.goto('http://localhost:3001/de-DE/wp');
+  await page.waitForTimeout(3000);
+
+  const mandantSelect = page.locator('main select').first();
+  const bilanzSelect = page.locator('main select').nth(1);
+
+  // Demo GmbH: der Seed legt dort eine Bilanz (GJ 2025) an. Beispiel GmbH
+  // bekommt keine — an ihr ist der Unterschied eindeutig sichtbar.
+  await mandantSelect.selectOption({ label: 'Demo GmbH' });
+
+  // Nur das Geschaeftsjahr wird behauptet, NICHT der Status. Erster Lauf
+  // genau so geschrieben (`2025 (DRAFT)`) und damit im Verbund rot
+  // geworden: eine frueher laufende Spec gibt die Bilanz frei, danach steht
+  // dort `2025 (APPROVED)`. Der Test prueft, WELCHE Bilanz geladen wurde —
+  // ihr Zustand gehoert nicht in diese Behauptung.
+  await expect
+    .poll(
+      async () => {
+        const texte = await bilanzSelect.locator('option').allTextContents();
+        return texte.filter((t) => t.trim().startsWith('2025')).length;
+      },
+      {
+        message: 'nach dem Wechsel auf Demo GmbH muss dessen Bilanz GJ 2025 erscheinen',
+        timeout: 15_000,
+      },
+    )
+    .toBeGreaterThan(0);
+
+  // Der Wechsel muss auch den Header-Kontext mitnehmen, sonst laufen die
+  // folgenden Schreibzugriffe weiter gegen den alten Mandanten.
+  const gespeicherter = await page.evaluate(() =>
+    localStorage.getItem('activeMandantId'),
+  );
+  const gewaehlterWert = await mandantSelect.evaluate(
+    (el) => (el as HTMLSelectElement).value,
+  );
+  expect(
+    gespeicherter,
+    'localStorage muss dem sichtbar gewaehlten Mandanten entsprechen',
+  ).toBe(gewaehlterWert);
+});

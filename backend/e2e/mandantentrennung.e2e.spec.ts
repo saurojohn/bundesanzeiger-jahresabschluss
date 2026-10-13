@@ -30,7 +30,7 @@
  * echte Daten laufen (Cross-Tenant braucht zwei Kanzleien).
  */
 import { Test, type TestingModule } from '@nestjs/testing';
-import { type INestApplication, ValidationPipe } from '@nestjs/common';
+
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -47,25 +47,17 @@ async function token(email: string, password: string): Promise<string> {
 }
 
 describe('Mandantentrennung (Cross-Tenant)', () => {
-  let app: INestApplication;
   let prisma: PrismaService;
 
   beforeAll(async () => {
+    // BEFUND 2026-10-12: Das `createNestApplication()` weiter unten war
+    // toter Code — diese Spec spricht per `fetch` mit BASE, also mit dem
+    // echten Server. Der TestingModule bleibt, weil `prisma` daraus kommt.
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
     prisma = moduleRef.get(PrismaService);
     await prisma.$connect();
-    app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
-    );
-    app.setGlobalPrefix('api', { exclude: ['health'] });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app?.close();
   });
 
   /**

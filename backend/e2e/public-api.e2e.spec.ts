@@ -22,7 +22,6 @@
  *     wurde angeglichen, nicht der Code.
  */
 import { Test, type TestingModule } from '@nestjs/testing';
-import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 
 const BASE = 'http://localhost:3000';
@@ -38,7 +37,6 @@ interface CreateKeyResponse {
 }
 
 describe('Public API v1 + OAuth2 (client_credentials)', () => {
-  let app: INestApplication;
   let adminToken: string;
   let mandantId: string;
   let kanzleiId: string;
@@ -51,16 +49,9 @@ describe('Public API v1 + OAuth2 (client_credentials)', () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidNonWhitelisted: true,
-      }),
-    );
-    app.setGlobalPrefix('api', { exclude: ['health'] });
-    await app.init();
+    // BEFUND 2026-10-12: `createNestApplication()` + Pipes war toter Code
+    // — diese Spec spricht per fetch mit API. Der TestingModule bleibt, weil
+    // unten die Admin-Token-Fixture darüber laeuft.
 
     const login = (await (
       await fetch(`${API}/auth/login`, {
@@ -104,10 +95,6 @@ describe('Public API v1 + OAuth2 (client_credentials)', () => {
     // zwei verschiedene Bezeichner, die leicht verwechselt werden.
     keyRecordId = created.apiKey.id;
     secret = created.plaintextSecret;
-  });
-
-  afterAll(async () => {
-    await app.close();
   });
 
   async function tokenMit(

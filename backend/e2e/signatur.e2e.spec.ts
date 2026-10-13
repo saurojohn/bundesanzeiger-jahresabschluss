@@ -30,9 +30,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { INestApplication } from '@nestjs/common';
-import { Test, type TestingModule } from '@nestjs/testing';
-import { AppModule } from '../src/app.module';
 
 // ---------------------------------------------------------------------------
 // S3-Mock (analog pdf.e2e.spec.ts)
@@ -91,7 +88,6 @@ interface ValidationResponse {
 
 
 describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
-  let app: INestApplication;
   let steuerberaterToken: string;
   let gfToken: string;
   let demoMandantId: string;
@@ -99,22 +95,17 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   let p12Base64: string;
 
   beforeAll(async () => {
-    // Mock-Env VOR App-Init setzen
-    process.env['S3_ENDPOINT'] = 'http://mock-s3.local';
-    process.env['S3_REGION'] = 'eu-central-1';
-    process.env['S3_ACCESS_KEY'] = 'mock-access-key';
-    process.env['S3_SECRET_KEY'] = 'mock-secret-key';
-    process.env['S3_BUCKET'] = 'mock-bucket';
-    process.env['S3_OBJECT_LOCK_RETENTION_DAYS'] = '3650';
-    // Mock-TSA explizit deaktivieren (kein TSA_URL → Mock-Modus im Service)
-    delete process.env['TSA_URL'];
-
-    const moduleRef: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleRef.createNestApplication();
-    await app.init();
+    // BEFUND 2026-10-12: Der entfernte Block tat ZWEIERLEI, beides tot:
+    //
+    // 1. `process.env['S3_ENDPOINT'] = ...` u. a. Der Kommentar behauptete
+    //    "Mock-Env VOR App-Init setzen". Die App unter Test laeuft aber als
+    //    ANDERER PROZESS auf :3000. Diese Variablen erreichen ihn nicht und
+    //    koennen es nicht. Der Kommentar legte eine Konfiguration nahe, die
+    //    es nicht gab — das ist schlimmer als toter Code.
+    // 2. `createNestApplication()` + `init()` — nie benutzt.
+    //
+    // Der S3-Mock aus run-local.sh liefert weiterhin die WORM-Semantik, und
+    // die P12-Vorbedingung darunter ist echt und bleibt.
 
     // P12 laden.
     //
@@ -146,10 +137,6 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
     // Hole existierende Bilanz-ID aus dem Seed
     const list = await fetchBilanzList(steuerberaterToken, demoMandantId, 2025);
     demoBilanzId = list[0]?.id ?? '';
-  });
-
-  afterAll(async () => {
-    await app.close();
   });
 
   // -------------------------------------------------------------------------

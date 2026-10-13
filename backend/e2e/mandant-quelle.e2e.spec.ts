@@ -24,7 +24,6 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -52,7 +51,6 @@ interface ListResponse<T> {
 }
 
 describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
-  let app: INestApplication;
   let accessToken: string;
   let mandantId: string;
   let prisma: PrismaService;
@@ -70,16 +68,9 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
     }).compile();
     prisma = moduleRef.get(PrismaService);
 
-    app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidNonWhitelisted: true,
-      }),
-    );
-    app.setGlobalPrefix('api', { exclude: ['health'] });
-    await app.init();
+    // BEFUND 2026-10-12: `createNestApplication()` + Pipes war toter Code
+    // — diese Spec spricht per fetch mit BASE. Der TestingModule bleibt, weil
+    // `prisma` daraus kommt.
 
     const loginRes = await fetch(`${BASE}/api/auth/login`, {
       method: 'POST',
@@ -115,10 +106,6 @@ describe('mandantId-Quelle E2E (Header muss Query ersetzen koennen)', () => {
         publishChannel: 'Bundesanzeiger',
       },
     });
-  });
-
-  afterAll(async () => {
-    await app.close();
   });
 
   /** Frischer Login für einen beliebigen Seed-User. */

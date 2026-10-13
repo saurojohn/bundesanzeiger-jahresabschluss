@@ -24,9 +24,6 @@
  * zum Produktionsverhalten.
  */
 
-import { Test, type TestingModule } from '@nestjs/testing';
-import { type INestApplication, ValidationPipe } from '@nestjs/common';
-import { AppModule } from '../src/app.module';
 
 const BASE = 'http://localhost:3000';
 
@@ -77,28 +74,14 @@ interface BilanzSummary {
 }
 
 describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
-  let app: INestApplication;
 
-  beforeAll(async () => {
-    const moduleRef: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidNonWhitelisted: true,
-      }),
-    );
-    app.setGlobalPrefix('api', { exclude: ['health'] });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
+  // BEFUND 2026-10-12: Der `beforeAll` hier baute eine Nest-Application
+  // und benutzte sie NIE — diese Spec spricht per `fetch` mit BASE, also
+  // mit dem echten Server, den die CI im Schritt „Backend starten"
+  // hochfährt. Der Block bildete ValidationPipe und globalen Präfix von
+  // Hand nach: eine Nachbildung der main.ts-Konfiguration, die still
+  // driftet, wenn sich main.ts ändert. Die Abdeckung ist über den
+  // Serverpfad unverändert dieselbe.
 
   async function loginAs(email: string, password: string): Promise<LoginResponse> {
     const res = await fetch(`${BASE}/api/auth/login`, {

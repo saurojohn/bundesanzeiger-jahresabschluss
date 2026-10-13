@@ -27,10 +27,6 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  type INestApplication,
-  ValidationPipe,
-} from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -44,7 +40,6 @@ interface AuthFixture {
 }
 
 describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
-  let app: INestApplication;
   let fixture: AuthFixture | null = null;
 
   beforeAll(async () => {
@@ -52,24 +47,13 @@ describe('Public-API + OAuth2 + Webhooks (M4 Sprint 1)', () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidNonWhitelisted: true,
-      }),
-    );
-    app.setGlobalPrefix('api', { exclude: ['health'] });
-    await app.init();
-
+    // BEFUND 2026-10-12: `createNestApplication()` + Pipes war toter Code
+    // — diese Spec spricht per fetch mit BASE. Der TestingModule bleibt
+    // nicht aus Gewohnheit, sondern weil `tryGetAuthFixture()` unten
+    // darüber läuft.
     // Versuche, einen KANZLEI_ADMIN-Login zu machen — wenn das fehlschlägt
     // (DB nicht verfügbar), markiere die Tests als skipped.
     fixture = await tryGetAuthFixture();
-  });
-
-  afterAll(async () => {
-    if (app) await app.close();
   });
 
   // ===========================================================================

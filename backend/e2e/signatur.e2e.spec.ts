@@ -30,6 +30,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
+import type { SignaturEintragDto as SignaturEintrag } from '../src/modules/signatur/dto/signatur-liste.dto';
 
 // ---------------------------------------------------------------------------
 // S3-Mock (analog pdf.e2e.spec.ts)
@@ -115,8 +119,20 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   let demoMandantId: string;
   let demoBilanzId: string;
   let p12Base64: string;
+  /**
+   * Nur fuer den Test „signatureId ist auffindbar". Das Verhalten ist ueber
+   * HTTP nicht beobachtbar: es gibt keinen Endpunkt, der eine Signatur-ID
+   * entgegennimmt. Der TestingModule wird deshalb gebaut — er liefert
+   * `prisma`, sonst muesste hier ein zweiter Datenbankweg entstehen.
+   */
+  let prisma: PrismaService;
 
   beforeAll(async () => {
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    prisma = moduleRef.get(PrismaService);
+
     // BEFUND 2026-10-12: Der entfernte Block tat ZWEIERLEI, beides tot:
     //
     // 1. `process.env['S3_ENDPOINT'] = ...` u. a. Der Kommentar behauptete
@@ -329,6 +345,146 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
       expect(body.signedPdfBase64.length).toBeGreaterThan(1000);
       expect(body.hashBefore).not.toBe(body.hashAfter);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // 6b. Die gelieferte signatureId IST der gespeicherte Datensatz
+  //
+  // BEFUND 2026-10-13: Zwei Fehler stapelten sich.
+  //
+  // (1) `signature.jahresabschlussId` war NOT NULL. Beim Signieren einer
+  //     Bilanz gab es keinen Abschluss, an den der Datensatz haengen konnte,
+  //     also wurde er uebersprungen — waehrend die API eine `signatureId`
+  //     zurueckgab und das Frontend sie als "Signatur-ID" anzeigt. Gemessen:
+  //     Tabelle leer (0 Zeilen), Antwort-ID nicht auffindbar.
+  //
+  // (2) `create()` gab kein `id` an Prisma. Prisma vergab darueber
+  //     `@default(uuid())` eine EIGENE UUID — die Antwort-ID war also auch
+  //     beim Jahresabschluss, wo der Datensatz existierte, eine andere als
+  //     die gespeicherte.
+  //
+  // Beides ist nur ueber die Datenbank beobachtbar; genau deshalb dieser
+  // Test. Ein Rueckbau muss ihn an genau diesen Zeilen scheitern lassen.
+  // -------------------------------------------------------------------------
+  it('sign-bilanz: die signatureId ist der gespeicherte Signature-Datensatz', async () => {
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('');
+
+    const vorher = await prisma.signature.count({
+      where: { entityType: 'Bilanz', entityId: demoBilanzId },
+    });
+
+    const res = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
+      method: 'POST',
+      headers: authHeaders(steuerberaterToken),
+      body: JSON.stringify({
+        bilanzId: demoBilanzId,
+        mandantId: demoMandantId,
+        p12Base64,
+        p12Password: P12_PASSWORD,
+      }),
+    });
+    if (res.status !== 200) {
+      // Dummy-P12 (Fallback ohne echtes Token) — die ID kann es dann nicht
+      // geben. Kein stiller Skip: der Zustand wird benannt.
+      expect(res.status, `Signatur fehlgeschlagen: ${res.status}`).toBe(200);
+      return;
+    }
+    const body = (await res.json()) as SignResponse;
+
+    const datensatz = await prisma.signature.findUnique({
+      where: { id: body.signatureId },
+    });
+    expect(
+      datensatz,
+      'die signatureId der Antwort muss in `signature` auffindbar sein',
+    ).not.toBeNull();
+    expect(datensatz!.entityType).toBe('Bilanz');
+    expect(datensatz!.entityId).toBe(demoBilanzId);
+    expect(datensatz!.hashNachher).toBe(body.hashAfter);
+    expect(
+      datensatz!.signaturDaten.length,
+      'die Signatur-Bytes muessen mitgespeichert sein, sonst ist der Datensatz',
+    ).toBeGreaterThan(0);
+
+    const nachher = await prisma.signature.count({
+      where: { entityType: 'Bilanz', entityId: demoBilanzId },
+    });
+    expect(nachher, 'genau ein neuer Datensatz').toBe(vorher + 1);
+  });
+
+  // -------------------------------------------------------------------------
+  // 6c. GET /api/signatur/signaturen findet die gelieferte ID wieder
+  //
+  // Ohne diesen Weg bleibt `signatureId` eine Zeichenkette im Dialog. Der
+  // Test behauptet deshalb beides: die ID steht in der Liste, UND die
+  // ValidationPipe laesst die Query ueberhaupt durch (ein DTO ohne
+  // Dekoratoren wird bei `whitelist: true` komplett geleert).
+  // -------------------------------------------------------------------------
+  it('GET /api/signatur/signaturen liefert die Signatur zurueck', async () => {
+    expect(demoBilanzId, 'Demo-Bilanz-Id muss ermittelt sein').not.toBe('');
+
+    const res = await fetch(
+      `${BASE}/api/signatur/signaturen?entityType=Bilanz&entityId=${demoBilanzId}`,
+      {
+        // Ohne Mandantenquelle lehnt der Guard ab (403) — ein GET hat keinen
+        // Body, aus dem der Mandant gelesen werden koennte.
+        headers: { ...authHeaders(steuerberaterToken), 'x-mandant-id': demoMandantId },
+      },
+    );
+    expect(res.status).toBe(200);
+
+    const liste = (await res.json()) as SignaturEintrag[];
+    expect(Array.isArray(liste), 'die Antwort muss ein Array sein').toBe(true);
+
+    const treffer = liste.find((s) => s.entityId === demoBilanzId);
+    if (!treffer) {
+      // Kein stiller Skip: dann gab es keine Signatur (Dummy-P12).
+      throw new Error(
+        `kein Eintrag fuer Bilanz ${demoBilanzId} — ${liste.length} Eintraege`,
+      );
+    }
+    expect(treffer.entityType).toBe('Bilanz');
+    expect(treffer.hashNachher).toMatch(/^[a-f0-9]{64}$/);
+    expect(treffer.signaturTyp).toBeTruthy();
+  });
+
+  /**
+   * Cross-Tenant: Header-Mandant und `entityId` muessen zusammenpassen.
+   *
+   * Header = Beispiel GmbH, entityId = Bilanz aus Demo GmbH. Ohne den
+   * mandant-gefilterten Existenz-Check liefert `findByEntity` trotzdem die
+   * Signaturen des fremden Mandanten — genau der Fall, den der Check
+   * verhindert.
+   */
+  it('GET /api/signatur/signaturen mit fremdem Mandant → 404', async () => {
+    const fremd = await fetch(
+      `${BASE}/api/auth/me`,
+      { headers: authHeaders(steuerberaterToken) },
+    ).then(async (r) => (await r.json()) as { mandanten: Array<{ id: string; firmenname: string }> });
+    const anderer = fremd.mandanten.find((m) => m.firmenname !== 'Demo GmbH');
+
+    if (!anderer) {
+      // Der User hat nur einen Mandanten — dann gibt es nichts zu pruefen,
+      // und das wird benannt statt uebersprungen.
+      throw new Error(
+        'Test braucht einen zweiten Mandanten des Users fuer den Cross-Tenant-Fall',
+      );
+    }
+
+    const res = await fetch(
+      `${BASE}/api/signatur/signaturen?entityType=Bilanz&entityId=${demoBilanzId}`,
+      { headers: { ...authHeaders(steuerberaterToken), 'x-mandant-id': anderer.id } },
+    );
+    expect(res.status, 'fremder Mandant darf keine Signatur liefern').toBe(404);
+  });
+
+  it('GET /api/signatur/signaturen mit ungueltigem entityType → 400', async () => {
+    const res = await fetch(
+      `${BASE}/api/signatur/signaturen?entityType=Kasse&entityId=${demoBilanzId}`,
+      { headers: { ...authHeaders(steuerberaterToken), 'x-mandant-id': demoMandantId } },
+    );
+    // Die ValidationPipe muss den Wert ablehnen, statt ihn durchzureichen.
+    expect(res.status).toBe(400);
   });
 
   // -------------------------------------------------------------------------

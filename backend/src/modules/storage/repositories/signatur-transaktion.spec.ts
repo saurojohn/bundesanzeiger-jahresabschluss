@@ -35,6 +35,10 @@ const EINGABE = {
 };
 
 const SIGNATUR_EINGABE = {
+  // Seit 2026-10-13 Pflicht: die ID, unter der gespeichert wird. Ohne sie
+  // vergaeb Prisma eine eigene, und die `signatureId` aus der API-Antwort
+  // war ein toter Verweis.
+  id: 's1',
   jahresabschlussId: 'j1',
   userId: 'u1',
   rolle: 'WIRTSCHAFTSPRUEFER',

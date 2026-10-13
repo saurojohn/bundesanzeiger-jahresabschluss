@@ -12,7 +12,34 @@ import { PrismaService } from '../../prisma/prisma.service';
 export type SignatureEntity = Signature;
 
 export interface CreateSignatureInput {
-  jahresabschlussId: string;
+  /**
+   * Die ID, unter der der Datensatz gespeichert wird.
+   *
+   * BEFUND 2026-10-13: Dieses Feld fehlte. `create()` gab kein `id` an
+   * Prisma, also vergab Prisma ueber `@default(uuid())` eine EIGENE UUID.
+   * Die `signatureId` aus der API-Antwort war damit auch beim
+   * Jahresabschluss — wo der Datensatz sehr wohl existierte — eine andere
+   * als die gespeicherte. Gemessen: Antwort-ID nicht auffindbar, Tabelle
+   * enthaelt genau eine Zeile mit abweichender UUID.
+   *
+   * Der SignaturService erzeugt die ID bewusst VOR der Transaktion, damit
+   * Manifest, Record und Audit-Eintrag dieselbe bezeichnen.
+   */
+  id: string;
+  /**
+   * GENAU EINE der beiden Bezugsachsen muss belegt sein.
+   *
+   *   * Jahresabschluss-Signatur: `jahresabschlussId`
+   *   * Entitaeten-Signatur:       `entityType` + `entityId`
+   *
+   * `jahresabschlussId` ist optional, weil eine signierte Bilanz/GuV/Anhang
+   * an keinen Abschluss gebunden ist. Bis 2026-10-13 war das Feld NOT NULL —
+   * deshalb wurde der Datensatz in diesem Fall uebersprungen und die API
+   * lieferte eine `signatureId`, die nirgends auffindbar war.
+   */
+  jahresabschlussId?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
   userId: string;
   rolle: string;
   signaturTyp: string;
@@ -57,9 +84,23 @@ export class SignatureRepository {
      */
     tx?: Prisma.TransactionClient,
   ): Promise<SignatureEntity> {
+    // Fail-closed statt stillem Datenverlust: ein Record ohne Bezugsachse
+    // waere unauffindbar — genau der Zustand, den die Entitaeten-Signatur
+    // bis 2026-10-13 erzeugt hat (ID in der Antwort, nichts in der Tabelle).
+    const hatAbschluss = Boolean(input.jahresabschlussId);
+    const hatEntitaet = Boolean(input.entityType && input.entityId);
+    if (!hatAbschluss && !hatEntitaet) {
+      throw new Error(
+        'Signature braucht genau eine Bezugsachse: jahresabschlussId ODER entityType+entityId',
+      );
+    }
+
     return (tx ?? this.prismaService).signature.create({
       data: {
-        jahresabschlussId: input.jahresabschlussId,
+        id: input.id,
+        jahresabschlussId: input.jahresabschlussId ?? null,
+        entityType: input.entityType ?? null,
+        entityId: input.entityId ?? null,
         userId: input.userId,
         rolle: input.rolle,
         signaturTyp: input.signaturTyp,
@@ -86,6 +127,20 @@ export class SignatureRepository {
   ): Promise<SignatureEntity[]> {
     return this.prismaService.signature.findMany({
       where: { jahresabschlussId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Findet alle Signature-Records fuer eine signierte Entitaet
+   * (Bilanz/GuV/Anhang), neueste zuerst.
+   */
+  async findByEntity(
+    entityType: string,
+    entityId: string,
+  ): Promise<SignatureEntity[]> {
+    return this.prismaService.signature.findMany({
+      where: { entityType, entityId },
       orderBy: { createdAt: 'desc' },
     });
   }

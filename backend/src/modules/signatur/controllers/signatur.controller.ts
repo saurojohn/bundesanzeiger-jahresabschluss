@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -14,6 +16,7 @@ import { MandantGuard } from '../../auth/guards/mandant.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { RequireMandant } from '../../auth/decorators/require-mandant.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { MandantId } from '../../auth/decorators/mandant-id.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { SignaturService } from '../services/signatur.service';
 import { P12Service } from '../services/p12.service';
@@ -21,6 +24,14 @@ import { SignPdfDto } from '../dto/sign-pdf.dto';
 import { ValidateSignatureDto } from '../dto/validate-signature.dto';
 import { InspectP12Dto } from '../dto/inspect-p12.dto';
 import type { SignatureResultDto } from '../dto/sign-pdf-response.dto';
+// ACHTUNG: `SignaturListeQueryDto` ist ein WERT-Import, kein `import type`.
+// Mit `import type` loescht der Compiler die Klasse zur Laufzeit weg, Nest
+// sieht `Object` als Metatype — und die globale ValidationPipe
+// (`whitelist`, `forbidNonWhitelisted`) verwirft dann JEDES Property:
+//   400 {"message":["property entityType should not exist", …]}
+// Gemessen, bevor die Ursache erkannt war.
+import { SignaturListeQueryDto } from '../dto/signatur-liste.dto';
+import type { SignaturEintragDto } from '../dto/signatur-liste.dto';
 import type {
   P12Metadata,
   SignatureResult,
@@ -157,6 +168,36 @@ export class SignaturController {
       this.extractContext(req),
     );
     return this.toResponseDto(result);
+  }
+
+  // ===========================================================================
+  // Signatur-Übersicht
+  // ===========================================================================
+
+  /**
+   * GET /api/signatur/signaturen?entityType=Bilanz&entityId=<uuid>
+   *
+   * Liefert alle Signaturen einer Entität, neueste zuerst — inklusive
+   * Zertifikatsangaben und Hash-Vorher/Nachher.
+   *
+   * BEFUND 2026-10-13: `POST /api/signatur/sign-*` lieferte eine
+   * `signatureId`, die nirgends auffindbar war (das Frontend zeigte sie als
+   * „Signatur-ID"). Ohne diesen Weg bleibt die ID eine Zeichenkette im Dialog.
+   */
+  @Get('signaturen')
+  @RequireMandant()
+  @UseGuards(MandantGuard)
+  async listSignaturen(
+    @Query() query: SignaturListeQueryDto,
+    @MandantId() mandantId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SignaturEintragDto[]> {
+    return this.signaturService.listSignaturen(
+      query.entityType,
+      query.entityId,
+      mandantId,
+      user,
+    );
   }
 
   // ===========================================================================

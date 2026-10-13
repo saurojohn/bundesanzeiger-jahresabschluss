@@ -462,7 +462,7 @@ model Jahresabschluss {
 
 model Signature {
   id                     String    @id @default(uuid()) @db.Uuid
-  jahresabschlussId      String    @db.Uuid
+  jahresabschlussId      String?   @db.Uuid
   userId                 String    @db.Uuid // Wer hat signiert (WP / Steuerberater / GF)
   rolle                  String // "WIRTSCHAFTSPRUEFER" | "STEUERBERATER" | "GF"
   signaturTyp            String // "QUALIFIZIERT" | "FORTGESCHRITTEN" | "EINFACH"
@@ -479,9 +479,23 @@ model Signature {
   signaturFormat         String    @default("PKCS7") // PKCS7 | PAdES | XAdES
   createdAt              DateTime  @default(now())
 
-  jahresabschluss Jahresabschluss @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
+  // BEFUND 2026-10-13: `jahresabschlussId` war NOT NULL. Signiert man statt
+  // dessen eine Bilanz, eine GuV oder einen Anhang, gab es keinen Abschluss,
+  // an den der Datensatz haengen konnte — er wurde uebersprungen, und die API
+  // lieferte trotzdem eine `signatureId` zurueck. Gemessen: die ID war in
+  // keinem `signature`-Datensatz auffindbar, die Tabelle blieb leer. Das
+  // Frontend zeigt genau diese ID dem Nutzer als "Signatur-ID" an.
+  //
+  // Ein Record traegt deshalb GENAU EINE von zwei Bezugsachsen:
+  //   * Jahresabschluss-Signatur -> `jahresabschlussId`
+  //   * Entitaeten-Signatur       -> `entityType` + `entityId`
+  entityType             String? // "Bilanz" | "GuV" | "Anhang" | "Abschluss"
+  entityId               String? @db.Uuid
+
+  jahresabschluss Jahresabschluss? @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
 
   @@index([jahresabschlussId])
+  @@index([entityType, entityId])
   @@index([userId])
   @@map("signature")
 }

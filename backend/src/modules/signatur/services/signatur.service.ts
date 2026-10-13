@@ -38,6 +38,7 @@ import type {
   SignatureType,
   ValidationResult,
 } from '../interfaces/signature.types';
+import type { SignaturEintragDto } from '../dto/signatur-liste.dto';
 import { P12Service } from './p12.service';
 import type { LegalValidity } from '../interfaces/signature.types';
 import { TsaClientService } from './tsa-client.service';
@@ -204,6 +205,53 @@ export class SignaturService {
           },
         ),
     );
+  }
+
+  /**
+   * Signatur-Übersicht einer Entität, neueste zuerst.
+   *
+   * BEFUND 2026-10-13: Die `signatureId` aus `sign-*` war bis dahin über
+   * keinen Endpunkt auffindbar — und im Entitätenpfad war der Datensatz gar
+   * nicht erst angelegt. Dieser Weg macht beide Korrekturen nutzbar.
+   *
+   * Der Tenant wird doppelt geprüft: die Entität muss im übergebenen Mandanten
+   * liegen (`assertEntityExists`, mandant-gefiltert) UND der User muss auf
+   * diesen Mandanten Zugriff haben (`assertMandantAccess`). Ein fehlender
+   * Scope bedeutet Ablehnung, nicht "kein Filter".
+   */
+  async listSignaturen(
+    entityType: SignedEntityType,
+    entityId: string,
+    mandantId: string,
+    user: AuthUser,
+  ): Promise<SignaturEintragDto[]> {
+    this.assertMandantAccess(mandantId, user);
+    await this.assertEntityExists(entityType, entityId, mandantId);
+
+    const eintraege = await this.signatureRepository.findByEntity(
+      entityType,
+      entityId,
+    );
+    return eintraege.map((s) => ({
+      id: s.id,
+      entityType: s.entityType,
+      entityId: s.entityId,
+      jahresabschlussId: s.jahresabschlussId,
+      signaturTyp: s.signaturTyp,
+      zeitstempel: s.zeitstempel.toISOString(),
+      zeitstempelIssuer: s.zeitstempelIssuer,
+      rolle: s.rolle,
+      userId: s.userId,
+      zertifikatSubject: s.zertifikatSubject,
+      zertifikatIssuer: s.zertifikatIssuer,
+      zertifikatSeriennummer: s.zertifikatSeriennummer,
+      zertifikatGueltigAb: s.zertifikatGueltigAb?.toISOString() ?? null,
+      zertifikatGueltigBis: s.zertifikatGueltigBis?.toISOString() ?? null,
+      hashVorher: s.hashVorher,
+      hashNachher: s.hashNachher,
+      signaturFormat: s.signaturFormat,
+      createdAt: s.createdAt.toISOString(),
+    }));
   }
 
   /**
@@ -695,30 +743,38 @@ export class SignaturService {
         tx,
       );
 
-      // Für Bilanz/GuV/Anhang ohne verknüpften Jahresabschluss wird der
-      // DB-Record übersprungen (Audit-Trail reicht für Nachvollziehbarkeit).
-      if (abschlussId) {
-        await this.signatureRepository.create(
-          {
-            jahresabschlussId: abschlussId,
-            userId: user.id,
-            rolle: userRolle,
-            signaturTyp: signatureType,
-            zertifikatSubject: certMetadata.subject,
-            zertifikatIssuer: certMetadata.issuer,
-            zertifikatSeriennummer: certMetadata.serialNumber,
-            zertifikatGueltigAb: certMetadata.validFrom,
-            zertifikatGueltigBis: certMetadata.validTo,
-            zeitstempel: timestamp ?? signingTime,
-            zeitstempelIssuer: timestampAuthority ?? 'OHNE_TSA',
-            hashVorher: hashBefore,
-            hashNachher: hashAfter,
-            signaturDaten: signatureBytes,
-            signaturFormat: 'PKCS7',
-          },
-          tx,
-        );
-      }
+      // Jeder Datensatz traegt GENAU EINE Bezugsachse. Bis 2026-10-13
+      // wurde ohne Abschluss uebersprungen — die API lieferte dann eine
+      // `signatureId`, die in keinem Datensatz auffindbar war (gemessen: 0
+      // Zeilen in `signature` nach dem Signieren einer Bilanz), waehrend das
+      // Frontend genau diese ID als "Signatur-ID" anzeigt. Der Weg war
+      // bewusst, das Ergebnis war trotzdem ein toter Verweis.
+      //
+      // Beide Faelle werden im SELBEN Callback geschrieben: Manifest und
+      // Signatur-Record oder keiner (siehe Kommentar zur Atomaritaet oben).
+      await this.signatureRepository.create(
+        {
+          id: signatureId,
+          jahresabschlussId: abschlussId,
+          entityType: abschlussId ? null : entityType,
+          entityId: abschlussId ? null : entityId,
+          userId: user.id,
+          rolle: userRolle,
+          signaturTyp: signatureType,
+          zertifikatSubject: certMetadata.subject,
+          zertifikatIssuer: certMetadata.issuer,
+          zertifikatSeriennummer: certMetadata.serialNumber,
+          zertifikatGueltigAb: certMetadata.validFrom,
+          zertifikatGueltigBis: certMetadata.validTo,
+          zeitstempel: timestamp ?? signingTime,
+          zeitstempelIssuer: timestampAuthority ?? 'OHNE_TSA',
+          hashVorher: hashBefore,
+          hashNachher: hashAfter,
+          signaturDaten: signatureBytes,
+          signaturFormat: 'PKCS7',
+        },
+        tx,
+      );
 
       return { manifest: manifestEintrag, jahresabschlussId: abschlussId };
     });

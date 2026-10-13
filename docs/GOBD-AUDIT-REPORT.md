@@ -1586,6 +1586,123 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 ---
 
+### Nachtrag 2026-10-13 (Nachtrag 13): Die gelieferte Signatur-ID war ein toter Verweis
+
+**Befund, gemessen nicht gelesen.** Nach `POST /api/signatur/sign-bilanz`:
+
+```
+1. sign-bilanz -> 200 | signatureId in der Antwort: c1f13ff5-…
+2. Datensatz mit dieser signatureId in `signature`: NICHT VORHANDEN
+3. `signature`-Tabelle insgesamt: 0 Zeilen
+4. Status nach Signieren: DRAFT
+5. PATCH /api/bilanz/:id (als STEUERBERATER) -> 200
+6. signierte WORM-Objekte fuer diese Bilanz: 1
+```
+
+**Zwei Fehler stapelten sich:**
+
+1. `signature.jahresabschlussId` war `NOT NULL`. Beim Signieren einer
+   Bilanz gibt es keinen Jahresabschluss, an den der Datensatz hängen kann —
+   er wurde **bewusst übersprungen** („Audit-Trail reicht für
+   Nachvollziehbarkeit"). Die API lieferte trotzdem eine `signatureId`, und
+   das Frontend zeigt sie dem Nutzer als „Signatur-ID" an.
+2. `SignatureRepository.create()` gab **kein `id`** an Prisma. Prisma vergab
+   darüber `@default(uuid())` eine **eigene** UUID. Die `signatureId` aus der
+   Antwort war also auch beim Jahresabschluss — wo der Datensatz sehr wohl
+   existierte — eine andere als die gespeicherte.
+
+Fehler (2) ist der unangenehmere: Er ist nicht auf den Entitätenpfad
+beschränkt, sondern hat **jede** Signatur betroffen. Ein Datensatz war da,
+die Nummer im Dialog führte zu keinem.
+
+**Behoben.** `jahresabschlussId` ist optional, dazu kommen `entityType` +
+`entityId`. Ein Record trägt **genau eine** Bezugsachse — der Repository
+weist das mit einem Fehler ab, statt einen unauffindbaren Datensatz zu
+schreiben (fail-closed). Die `id` wird durchgereicht.
+
+**Zwei Negativproben, einzeln gefahren.** Fehler (1) und Fehler (2) wurden
+getrennt zurückgebaut; beide Male fiel genau **ein** Test mit
+`expected null not to be null`.
+
+#### Die Negativprobe, die zuerst grün war
+
+Fehler (2) zurückgebaut — **14 von 14 Tests grün**. Der Test prüfte nichts.
+
+Grund: das e2e spricht per `fetch` mit einem Server auf `:3000`, und den hatte
+ich nach der Änderung am Repository **nicht neu gestartet**. Der Test prüfte
+den laufenden Prozess, nicht den Code im Repo — exakt die Falle, die in
+Nachtrag 8 schon einmal beschrieben wurde und hier erneut zugeschlagen hat.
+
+**Merksatz:** Eine Negativprobe, die grün bleibt, hat in diesem Projekt zwei
+mögliche Ursachen: der Fix ist nicht drin, **oder** der geprüfte Code läuft
+nicht. Bevor man die Fixture bemängelt, den Serverstand prüfen.
+
+#### Zwei eigene Werkzeugfehler in derselben Stunde
+
+Beides Fehler in der Prüfkette, nicht im Produkt:
+
+1. `npm run typecheck | tail -6 && echo OK` meldete „OK", obwohl `tsc`
+   **drei Fehler** geschrieben hatte: die Pipe gibt den Exitcode von `tail`
+   zurück. Ab jetzt wird der Exitcode direkt geprüft
+   (`npm run typecheck > log 2>&1; echo $?`).
+2. `source /tmp/bzenv.sh && nohup … &` schickt die **ganze Kette** in den
+   Hintergrund. Der Vordergrund hatte danach kein `DATABASE_URL`, das
+   Messskript brach mit `Environment variable not found` ab.
+
+#### Gemessen, aber nicht behoben — fachliche Entscheidung
+
+Nach dem Signieren bleibt die Bilanz `DRAFT` und ist **weiterhin
+bearbeitbar** (Zeile 5 oben: ein STEUERBERATER ändert sie per PATCH auf 200).
+Das signierte WORM-Objekt passt damit nicht mehr zum vorgelegten Dokument,
+und im Datensatz steht nirgends, dass er einmal signiert war.
+
+Ob das so sein darf, ist eine **Fachfrage** und keine
+Implementierungsfrage: Nach § 147 AO muss die unterzeichnete Fassung
+identifizierbar und unveränderbar sein — dafür spricht ein Sperrversuch.
+Dagegen spricht ein Korrekturworkflow: eine Korrektur erzeugt zwingend eine
+neue Signatur, der alte WORM-Satz darf nicht gelöscht werden, und die Entität
+braucht dann mehrere Signaturen.
+
+**Nicht entschieden, nicht gebaut.** Der Beleg ist jetzt aber da: die Signatur
+ist abrufbar, statt in einer Audit-Zeile zu versinken.
+
+#### Nachtrag, dasselbe Tag: der Endpunkt, der die ID auflösbar macht
+
+`findByEntity` ohne Abnehmer wäre toter Code gewesen. Also:
+`GET /api/signatur/signaturen?entityType=&entityId=`.
+
+Zwei Dinge, die dabei **gemessen** statt angenommen wurden:
+
+| Anfrage | Antwort |
+|---|---|
+| ohne Mandantenquelle | `403 "mandantId erforderlich"` |
+| mit Header, `import type` im Controller | `400 ["property entityType should not exist", …]` |
+
+Die zweite Zeile ist der eigentliche Fund. `import type { SignaturListeQueryDto }`
+**löscht die Klasse zur Laufzeit weg**. Nest sieht `Object` als Metatype, und die
+globale ValidationPipe (`whitelist`, `forbidNonWhitelisted`) verwirft dann
+**jedes** Property — der DTO sah korrekt aus, `tsc` war grün, und der Endpunkt
+nahm nichts entgegen. Für ein DTO ist `import type` damit nie richtig: Es ist ein
+Wert, kein Typ.
+
+**Negativprobe mit dem richtigen Auslöser.** Zuerst `assertMandantAccess` aus
+dem Service entfernt — **16 von 17 Tests grün**. Der Test prüfte nicht die
+Stelle, die ich im Blick hatte: der Controller-Guard lehnt einen fremden
+Mandanten schon vorher ab, die Service-Prüfung ist eine zweite Schicht, die über
+HTTP nicht von der ersten unterscheidbar ist.
+
+Der **testbare** Teil ist der mandant-gefilterte Existenz-Check. Zurückgebaut
+liefert ein fremder Mandant:
+
+```
+× GET /api/signatur/signaturen mit fremdem Mandant → 404
+  → fremder Mandant darf keine Signatur liefern: expected 200 to be 404
+```
+
+Also ein **echter Cross-Tenant-Leak**, vom Test gefangen.
+
+---
+
 ### Nachtrag 2026-10-13 (Nachtrag 12): Der Mandant-Picker der WP-Seite war wirkungslos
 
 **Befund:** `WPView` haelt den gewaehlten Mandanten nur im React-State und
@@ -1914,13 +2031,14 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 |---|---|
 | Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
 | Backend eslint-Warnings | 0 (`--max-warnings 0`) |
-| Backend Unit-Tests | **690 / 690 grün** (73 Dateien) |
+| Backend Unit-Tests | **694 / 694 grün** (73 Dateien) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
-| Playwright e2e | **63 / 63 grün**, 0 übersprungen |
-| Migrationen auf leerer DB | 7 angewandt, `migrate diff` ohne Abweichung |
+| Playwright e2e | **64 / 64 grün**, 0 übersprungen |
+| Migrationen auf leerer DB | 8 angewandt, `migrate diff` ohne Abweichung |
 | Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
+| Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |

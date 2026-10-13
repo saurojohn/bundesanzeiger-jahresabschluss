@@ -52,6 +52,28 @@ function authHeaders(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 }
 
+/**
+ * Login-Antwort.
+ *
+ * BEFUND 2026-10-13: Diese Datei BENUTZT `LoginResponse`, deklariert sie
+ * aber nicht. Sie bezog den Typ aus dem globalen Scope — deklariert in
+ * `pagination.e2e.spec.ts`, das zu diesem Zeitpunkt selbst ein
+ * Globalskript war. Ein solcher Kopplung über den globalen Scope ist
+ * unsichtbar: die Datei kompiliert für sich allein betrachtet nie.
+ *
+ * Sie ist jetzt hier deklariert. Wer die Datei umbenennt, verschiebt oder
+ * löscht, kann daran nichts mehr zerlegen, und die Verantwortung für den
+ * Typ liegt bei dem Code, der ihn benutzt.
+ */
+interface LoginResponse {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string;
+    mandanten: Array<{ id: string; firmenname: string; rolle: string }>;
+  };
+}
+
 interface SignResponse {
   signatureId: string;
   signedPdfBase64: string;

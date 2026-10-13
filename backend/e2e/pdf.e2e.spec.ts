@@ -90,6 +90,28 @@ interface PdfGenResponse {
 }
 
 
+/**
+ * Login-Antwort.
+ *
+ * BEFUND 2026-10-13: Diese Datei BENUTZT `LoginResponse`, deklariert sie
+ * aber nicht. Sie bezog den Typ aus dem globalen Scope — deklariert in
+ * `pagination.e2e.spec.ts`, das zu diesem Zeitpunkt selbst ein
+ * Globalskript war. Ein solcher Kopplung über den globalen Scope ist
+ * unsichtbar: die Datei kompiliert für sich allein betrachtet nie.
+ *
+ * Sie ist jetzt hier deklariert. Wer die Datei umbenennt, verschiebt oder
+ * löscht, kann daran nichts mehr zerlegen, und die Verantwortung für den
+ * Typ liegt bei dem Code, der ihn benutzt.
+ */
+interface LoginResponse {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string;
+    mandanten: Array<{ id: string; firmenname: string; rolle: string }>;
+  };
+}
+
 describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
   // (kein lokales Nest-App mehr — die Specs gehen per HTTP gegen den laufenden Server)
   let steuerberaterToken: string;

@@ -987,6 +987,20 @@ Richtig ist:
    eine Konfiguration auslaesst, meldet "gruen" fuer Code, den CI
    ablehnt. Behoben mit `export {};` am Dateiende.
 
+
+   **Folge, die derselbe Eingriff aufgedeckt hat:** `pdf.e2e.spec.ts` und
+   `signatur.e2e.spec.ts` **benutzten** `LoginResponse`, **deklarierten es
+   aber nirgends**. Sie bekamen den Typ aus dem globalen Scope — von
+   `pagination.e2e.spec.ts`, das selbst ein Globalskript war. Als das zum
+   Modul wurde, brach die CI mit `Cannot find name 'LoginResponse'`.
+
+   Das ist der unangenehmste Kopplungsfall überhaupt: **jede Datei
+   kompiliert für sich allein betrachtet**, und trotzdem schlägt das
+   Umbenennen, Verschieben oder Löschen einer völlig fremden Datei fehl.
+   Drei Dateien hingen an einer impliziten Vereinbarung, die nirgends
+   notiert war. Beide haben den Typ jetzt selbst deklariert — wer sie
+   umbenennt, kann daran nichts mehr zerlegen.
+
    Vier Blöcke taten mehr als App aufbauen und bleiben deshalb behalten —
    der TestingModule wird dort weiterhin gebraucht: `api.e2e`
    (Admin-Token-Fixture), `public-api.e2e` (Login-Fixture),

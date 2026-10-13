@@ -362,3 +362,9 @@ describe('WP / IDW-Pruefung E2E (M3 Sprint 0)', () => {
     expect(body.markdownReport).toContain('## Plausibilitäts-Ergebnisse (IDW PS 880)');
   });
 });
+
+// Ohne diese Zeile waere die Datei fuer TypeScript ein GLOBALSKRIPT statt
+// eines Moduls — ihre `const BASE` auf oberster Ebene kollidierte dann mit
+// den anderen Specs (TS2451). Der Import der entfernten App war vorher der
+// Grund, warum sie ueberhaupt ein Modul war.
+export {};

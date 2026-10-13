@@ -329,3 +329,9 @@ describe('Bilanz E2E (Sprint 1.x)', () => {
     });
   });
 });
+
+// Ohne diese Zeile waere die Datei fuer TypeScript ein GLOBALSKRIPT statt
+// eines Moduls — ihre `const BASE` auf oberster Ebene kollidierte dann mit
+// den anderen Specs (TS2451). Der Import der entfernten App war vorher der
+// Grund, warum sie ueberhaupt ein Modul war.
+export {};

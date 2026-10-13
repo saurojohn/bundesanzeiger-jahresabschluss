@@ -388,3 +388,9 @@ describe('Konsolidierung E2E (M3 Sprint 1)', () => {
     expect(String(body.message)).toMatch(/Finalize nur nach Apply/);
   });
 });
+
+// Ohne diese Zeile waere die Datei fuer TypeScript ein GLOBALSKRIPT statt
+// eines Moduls — ihre `const BASE` auf oberster Ebene kollidierte dann mit
+// den anderen Specs (TS2451). Der Import der entfernten App war vorher der
+// Grund, warum sie ueberhaupt ein Modul war.
+export {};

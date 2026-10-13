@@ -433,3 +433,9 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
     expect(body.mappings.some((m) => m.target.konto === '4400' || m.target.konto === '5000')).toBe(true);
   });
 });
+
+// Ohne diese Zeile waere die Datei fuer TypeScript ein GLOBALSKRIPT statt
+// eines Moduls — ihre `const BASE` auf oberster Ebene kollidierte dann mit
+// den anderen Specs (TS2451). Der Import der entfernten App war vorher der
+// Grund, warum sie ueberhaupt ein Modul war.
+export {};

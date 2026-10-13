@@ -965,11 +965,26 @@ Test nicht. Das ist zu weit gefasst:
 
 Richtig ist:
 
-1. Der `createNestApplication()`-Block in 16 von 18 Specs ist **toter
-   Code**. Er deklariert `ValidationPipe` und den globalen Präfix
+1. Der `createNestApplication()`-Block war in 16 von 18 Specs **toter
+   Code**. Er deklarierte `ValidationPipe` und den globalen Präfix
    **erneut von Hand** — eine Nachbildung der `main.ts`-Konfiguration.
    Ändert sich `main.ts` (etwa eine neue Pipe oder Interceptor-Option),
-   prüfen die Specs weiter die alte Konfiguration, ohne zu warnen.
+   prüften die Specs weiter die alte Konfiguration, ohne zu warnen.
+
+   **Behoben am 2026-10-13**, Datei für Datei und nach jeder Datei
+   verifiziert: der App-Aufbau ist entfernt, der Kommentar sagt jetzt,
+   worauf die Spec tatsächlich prüft. 683/683.
+
+   Vier Blöcke taten mehr als App aufbauen und bleiben deshalb behalten —
+   der TestingModule wird dort weiterhin gebraucht: `api.e2e`
+   (Admin-Token-Fixture), `public-api.e2e` (Login-Fixture),
+   `mandant-quelle.e2e` und `mandantentrennung.e2e` (`prisma` daraus).
+
+2. `signatur.e2e.spec.ts` setzte zusätzlich `process.env['S3_*']` mit dem
+   Kommentar „Mock-Env VOR App-Init setzen". Der Server unter Test ist ein
+   **anderer Prozess** — diese Variablen erreichen ihn nicht und können es
+   nicht. Der Kommentar legte eine Konfiguration nahe, die es nicht gab;
+   das ist schlimmer als toter Code, weil er aktiv in die Irre führt.
 2. Die Specs hängen an einem Server auf `:3000`. Der CI-Schritt
    „Backend starten" muss mit der Suite mitgehen — sonst schlägt die
    ganze Datei mit `ECONNREFUSED` fehl (gemessen: 112 rote Tests, als

@@ -975,6 +975,18 @@ Richtig ist:
    verifiziert: der App-Aufbau ist entfernt, der Kommentar sagt jetzt,
    worauf die Spec tatsächlich prüft. 683/683.
 
+   **Nachtrag, derselbe Tag:** Nach dem Entfernen der Importe waren sechs
+   Specs fuer TypeScript keine Module mehr, sondern **Globalskripte**. Ihre
+   `const BASE` auf oberster Ebene landete im globalen Scope und kollidierte
+   (TS2451) — unter anderem mit `pagination.e2e.spec.ts`, das schon vorher
+   ein Skript war und deshalb erst jetzt auffiel.
+
+   Lokal war das unsichtbar: ich hatte `npx tsc --noEmit` gefahren, die CI
+   faehrt `npm run typecheck` = `tsc --noEmit && tsc -p tsconfig.test.json`
+   — und **erst das zweite schliesst e2e ein**. Ein lokaler Check, der
+   eine Konfiguration auslaesst, meldet "gruen" fuer Code, den CI
+   ablehnt. Behoben mit `export {};` am Dateiende.
+
    Vier Blöcke taten mehr als App aufbauen und bleiben deshalb behalten —
    der TestingModule wird dort weiterhin gebraucht: `api.e2e`
    (Admin-Token-Fixture), `public-api.e2e` (Login-Fixture),

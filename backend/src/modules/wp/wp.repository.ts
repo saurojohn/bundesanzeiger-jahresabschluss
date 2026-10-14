@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CursorCodec } from '../../common/dto/pagination.dto';
+import { PaginationService } from '../../common/services/pagination.service';
 
 /**
  * Repository für WP-spezifische Persistenz.
@@ -93,11 +93,14 @@ export class WPRepository {
     };
 
     if (args.cursor) {
-      const { sortValue } = CursorCodec.decode(args.cursor);
-      const cursorDate = new Date(sortValue);
-      if (!Number.isNaN(cursorDate.getTime())) {
-        where.OR = [{ createdAt: { lt: cursorDate } }];
-      }
+      const cond = PaginationService.cursorCondition(
+        args.cursor,
+        'createdAt',
+        'desc',
+        'asc',
+        (w: string) => new Date(w),
+      );
+    if (cond) where.OR = cond;
     }
 
     return this.prisma.wPNotiz.findMany({

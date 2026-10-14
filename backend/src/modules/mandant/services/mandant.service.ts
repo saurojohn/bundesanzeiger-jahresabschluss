@@ -10,7 +10,9 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 import { MANDANTEN_SORTIERUNG } from '../../../common/utils/mandanten-sortierung';
 import { PaginationService } from '../../../common/services/pagination.service';
-import { CursorCodec, type PaginatedResult } from '../../../common/dto/pagination.dto';
+// `CursorCodec` wird hier nicht mehr direkt benutzt — die Cursor-Auswertung
+// laeuft ueber `PaginationService.cursorCondition`. `PaginatedResult` schon.
+import type { PaginatedResult } from '../../../common/dto/pagination.dto';
 import { AuditService } from '../../audit/services/audit.service';
 import { CreateMandantDto } from '../dto/create-mandant.dto';
 import { UpdateMandantDto } from '../dto/update-mandant.dto';
@@ -173,9 +175,17 @@ export class MandantService {
     }
 
     const cursorWhere: Prisma.MandantWhereInput = {};
-    if (pagination?.cursor) {
-      const { sortValue } = CursorCodec.decode(pagination.cursor);
-      cursorWhere.OR = [{ firmenname: { lt: sortValue } }];
+    // Siehe `PaginationService.cursorCondition`: `firmenname` ist nicht
+    // eindeutig, deshalb braucht es hier den `id`-Tiebreaker genauso wie
+    // bei den Zeitstempeln in den anderen Listen.
+    const cond = PaginationService.cursorCondition(
+      pagination?.cursor,
+      'firmenname',
+      'asc',
+      'asc',
+    );
+    if (cond) {
+      cursorWhere.OR = cond as Prisma.MandantWhereInput['OR'];
     }
 
     const [items, total] = await Promise.all([

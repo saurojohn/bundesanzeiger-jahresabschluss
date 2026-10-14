@@ -1586,6 +1586,106 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 ---
 
+### Nachtrag 2026-10-14 (Nachtrag 14): Die Cursor-Pagination verlor Belege
+
+**Befund, gemessen.** Fünf Bilanzen mit **identischem** `updatedAt`,
+`pageSize=2`:
+
+```
+Seite 1: 2 Items, nextCursor=ja
+Seite 2: 0 Items, nextCursor=nein
+erwartet GJ 2201-2205, gesehen: 2201
+ERGEBNIS: 1/5 — ITEMS FEHLEN
+```
+
+Vier von fünf Belegen waren über die Liste nicht erreichbar, während `total`
+im selben Response weiterhin sechs behauptete. Für eine Kanzlei ist das kein
+Kosmetikfehler: wer die Bilanzliste durchblättert, **übersieht Belege**, und
+der Widerspruch zwischen `total` und der gelieferten Menge ist nicht
+erkennbar.
+
+**Ursache.** `CursorCodec.encode()` schreibt `id:sortValue` in das Token —
+der Kommentar versprach einen „Stable Tiebreaker". `whereFromCursor()` las
+nur `sortValue` und **verwarf die `id`**. Damit lautete die Bedingung
+schlicht `updatedAt < cursorDate`, und alles mit *gleichem* Zeitstempel fiel
+weg. Sieben Aufrufstellen hatten dieselbe Kopie: Bilanz, GuV, Anhang, Audit,
+WP-Notizen, Mandant.
+
+**Die Richtung war nicht trivial.** Die Sortierungen lauten
+`[{ updatedAt: 'desc' }, { id: 'asc' }]` — **gemischte Richtung**. Mein erster
+Fix nahm für den Tiebreaker `id < cursorId` an (richtig nur bei `id: 'desc'`)
+und **löste den Fehler nicht**; die Messung blieb bei 1/5. Erst das Nachsehen
+in alle sieben `orderBy`-Klauseln zeigte `id: 'asc'` überall, und beim
+Mandanten sogar `firmenname: 'asc'`. Beide Richtungen sind jetzt Pflicht-
+Parameter, ohne Default.
+
+**Behoben.** `PaginationService.cursorCondition()` — eine zentrale Funktion
+statt sieben Kopien, denn die Wiederholung war der Grund, dass der Fehler
+überall stand:
+
+```
+(primärfeld <|-> wert)  ODER  (primärfeld = wert UND id <|-> cursorId)
+```
+
+#### Zweiter Befund derselben Stelle: ein Query-Param schoss den Server ab
+
+`CursorCodec.decode()` hatte einen Fallback: ohne `:` wurde die ganze
+Zeichenkette als `id` **und** `sortValue` gelesen. Bei `firmenname`
+(ein String, kein Datum) kam so `base64("Berlin")` durch, und
+`id: { gt: 'Berlin' }` auf einer UUID-Spalte ließ Postgres scheitern:
+
+```
+Inconsistent column data: Error creating UUID,
+invalid character: expected … found `r` at 3        -> HTTP 500
+```
+
+Der Decoder ist jetzt **strikt** und wirft `BadRequestException`. Damit ist
+auch die Zusage im Kommentar wahr, die vorher nicht stimmte („Selbst-
+validierend (Decoder prüft Format)", „führt zu 400"): gemessen lieferten
+`?cursor=notbase64`, `?cursor=!!!!` und `?cursor=x` zuvor **200 mit der
+ersten Seite**, ohne jede Fehlermeldung.
+
+#### Drei Negativproben, und eine war grün, weil sie das Falsche prüfte
+
+| Zurückgebaut | Ergebnis |
+|---|---|
+| `id`-Tiebreaker | 1 rot: `expected [2212, 2215] to equal [2211…2215]` |
+| strenger Decoder | 1 rot: `expected 500 to be 400` |
+| **nur `assertMandantAccess`**-Analogie: Decoder nachsichtig | **10/10 grün** |
+
+Die dritte Zeile lohnt sich. Der Decoder war nachsichtig, alle Tests blieben
+grün — die 400 kam inzwischen aus der **Datumsprüfung** in `cursorCondition`,
+nicht aus dem Decoder. Zwei Schichten liefern dieselbe Antwort, und der Test
+unterscheidet sie nicht.
+
+Der Fall, der es doch unterscheidet, ist `firmenname`, weil dort **kein
+Datum** im Spiel ist: `base64("Berlin")` hätte den alten Fallback durchlassen
+und den Server mit 500 abgeschossen. Der steht jetzt im Test.
+
+#### Was die Korrektur an einer anderen Stelle aufgedeckt hat
+
+Nach dem `id`-Tiebreaker lief `bilanz.e2e` plötzlich auf **409** für GJ 2031.
+Ursache ist dieselbe Kopplungsklasse wie in Nachtrag 12, nur eine Ebene tiefer:
+
+* Die Specs laufen in **keiner alphabetischen Reihenfolge** — gemessen:
+  `signatur, ebilanz, api, datev-import, mandant-quelle, pagination, …,
+  bilanz, wp, …`.
+* `pagination.e2e` legte seinen Bestand für **GJ 2030-2035** an. GJ 2031
+  ist zugleich der Jahreswert von `bilanz.e2e`.
+* Durch die zugesagte Sortierung ist `mandanten[0]` jetzt **Beispiel GmbH**
+  statt Demo GmbH — dieselbe Mandanten-Kollision, die Nachtrag 12 in den
+  anderen Specs aufgedeckt hatte, jetzt hier.
+
+Zwei voneinander unabhängige Kopplungen, beide entfernt: der Bestand liegt
+jetzt in **GJ 2040-2045** (von keiner anderen Spec belegt, und unter der
+DTO-Grenze 2100 — `2300` scheiterte mit `geschaeftsjahr muss <= 2100 sein`),
+und `afterAll` räumt ihn wieder weg, damit keine Spec Spuren hinterlässt.
+
+Der Volllauf ist **zweimal hintereinander** gefahren: Die ersten Fehler waren
+reihenfolgeabhängig, ein einzelner grüner Lauf hätte nichts bewiesen.
+
+---
+
 ### Nachtrag 2026-10-13 (Nachtrag 13): Die gelieferte Signatur-ID war ein toter Verweis
 
 **Befund, gemessen nicht gelesen.** Nach `POST /api/signatur/sign-bilanz`:
@@ -2031,7 +2131,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 |---|---|
 | Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
 | Backend eslint-Warnings | 0 (`--max-warnings 0`) |
-| Backend Unit-Tests | **694 / 694 grün** (73 Dateien) |
+| Backend Unit-Tests | **696 / 696 grün** (73 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
 | Playwright e2e | **64 / 64 grün**, 0 übersprungen |
@@ -2040,6 +2140,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
+| Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |
 | CI (backend + frontend) | ✅ beide Jobs grün |

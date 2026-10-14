@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CursorCodec } from '../dto/pagination.dto';
+import { PaginationService } from '../services/pagination.service';
 
 /**
  * Typen für GuV-spezifische Eingaben.
@@ -139,11 +139,14 @@ export class GuVRepository {
     };
 
     if (args.cursor) {
-      const { sortValue } = CursorCodec.decode(args.cursor);
-      const cursorDate = new Date(sortValue);
-      if (!Number.isNaN(cursorDate.getTime())) {
-        where.OR = [{ updatedAt: { lt: cursorDate } }];
-      }
+      const cond = PaginationService.cursorCondition(
+      args.cursor,
+      'updatedAt',
+      'desc',
+      'asc',
+      (w: string) => new Date(w),
+    );
+    if (cond) where.OR = cond;
     }
 
     const guvs = await this.prismaService.guV.findMany({

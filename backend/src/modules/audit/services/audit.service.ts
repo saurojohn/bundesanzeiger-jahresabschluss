@@ -1,10 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import {
-  CursorCodec,
-  type PaginatedResult,
-} from '../../../common/dto/pagination.dto';
+import type { PaginatedResult } from '../../../common/dto/pagination.dto';
 import { PaginationService } from '../../../common/services/pagination.service';
 import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 import { AuditIntegrityService } from './audit-integrity.service';
@@ -291,11 +288,14 @@ export class AuditService {
     const pageSize = Math.min(filter.pageSize ?? 50, 500);
 
     if (filter.cursor) {
-      const { sortValue } = CursorCodec.decode(filter.cursor);
-      const cursorDate = new Date(sortValue);
-      if (!Number.isNaN(cursorDate.getTime())) {
-        where.OR = [{ createdAt: { lt: cursorDate } }];
-      }
+      const cond = PaginationService.cursorCondition(
+        filter.cursor,
+        'createdAt',
+        'desc',
+        'asc',
+        (w: string) => new Date(w),
+      );
+    if (cond) where.OR = cond;
     }
 
     const [items, total] = await Promise.all([

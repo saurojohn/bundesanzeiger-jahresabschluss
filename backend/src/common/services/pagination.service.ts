@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   CursorCodec,
   type PaginatedResult,
@@ -76,23 +76,59 @@ export class PaginationService {
   }
 
   /**
-   * Berechnet den SQL-WHERE-Filter aus einem opaken Cursor-Token.
+   * Baut die Keyset-Bedingung fuer `(sortField, id)` bei DESC-Sortierung.
    *
-   * Standard-Implementierung: Suche Items mit `updatedAt < sortValue`
-   * (für DESC-Sort). Andere Sortier-Felder müssen analoge Helper
-   * bereitstellen.
+   * BEFUND 2026-10-14: Sieben Aufrufstellen filterten nur nach dem
+   * Zeitstempel (`{ updatedAt: { lt: cursorDate } }`) und warfen die `id` aus
+   * dem Token weg — obwohl `encode()` sie hineingeschrieben hatte und der
+   * Kommentar einen "Stable Tiebreaker" versprach. Bei zwei Datensaetzen mit
+   * identischem `updatedAt` heisst `< cursorDate`: alles mit GLEICHEM
+   * Zeitstempel faellt weg.
+   *
+   * Gemessen (5 Bilanzen mit identischem `updatedAt`, `pageSize=2`):
+   *
+   *     Seite 1: 2 Items, nextCursor=ja
+   *     Seite 2: 0 Items, nextCursor=nein
+   *     erwartet GJ 2201-2205, gesehen: 2201
+   *     ERGEBNIS: 1/5 — ITEMS FEHLEN
+   *
+   * Fuer eine Kanzlei ist das kein Schoenheitsfehler: wer die Bilanzliste
+   * durchblaettert, uebersieht Belege, und `total` im Response behauptet
+   * gleichzeitig, es gaebe sechs.
+   *
+   * Korrekt fuer DESC auf `(field, id)`:
+   *   `(field < sortValue) OR (field = sortValue AND id < cursorId)`
+   *
+   * Eine zentrale Funktion statt sieben Kopien — die Wiederholung ist genau
+   * der Grund, warum der Fehler ueberall stand.
+   *
+   * @param cast — wandelt den Sortierwert (z.B. ISO-Datum) in den Typ, den
+   *   Prisma erwartet. Bei `firmenname` nicht noetig (String).
    */
-  static whereFromCursor(
+  static cursorCondition(
     cursor: string | undefined,
-    field: 'updatedAt' | 'createdAt' = 'updatedAt',
-  ): { field: string; sortValue: Date } | null {
-    if (!cursor) return null;
-    const { sortValue } = CursorCodec.decode(cursor);
-    const parsed = new Date(sortValue);
-    if (Number.isNaN(parsed.getTime())) {
-      // Invalid cursor → null (Repository behandelt das als erste Page)
-      return null;
+    sortField: 'updatedAt' | 'createdAt' | 'firmenname',
+    richtung: 'asc' | 'desc',
+    idRichtung: 'asc' | 'desc',
+    cast?: (wert: string) => Date,
+  ): Array<Record<string, unknown>> | undefined {
+    if (!cursor) return undefined;
+
+    const { id, sortValue } = CursorCodec.decode(cursor);
+    const wert = cast ? cast(sortValue) : sortValue;
+    if (wert instanceof Date && Number.isNaN(wert.getTime())) {
+      throw new BadRequestException(
+        `cursor ist ungueltig (Sortierwert "${sortValue}" ist kein Datum)`,
+      );
     }
-    return { field, sortValue: parsed };
+
+    // „Danach" heisst: streng groesser/kleiner ODER gleicher Sortierwert mit
+    // passendem id-Vergleich. Die Richtung muss EXAKT dem `orderBy` der
+    // aufrufenden Query entsprechen — deshalb sind beide Parameter Pflicht
+    // und nicht mit einem Default vorbelegt.
+    const vor = richtung === 'desc' ? { lt: wert } : { gt: wert };
+    const idVergleich = idRichtung === 'desc' ? { lt: id } : { gt: id };
+
+    return [{ [sortField]: vor }, { [sortField]: wert, id: idVergleich }];
   }
 }

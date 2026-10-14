@@ -87,18 +87,42 @@ export class CursorCodec {
   /**
    * Decode cursor to {id, sortValue}.
    *
-   * Fallback: Falls der Cursor kein ':' enthält, wird die gesamte
-   * Zeichenkette als `id` interpretiert (für sehr alte Backends).
+   * STRIKT seit 2026-10-14. Zuvor galt: fehlt der Trenner, wurde die ganze
+   * Zeichenkette als `id` UND `sortValue` gelesen, und ein nicht als Datum
+   * interpretierbarer Wert fiel in `whereFromCursor` auf `null` — die
+   * Anfrage lief dann einfach als "erste Seite" weiter. Gemessen: `?cursor=notbase64`,
+   * `?cursor=!!!!`, `?cursor=x` lieferten alle 200 mit der ersten Seite,
+   * ohne jede Fehlermeldung. Der Kommentar versprach hier "Selbst-validierend
+   * (Decoder prueft Format)" und "Sort-Field-Wechsel fuehrt zu 400" — beides
+   * war nicht implementiert.
+   *
+   * Fail-closed: ein Cursor, den der Server nie ausgegeben hat, ist ein
+   * Fehler des Clients, und der wird gesagt. Ein stillschweigend ignorierter
+   * Cursor liefert dem Aufrufer die erste Seite und laesst ihn glauben, er
+   * blaettere weiter.
    */
   static decode(cursor: string): { id: string; sortValue: string } {
-    const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+    let decoded: string;
+    try {
+      decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+    } catch {
+      throw new BadRequestException('cursor ist ungueltig (kein Base64)');
+    }
+
     const idx = decoded.indexOf(':');
-    if (idx < 0) {
-      return { id: decoded, sortValue: decoded };
+    if (idx <= 0) {
+      throw new BadRequestException(
+        'cursor ist ungueltig (erwartet wird <id>:<sortierwert>)',
+      );
     }
     const id = decoded.slice(0, idx);
     const sortValue = decoded.slice(idx + 1);
-    return { id, sortValue: sortValue || id };
+    if (!id || !sortValue) {
+      throw new BadRequestException(
+        'cursor ist ungueltig (id oder Sortierwert fehlt)',
+      );
+    }
+    return { id, sortValue };
   }
 }
 /**

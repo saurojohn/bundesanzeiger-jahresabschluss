@@ -39,9 +39,11 @@ import type {
   ValidationResult,
 } from '../interfaces/signature.types';
 import type { SignaturEintragDto } from '../dto/signatur-liste.dto';
+import type { SignaturStatusDto } from '../dto/signatur-status.dto';
 import { P12Service } from './p12.service';
 import type { LegalValidity } from '../interfaces/signature.types';
 import { TsaClientService } from './tsa-client.service';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 /**
  * Request-Context für Signatur-Endpoints.
@@ -205,6 +207,99 @@ export class SignaturService {
           },
         ),
     );
+  }
+
+  /**
+   * Signatur-Status einer Entitaet — die Sichtbarkeitshaelfte der
+   * Entscheidung vom 2026-10-14 (nicht sperren, sondern anzeigen).
+   *
+   * Massgeblich ist der Zeitvergleich: Signatur-Record `createdAt` gegen
+   * `updatedAt` der Entitaet. Liegt die Entitaet spaeter, wurde nach der
+   * Signatur geaendert — dann sind die vorgelegten Daten NICHT die signierte
+   * Fassung. Die signierte Fassung selbst bleibt im WORM-Speicher
+   * unveraendert erhalten (§ 147 AO).
+   *
+   * Der Vergleich nutzt bewusst den Signatur-Record und NICHT den Zeitstempel
+   * der Signatur: ohne TSA ist `zeitstempel` der Mock-Zeitpunkt, und der
+   * DB-Zeitpunkt des Records ist der einzige Wert, der unabhängig von einer
+   * externen Zeitquelle stimmt.
+   */
+  async getSignaturStatus(
+    entityType: SignedEntityType,
+    entityId: string,
+    mandantId: string,
+    user: AuthUser,
+  ): Promise<SignaturStatusDto> {
+    this.assertMandantAccess(mandantId, user);
+    await this.assertEntityExists(entityType, entityId, mandantId);
+
+    const signaturen = await this.signatureRepository.findByEntity(
+      entityType,
+      entityId,
+    );
+    const letzte = signaturen[0] ?? null;
+
+    const basis: SignaturStatusDto = {
+      entityType,
+      entityId,
+      status: 'UNSIGNIERT',
+      signiertAm: letzte?.createdAt.toISOString() ?? null,
+      signiertVon: letzte?.userId ?? null,
+      signaturTyp: letzte?.signaturTyp ?? null,
+      hashNachher: letzte?.hashNachher ?? null,
+      signedPdfWormKey: null,
+      entitaetGeaendertAm: null,
+      geaendertNachSignatur: false,
+      anzahlSignaturen: signaturen.length,
+      hinweis: 'Dieses Dokument wurde noch nicht signiert.',
+    };
+
+    if (!letzte) return basis;
+
+    // `updatedAt` der Entitaet mandanten-filtert laden.
+    const geaendertAm = await this.entitaetUpdatedAt(entityType, entityId, mandantId);
+    const geaendertNachSignatur = geaendertAm !== null && geaendertAm > letzte.createdAt;
+
+    // WORM-Schlüssel des signierten Dokuments (fuer den Download).
+    const worm = await this.wormObjectRepository.findActiveByEntity(
+      this.entityTypeForSigned(entityType),
+      entityId,
+    );
+
+    return {
+      ...basis,
+      status: geaendertNachSignatur ? 'ABWEICHEND' : 'SIGNIERT',
+      entitaetGeaendertAm: geaendertAm?.toISOString() ?? null,
+      geaendertNachSignatur,
+      signedPdfWormKey: worm?.objectKey ?? null,
+      hinweis: geaendertNachSignatur
+        ? 'ACHTUNG: Dieses Dokument wurde nach der Signatur geaendert. ' +
+          'Die hier angezeigten Daten entsprechen NICHT der signierten Fassung. ' +
+          'Die signierte Fassung liegt unveraendert im WORM-Speicher ' +
+          'und muss vor einer Vorlage beim Finanzamt verwendet werden.'
+        : `Dokument ist signiert (${letzte.createdAt.toISOString()}) und seitdem unveraendert.`,
+    };
+  }
+
+  /** `updatedAt` der Entitaet, mandantengefiltert. */
+  private async entitaetUpdatedAt(
+    entityType: SignedEntityType,
+    entityId: string,
+    mandantId: string,
+  ): Promise<Date | null> {
+    const where = { id: entityId, mandantId };
+    switch (entityType) {
+      case 'Bilanz':
+        return (await this.prisma.bilanz.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
+      case 'GuV':
+        return (await this.prisma.guV.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
+      case 'Anhang':
+        return (await this.prisma.anhang.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
+      case 'Abschluss':
+        return (await this.prisma.jahresabschluss.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
+      default:
+        return null;
+    }
   }
 
   /**
@@ -584,6 +679,7 @@ export class SignaturService {
 
     // 3) Existenz-Check der Entity (mandant-gefiltert)
     await this.assertEntityExists(entityType, entityId, args.mandantId);
+    await this.assertMandantBearbeitbar(args.mandantId, 'Dokument signieren');
 
     // 4) PDF generieren (via PdfService → WORM-Upload + Audit)
     const pdfGenResponse = await generatePdf({
@@ -845,6 +941,28 @@ export class SignaturService {
     if (!accessibleMandantIds.includes(mandantId)) {
       throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
     }
+  }
+
+  /**
+   * Archiv-Guard fuer das Signieren (§ 147 AO, Entscheidung 2026-10-14).
+   *
+   * Ein archivierter Mandant wird nicht mehr fortgeschrieben. Alle anderen
+   * Schreibpfade waren bereits ueber `assertMandantNichtArchiviert`
+   * gesperrt; die qeS-Signatur war die letzte Luecke — und die folgenreichste,
+   * weil sie ein Dokument mit rechtlicher Wirkung erzeugt.
+   *
+   * LESEN bleibt offen: signierte PDFs und der Bestand eines archivierten
+   * Mandanten muessen zur Nachvollziehbarkeit abrufbar bleiben.
+   */
+  private async assertMandantBearbeitbar(
+    mandantId: string,
+    aktion: string,
+  ): Promise<void> {
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { archiviertAt: true },
+    });
+    assertMandantNichtArchiviert(mandant?.archiviertAt, aktion);
   }
 
   private async assertEntityExists(

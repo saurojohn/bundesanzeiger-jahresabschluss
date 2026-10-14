@@ -16,6 +16,7 @@ import type {
 } from '../wp.repository';
 import { WPRepository } from '../wp.repository';
 import { IdwPruefungService } from './idw-pruefung.service';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 export interface WPPruefungServiceContext {
   ip?: string | null;
@@ -33,6 +34,22 @@ export interface WPPruefungServiceContext {
  */
 @Injectable()
 export class WPPruefungService {
+  /**
+   * Archiv-Guard fuer Schreibpfade (§ 147 AO, Entscheidung 2026-10-14).
+   *
+   * Ein archivierter Mandant wird nicht mehr fortgeschrieben. Bilanz, GuV,
+   * Anhang, Konsolidierung und DATEV-Import waren bereits gesperrt, die
+   * WP-Strecke war die Luecke. LESEN bleibt bewusst offen — der Bestand
+   * muss zur Nachvollziehbarkeit zugreifbar bleiben (§ 147 Abs. 3).
+   */
+  private async assertMandantBearbeitbar(
+    mandantId: string,
+    aktion: string,
+  ): Promise<void> {
+    const mandant = await this.wpRepository.findMandantArchiviert(mandantId);
+    assertMandantNichtArchiviert(mandant?.archiviertAt, aktion);
+  }
+
   private readonly logger = new Logger(WPPruefungService.name);
 
   constructor(
@@ -63,6 +80,7 @@ export class WPPruefungService {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
     this.assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'WP-Prüfung starten');
 
     if (args.guvId) {
       const guvMandantId = await this.wpRepository.findGuVMandantId(args.guvId);
@@ -137,7 +155,6 @@ export class WPPruefungService {
     if (!mandantId) {
       throw new NotFoundException('Mandant für Prüfung nicht auflösbar');
     }
-    this.assertMandantAccess(mandantId, user);
 
     // Vier-Augen-Prinzip (IDW PS 880, § 11 Abs. 2 WPO) — JETZT
     // durchgesetzt.
@@ -234,6 +251,7 @@ export class WPPruefungService {
       throw new NotFoundException('Mandant nicht auflösbar');
     }
     this.assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'WP-Prüfung abschließen');
 
     const [results, notizen] = await Promise.all([
       this.wpRepository.findPruefungsResultsByBilanz(pruefung.bilanzId),

@@ -32,6 +32,8 @@ import type { SignatureResultDto } from '../dto/sign-pdf-response.dto';
 // Gemessen, bevor die Ursache erkannt war.
 import { SignaturListeQueryDto } from '../dto/signatur-liste.dto';
 import type { SignaturEintragDto } from '../dto/signatur-liste.dto';
+import { SignaturStatusQueryDto } from '../dto/signatur-status.dto';
+import type { SignaturStatusDto } from '../dto/signatur-status.dto';
 import type {
   P12Metadata,
   SignatureResult,
@@ -193,6 +195,32 @@ export class SignaturController {
     @CurrentUser() user: AuthUser,
   ): Promise<SignaturEintragDto[]> {
     return this.signaturService.listSignaturen(
+      query.entityType,
+      query.entityId,
+      mandantId,
+      user,
+    );
+  }
+
+  /**
+   * GET /api/signatur/status?entityType=&entityId=
+   *
+   * Liefert `UNSIGNIERT` / `SIGNIERT` / `ABWEICHEND`.
+   *
+   * ENTSCHEIDUNG 2026-10-14: Signieren **sperrt** nicht (eine Korrektur
+   * erzeugt zwingend eine neue Signatur), aber es muss **sichtbar** sein,
+   * wenn die vorgelegten Daten nicht mehr der signierten Fassung entsprechen.
+   * `ABWEICHEND` ist genau dieser Fall.
+   */
+  @Get('status')
+  @RequireMandant()
+  @UseGuards(MandantGuard)
+  async getSignaturStatus(
+    @Query() query: SignaturStatusQueryDto,
+    @MandantId() mandantId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SignaturStatusDto> {
+    return this.signaturService.getSignaturStatus(
       query.entityType,
       query.entityId,
       mandantId,

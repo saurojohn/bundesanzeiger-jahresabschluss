@@ -13,6 +13,7 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import { WP_NOTIZ_ACK_STATUS, type WPNotizStatus } from '../constants/wp-status.constants';
 import type { WPNotizEntity } from '../wp.repository';
 import { WPRepository } from '../wp.repository';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 export interface WPNotizServiceContext {
   ip?: string | null;
@@ -33,6 +34,22 @@ export interface WPNotizServiceContext {
  */
 @Injectable()
 export class WPNotizService {
+  /**
+   * Archiv-Guard fuer Schreibpfade (§ 147 AO, Entscheidung 2026-10-14).
+   *
+   * Ein archivierter Mandant wird nicht mehr fortgeschrieben. Bilanz, GuV,
+   * Anhang, Konsolidierung und DATEV-Import waren bereits gesperrt, die
+   * WP-Strecke war die Luecke. LESEN bleibt bewusst offen — der Bestand
+   * muss zur Nachvollziehbarkeit zugreifbar bleiben (§ 147 Abs. 3).
+   */
+  private async assertMandantBearbeitbar(
+    mandantId: string,
+    aktion: string,
+  ): Promise<void> {
+    const mandant = await this.wpRepository.findMandantArchiviert(mandantId);
+    assertMandantNichtArchiviert(mandant?.archiviertAt, aktion);
+  }
+
   private readonly logger = new Logger(WPNotizService.name);
 
   constructor(
@@ -90,6 +107,7 @@ export class WPNotizService {
       throw new NotFoundException('Referenzierte Bilanz/GuV/Position nicht gefunden');
     }
     this.assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'WP-Notiz anlegen');
 
     const notiz = await this.wpRepository.createNotiz({
       bilanzId: args.bilanzId ?? null,
@@ -142,6 +160,7 @@ export class WPNotizService {
       throw new NotFoundException('Mandant für WP-Notiz nicht auflösbar');
     }
     this.assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'WP-Notiz-Status ändern');
 
     // 4-Augen-Prinzip: Self-Acknowledgement ist verboten.
     if (existing.wpUserId === user.id) {

@@ -1586,6 +1586,75 @@ sind nicht behoben und nicht als erledigt zu lesen:
 
 ---
 
+### Nachtrag 2026-10-14 (Nachtrag 15): Zwei Entscheidungen umgesetzt
+
+Die Fachfragen aus Nachtrag 13 und 12 sind entschieden:
+
+| Frage | Entscheidung | Umsetzung |
+|---|---|---|
+| Soll das Signieren die Entität sperren? | **Nein — aber sichtbar machen** | `GET /api/signatur/status`, Badge in Bilanz/GuV/Anhang |
+| Darf ein archivierter Mandant geprüft/signiert werden? | **Nein (§ 147 AO)** | Archiv-Guard in 5 WP- und 4 Signaturpfaden |
+
+#### 1. Signieren sperrt nicht — es macht den Unterschied sichtbar
+
+Gemessen war vorher: die Bilanz bleibt nach der Signatur `DRAFT`, ein
+STEUERBERATER ändert sie per PATCH auf 200, und das signierte WORM-Objekt passt
+nicht mehr zum vorgelegten Dokument. Niemand konnte das sehen.
+
+Warum **nicht** sperren: Eine Korrektur erzeugt zwingend eine neue Signatur,
+der alte WORM-Satz darf nicht gelöscht werden (Object-Lock), und eine
+Entität braucht dann mehrere Signaturen. Eine Sperre würde den
+Korrekturvorgang unmöglich machen.
+
+`GET /api/signatur/status?entityType=&entityId=` liefert
+`UNSIGNIERT` / `SIGNIERT` / `ABWEICHEND`. Maßgeblich ist der Zeitvergleich
+Signatur-Record `createdAt` gegen `updatedAt` der Entität. Bewusst **nicht**
+gegen `zeitstempel` der Signatur: ohne TSA ist das ein geratener Wert, der
+Signatur-Record dagegen ist unabhängig von einer externen Zeitquelle.
+
+`ABWEICHEND` trägt einen Klartext mit, keinen Enum-Wert zum Raten:
+„Die hier angezeigten Daten entsprechen NICHT der signierten Fassung."
+
+#### 2. Archivierter Mandant: neun Schreibpfade gesperrt
+
+Bilanz, GuV, Anhang, Konsolidierung und DATEV-Import waren bereits über
+`assertMandantNichtArchiviert` gesperrt. **WP und Signatur waren es nicht** —
+und die Signatur ist die folgenreichste Lücke, weil sie ein Dokument mit
+rechtlicher Wirkung erzeugt. Negativprobe, Guard entfernt:
+
+```
+POST /api/signatur/sign-bilanz   → 200, signatureId 0f49a27c-…
+POST /api/wp/pruefungen/:id/finalize → 200, Prüfung auf APPROVED
+```
+
+**Lesen bleibt offen**, und das ist kein Versehen: § 147 Abs. 3 AO verlangt
+Nachvollziehbarkeit. Ein archivierter Mandant, dessen Bestand nicht lesbar
+wäre, wäre kein archivierter Mandant, sondern ein Datenverlust. Der neue
+Spec prüft beides getrennt — Schreiben 409, Lesen 200.
+
+#### Ein Test, der aus dem falschen Grund grün war
+
+Der Fall `POST /api/wp/pruefungen` war zunächst **nicht** isolierbar: der
+Guard in `startPruefung` ließ sich entfernen, alle Tests blieben grün. Gemessen
+zeigte sich, dass `startPruefung` intern `IdwPruefungService.runPruefung`
+aufruft — und der 409 kam von **dort**. Der Guard ist trotzdem geblieben
+(Defence-in-Depth), aber der Test prüft ihn nicht.
+
+Der Fall, der ihn doch greifbar macht, ist `finalize`: dort greift zuerst das
+**Vier-Augen-Prinzip** (403, wer selbst prüft, darf nicht freigeben). Der erste
+Entwurf lief deshalb mit `wp@kanzlei.de` und scheiterte aus dem falschen Grund
+— erst mit **`wp2@kanzlei.de`** prüft der Test den Archiv-Guard.
+
+#### Noch eine Fehldeutung, die ein Test aufgedeckt hat
+
+Der erste Playwright-Test für das Badge steuerte den kompletten P12-Dialog
+nach und behauptete danach, „Signatur erfolgreich" gesehen zu haben. Der
+Selektor traf den **Dialog-Titel**. Gemessen: `signature`-Tabelle leer, null
+Datensätze. Der Test prüfte nichts und wäre grün geblieben.
+
+Der Test setzt den Zustand jetzt bewusst per API und prüft, was er in der
+Oberfläche bewirkt. Der Dialog ist ohnehin vom Test oberhalb abgedeckt.
+
 ### Nachtrag 2026-10-14 (Nachtrag 14): Die Cursor-Pagination verlor Belege
 
 **Befund, gemessen.** Fünf Bilanzen mit **identischem** `updatedAt`,
@@ -2138,6 +2207,8 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 | Migrationen auf leerer DB | 8 angewandt, `migrate diff` ohne Abweichung |
 | Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
+| Archivierte Mandanten | ✅ 9 Schreibpfade gesperrt (5 WP + 4 Signatur), Lesen offen |
+| Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge, 1 Backend- + 1 Playwright-Test |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |

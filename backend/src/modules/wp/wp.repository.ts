@@ -287,6 +287,28 @@ export class WPRepository {
     return b?.mandantId ?? null;
   }
 
+  /**
+   * Archivzeitpunkt eines Mandanten — fuer den Bearbeitungs-Guard.
+   *
+   * BEFUND 2026-10-14 (Entscheidung der Fachverantwortlichen): Ein
+   * archivierter Mandant durfte weiterhin WP-geprueft und signiert werden.
+   * Das ist mit § 147 AO nicht zu vereinbaren: Archivierung bedeutet
+   * „Bestand wird nicht fortgeschrieben". Bilanz, GuV, Anhang, Konsolidierung
+   * und DATEV-Import waren bereits ueber `assertMandantNichtArchiviert`
+   * gesperrt — Signatur und WP sind die letzten beiden Luecken.
+   *
+   * `null` heisst „Mandant existiert nicht" (MandantGuard hat das dann
+   * bereits abgelehnt) und wird nicht als Archivierung gewertet.
+   */
+  async findMandantArchiviert(
+    mandantId: string,
+  ): Promise<{ archiviertAt: Date | null } | null> {
+    return this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { archiviertAt: true },
+    });
+  }
+
   async findGuVMandantId(guvId: string): Promise<string | null> {
     const g = await this.prisma.guV.findFirst({
       where: { id: guvId },

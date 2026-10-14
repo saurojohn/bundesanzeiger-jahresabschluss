@@ -19,6 +19,7 @@ import type {
   BilanzPruefungsResultEntity,
 } from '../wp.repository';
 import { WPRepository } from '../wp.repository';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 export interface IdwPruefungServiceContext {
   ip?: string | null;
@@ -38,6 +39,22 @@ export interface IdwPruefungServiceContext {
  */
 @Injectable()
 export class IdwPruefungService {
+  /**
+   * Archiv-Guard fuer Schreibpfade (§ 147 AO, Entscheidung 2026-10-14).
+   *
+   * Ein archivierter Mandant wird nicht mehr fortgeschrieben. Bilanz, GuV,
+   * Anhang, Konsolidierung und DATEV-Import waren bereits gesperrt, die
+   * WP-Strecke war die Luecke. LESEN bleibt bewusst offen — der Bestand
+   * muss zur Nachvollziehbarkeit zugreifbar bleiben (§ 147 Abs. 3).
+   */
+  private async assertMandantBearbeitbar(
+    mandantId: string,
+    aktion: string,
+  ): Promise<void> {
+    const mandant = await this.wpRepository.findMandantArchiviert(mandantId);
+    assertMandantNichtArchiviert(mandant?.archiviertAt, aktion);
+  }
+
   private readonly logger = new Logger(IdwPruefungService.name);
 
   constructor(
@@ -59,6 +76,7 @@ export class IdwPruefungService {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
     this.assertMandantAccess(bilanzMandantId, user);
+    await this.assertMandantBearbeitbar(bilanzMandantId, 'Plausibilitätsregeln ausführen');
 
     let guvMandantId: string | null = null;
     if (args.guvId) {

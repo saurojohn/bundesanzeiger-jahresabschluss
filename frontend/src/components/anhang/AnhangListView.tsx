@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
+import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type AnhangAbschnitt = {
@@ -204,6 +205,10 @@ export function AnhangListView() {
                   {t(`bilanz.status.${a.status}`)}
                 </div>
               </div>
+              <SignaturStatusBadge
+                entityType="anhang"
+                entityId={a.id}
+              />
               <PdfActions
                 entityType="anhang"
                 entityId={a.id}

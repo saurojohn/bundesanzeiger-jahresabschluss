@@ -488,6 +488,116 @@ describe('Signatur E2E (M2 Sprint 4 — qeS)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // 6d. Signatur-Status: SIGNIERT -> ABWEICHEND nach einer Aenderung
+  //
+  // ENTSCHEIDUNG 2026-10-14: Signieren sperrt NICHT (eine Korrektur erzeugt
+  // zwingend eine neue Signatur, der alte WORM-Satz darf nicht geloescht
+  // werden), aber es muss SICHTBAR sein, wenn die vorgelegten Daten nicht mehr
+  // der signierten Fassung entsprechen.
+  //
+  // Genau dieser Test beweist, dass der Zustand unterscheidbar ist — nicht
+  // nur, dass ein Feld existiert.
+  // -------------------------------------------------------------------------
+  it('Signatur-Status: SIGNIERT, nach Aenderung ABWEICHEND', async () => {
+    // EIGENE Bilanz: die anderen Tests dieser Spec signieren `demoBilanzId`,
+    // und die Specs teilen sich eine Datenbank. Der erste Entwurf dieses
+    // Tests nahm an, die Demo-Bilanz sei noch ungesignet — und scheiterte,
+    // sobald ein frueherer Test sie bereits signiert hatte. Eine Annahme
+    // ueber den Zustand anderer Tests ist keine.
+    const jahr = 2078; // in keiner anderen Spec belegt
+    const anlegen = await fetch(`${BASE}/api/bilanz`, {
+      method: 'POST',
+      headers: { ...authHeaders(steuerberaterToken), 'x-mandant-id': demoMandantId },
+      body: JSON.stringify({
+        mandantId: demoMandantId,
+        geschaeftsjahr: jahr,
+        hinweise: 'Signatur-Status-Regressionsprobe',
+        positionen: [
+          { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+          { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+        ],
+      }),
+    });
+    expect(anlegen.status, 'eigene Bilanz fuer den Status-Test').toBe(201);
+    const eigene = (await anlegen.json()) as { bilanz: { id: string } };
+    const eigeneId = eigene.bilanz.id;
+
+    const status = async () => {
+      const res = await fetch(
+        `${BASE}/api/signatur/status?entityType=Bilanz&entityId=${eigeneId}`,
+        { headers: { ...authHeaders(steuerberaterToken), 'x-mandant-id': demoMandantId } },
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        status: string;
+        geaendertNachSignatur: boolean;
+        anzahlSignaturen: number;
+        hinweis: string;
+      };
+    };
+
+    const vorher = await status();
+    expect(vorher.status).toBe('UNSIGNIERT');
+    expect(vorher.anzahlSignaturen).toBe(0);
+
+    // Signieren (zweimal derselbe Aufruf wie im 6b-Test)
+    const signRes = await fetch(`${BASE}/api/signatur/sign-bilanz`, {
+      method: 'POST',
+      headers: authHeaders(steuerberaterToken),
+      body: JSON.stringify({
+        bilanzId: eigeneId,
+        mandantId: demoMandantId,
+        p12Base64,
+        p12Password: P12_PASSWORD,
+      }),
+    });
+    if (signRes.status !== 200) {
+      throw new Error(`Signatur fehlgeschlagen: ${signRes.status}`);
+    }
+
+    const danach = await status();
+    expect(danach.status, 'nach dem Signieren ohne Aenderung').toBe('SIGNIERT');
+    expect(danach.anzahlSignaturen).toBeGreaterThan(0);
+    expect(danach.geaendertNachSignatur).toBe(false);
+
+    // Jetzt eine echte Aenderung an der Bilanz — als STEUERBERATER.
+    const sbToken = (await login('steuerberater@kanzlei.de', 'Demo123!')).accessToken;
+    const detail = (await (
+      await fetch(`${BASE}/api/bilanz/${eigeneId}?mandantId=${demoMandantId}`, {
+        headers: { ...authHeaders(sbToken), 'x-mandant-id': demoMandantId },
+      })
+    ).json()) as { bilanz: { hinweise: string | null } };
+
+    const patch = await fetch(`${BASE}/api/bilanz/${eigeneId}?mandantId=${demoMandantId}`, {
+      method: 'PATCH',
+      headers: { ...authHeaders(sbToken), 'x-mandant-id': demoMandantId },
+      body: JSON.stringify({
+        hinweise: `Geaendert nach Signatur ${new Date().toISOString()}`,
+      }),
+    });
+    expect(patch.status, 'die Aenderung muss moeglich sein — Signieren sperrt nicht').toBe(200);
+    void detail;
+
+    const abweichend = await status();
+    expect(
+      abweichend.status,
+      'nach der Aenderung muss der Status ABWEICHEND sein',
+    ).toBe('ABWEICHEND');
+    expect(abweichend.geaendertNachSignatur).toBe(true);
+    expect(
+      abweichend.hinweis,
+      'die Oberflaeche braucht den Klartext, nicht nur ein Enum',
+    ).toContain('NICHT der signierten Fassung');
+    // Die Signatur selbst bleibt erhalten — nur der Hinweis aendert sich.
+    expect(abweichend.anzahlSignaturen).toBeGreaterThan(0);
+
+    // Aufraeumen: eigene Bilanz, damit sie keinen anderen Test stoert.
+    await prisma.bilanz.deleteMany({
+      where: { mandantId: demoMandantId, geschaeftsjahr: jahr },
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // 7. Signed PDF ist well-formed (beginnt mit %PDF-)
   // -------------------------------------------------------------------------
   it('Signed PDF ist well-formed (%PDF- magic)', async () => {

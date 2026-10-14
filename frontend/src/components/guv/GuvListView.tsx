@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
+import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
 type GuvPosition = {
@@ -291,6 +292,10 @@ export function GuvListView() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    <SignaturStatusBadge
+                      entityType="guv"
+                      entityId={g.id}
+                    />
                     <PdfActions
                       entityType="guv"
                       entityId={g.id}

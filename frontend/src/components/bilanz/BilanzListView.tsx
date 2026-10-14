@@ -6,6 +6,7 @@ import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { BilanzForm } from './BilanzForm';
 import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
+import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { DatevImportDialog } from '@/components/datev-import/DatevImportDialog';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 
@@ -275,6 +276,10 @@ export function BilanzListView() {
                     {saldostimmt ? '✓ Saldo' : '✗ Saldo'}
                   </span>
                   <div className="flex gap-2">
+                    <SignaturStatusBadge
+                      entityType="bilanz"
+                      entityId={b.id}
+                    />
                     <PdfActions
                       entityType="bilanz"
                       entityId={b.id}

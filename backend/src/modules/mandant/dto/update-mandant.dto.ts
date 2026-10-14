@@ -8,10 +8,13 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { BETRAG_STRING_PATTERN, INT4_MAX } from '../../../common/utils/betrag-grenzen';
 import {
   GROESSENKLASSEN,
   PUBLISH_CHANNELS,
@@ -66,12 +69,19 @@ export class UpdateMandantDto {
   gruendungsdatum?: string;
 
   @IsOptional() @IsString()
+  @Matches(BETRAG_STRING_PATTERN, {
+    message: 'bilanzsummeVorjahr muss eine Zahl mit max. 2 Nachkommastellen sein (z.B. "12345.67")',
+  })
   bilanzsummeVorjahr?: string;
 
   @IsOptional() @IsString()
+  @Matches(BETRAG_STRING_PATTERN, {
+    message: 'umsatzVorjahr muss eine Zahl mit max. 2 Nachkommastellen sein (z.B. "12345.67")',
+  })
   umsatzVorjahr?: string;
 
   @IsOptional() @IsInt() @Min(0)
+  @Max(INT4_MAX, { message: 'mitarbeiterAnzahl darf hoechstens 2147483647 sein' })
   mitarbeiterAnzahl?: number;
 
   @IsOptional() @IsEnum(GROESSENKLASSEN)

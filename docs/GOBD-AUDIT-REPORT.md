@@ -1581,6 +1581,40 @@ falsch gruen waren:
 Diese Punkte sind plausibel, aber **nicht empirisch reproduziert**. Sie
 sind nicht behoben und nicht als erledigt zu lesen:
 
+### Nachtrag 2026-10-14 (Nachtrag 16): Vier Klickpfade haben den Server beendet
+
+**Gemessen, alle vier HTTP 500 mit unbehandeltem Prisma-Fehler:**
+
+| Eingabe | Serverantwort |
+|---|---|
+| `POST /api/bilanz` `betragAktuell: 1e20` | `22003 numeric field overflow` |
+| `POST /api/mandant` `bilanzsummeVorjahr: "keine-zahl"` | ungueltiger Decimal |
+| `POST /api/mandant` `bilanzsummeVorjahr: "999...24 Stellen"` | `22003 numeric field overflow` |
+| `POST /api/mandant` `mitarbeiterAnzahl: 99999999999` | value out of range (Int4) |
+
+Es genuegte jeweils **ein Klick im Formular**. Das ist Kunden-Eingabe; sie
+gehoert in die Validierung und nicht in eine Exception des
+Datenbanktreibers.
+
+**Die Grenzen sind aus dem Schema abgeleitet, nicht geschaetzt.**
+`Decimal(18,2)` verlangt `|x| < 10^16`, `Int4` endet bei 2147483647. Der
+Wert liegt bewusst bei `10^15 - 1`: `10^16` ist im IEEE-Double nicht exakt
+darstellbar (54 Bit noetig, Mantisse hat 53) — eine Grenze mit
+Gleitkomma-Artefakt ist eine Grenze mit zwei Wahrheiten.
+
+**Was ausdruecklich NICHT geaendert wurde:** negative Betraege. `@Min(0)`
+waere eine erfundene Fachregel — ein Verlustvortrag ist nach § 266 Abs. 3
+HGB negativ, und die Betragsgrenze darf nicht zur Vorzeichengrenze werden.
+Ein eigener Test haelt das fest.
+
+**Negativprobe:** Alle `@Max`/`@Matches` entfernt → **4 Tests rot**, jeder
+mit `expected 500 to be 400`, einer je Defekt. Die beiden Tests fuer regulaere
+Werte bleiben gruen: Ein Test, der nur Ablehnung prueft, wuerde einen Fix
+belohnen, der pauschal alles zurueckweist.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2212,6 +2246,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
+| Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
 | Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |
 | CI (backend + frontend) | ✅ beide Jobs grün |

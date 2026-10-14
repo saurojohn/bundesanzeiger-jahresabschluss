@@ -9,6 +9,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { BETRAG_MAX } from '../../../common/utils/betrag-grenzen';
 import { KONSOLIDIERUNGS_AR } from '../constants/konsolidierung.constants';
 
 /**
@@ -84,6 +85,7 @@ export class CreateKonsolidierungEinheitDto {
     { message: 'anschaffungskosten muss eine Zahl sein (max 2 Nachkommastellen)' },
   )
   @Min(0, { message: 'anschaffungskosten muss >= 0 sein' })
+  @Max(BETRAG_MAX, { message: 'anschaffungskosten darf hoechstens 10^15 betragen (Decimal(18,2))' })
   anschaffungskosten?: number;
 
   /** Eigenkapital der Tochter zum Stichtag (§ 301 Abs. 1 HGB). */
@@ -92,6 +94,7 @@ export class CreateKonsolidierungEinheitDto {
     { maxDecimalPlaces: 2 },
     { message: 'eigenkapitalTochter muss eine Zahl sein (max 2 Nachkommastellen)' },
   )
+  @Max(BETRAG_MAX, { message: 'eigenkapitalTochter darf hoechstens 10^15 betragen (Decimal(18,2))' })
   eigenkapitalTochter?: number;
 
   /** Jahresüberschuss/-fehlbetrag der Tochter für das Geschäftsjahr. */
@@ -100,5 +103,6 @@ export class CreateKonsolidierungEinheitDto {
     { maxDecimalPlaces: 2 },
     { message: 'jahresueberschussTochter muss eine Zahl sein (max 2 Nachkommastellen)' },
   )
+  @Max(BETRAG_MAX, { message: 'jahresueberschussTochter darf hoechstens 10^15 betragen (Decimal(18,2))' })
   jahresueberschussTochter?: number;
 }

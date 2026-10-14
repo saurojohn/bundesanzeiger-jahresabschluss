@@ -1,3 +1,5 @@
+import { Max } from 'class-validator';
+import { BETRAG_MAX } from '../../../common/utils/betrag-grenzen';
 import {
   IsEnum,
   IsInt,
@@ -34,12 +36,14 @@ export class BilanzPositionDto {
     { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 },
     { message: 'betragVorjahr muss eine Zahl mit max. 2 Nachkommastellen sein' },
   )
+  @Max(BETRAG_MAX, { message: 'betragVorjahr darf hoechstens 10^15 betragen (Decimal(18,2))' })
   betragVorjahr?: number;
 
   @IsNumber(
     { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 },
     { message: 'betragAktuell muss eine Zahl mit max. 2 Nachkommastellen sein' },
   )
+  @Max(BETRAG_MAX, { message: 'betragAktuell darf hoechstens 10^15 betragen (Decimal(18,2))' })
   betragAktuell!: number;
 
   @IsInt({ message: 'reihenfolge muss eine Ganzzahl sein' })

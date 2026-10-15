@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { ExportActions } from '@/components/exports/ExportActions';
+import { BetragInput } from '@/components/common/BetragInput';
 
 type HgbPosition = {
   id: string;
@@ -477,33 +478,20 @@ function PositionColumn({
                 </td>
                 <td className="px-3 py-1.5 text-slate-900">{p.bezeichnung}</td>
                 <td className="px-3 py-1.5">
-                  <input
-                    type="number"
-                    step="0.01"
+                  <BetragInput
                     disabled={disabled}
-                    value={p.betragVorjahr ?? ''}
-                    onChange={(e) =>
-                      onChange(idx, {
-                        betragVorjahr: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      })
-                    }
-                    className="block w-full text-right rounded border border-slate-200 px-2 py-1 text-sm num-de focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    ariaLabel={`${p.bezeichnung} Vorjahr`}
+                    wert={p.betragVorjahr}
+                    onWert={(v) => onChange(idx, { betragVorjahr: v })}
                   />
                 </td>
                 <td className="px-3 py-1.5">
-                  <input
-                    type="number"
-                    step="0.01"
+                  <BetragInput
                     disabled={disabled}
-                    value={p.betragAktuell || ''}
-                    onChange={(e) =>
-                      onChange(idx, {
-                        betragAktuell: Number(e.target.value) || 0,
-                      })
-                    }
-                    className="block w-full text-right rounded border border-slate-200 px-2 py-1 text-sm num-de focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    required
+                    ariaLabel={`${p.bezeichnung} aktuelles Jahr`}
+                    wert={p.betragAktuell}
+                    onWert={(v) => onChange(idx, { betragAktuell: v ?? 0 })}
                   />
                 </td>
               </tr>

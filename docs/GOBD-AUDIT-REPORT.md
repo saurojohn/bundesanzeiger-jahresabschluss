@@ -1717,6 +1717,84 @@ festgehalten, nicht „repariert".
 ---
 
 
+### Nachtrag 2026-10-15 (Nachtrag 19): „1.500" wurde als 1,5 gespeichert
+
+**Gemessen im Browser**, Tastendruck für Tastendruck, wie ein Mensch tippt:
+
+| Eingabe | Feldinhalt | gespeichert als |
+|---|---|---|
+| `1.500` (deutsche Tausendertrennung) | `1.500` | **1,5** |
+| `150000,50` (deutsches Dezimalkomma) | `0150000.50` | 150000,50 (Komma verworfen) |
+
+Alle Betragsfelder in Bilanz und GuV waren `<input type="number">`. Das erlaubt
+nur den Punkt als Dezimaltrenner — in einer deutschen Buchhaltung tippt niemand
+Punkte.
+
+**Der erste Fall ist der schwere.** Wer `1.500` tippt, meint tausendfünfhundert
+und bekommt eineinhalb: ein **Faktor-1000-Fehler in einer Bilanzposition**,
+ohne Fehlermeldung, ohne Markierung, beim Speichern still übernommen. Genau
+diese Fehlerklasse — ein Wert, der falsch ist und so aussieht, als wäre er
+richtig — stand in Nachträgen 13 und 17 schon zweimal im Mittelpunkt.
+
+`type="number"` kann das nicht auflösen: `1.500` ist dort ein **gültiger**
+Wert, und die Absicht des Tippenden ist nicht erkennbar. Nur eine explizite
+Auflösung der deutschen Schreibweise hilft.
+
+**Behoben** mit `BetragInput` (`type="text"`, `inputMode="decimal"`) und
+`parseZahl`/`formatZahl`: Punkt = Tausendertrenner, Komma = Dezimaltrenner.
+Zwei Regeln:
+
+1. Beim Verlassen wird normalisiert — der **angezeigte** Wert IST danach der
+   **gespeicherte**. Wer `1.500` tippt, sieht `1.500,00`; wollte er 1,5, sieht
+   er es sofort.
+2. Eine unparsebare Eingabe wird **nicht still zu 0**. Sie bleibt als Text
+   stehen, wird rot markiert, und der gespeicherte Wert bleibt unverändert.
+
+#### Zwei eigene Fehler beim Bauen des Feldes
+
+**Ein Feedbackloop, im ersten Entwurf (gemessen):** Jede Tastatureingabe
+setzte `roh`, änderte gleichzeitig den Wert vom Vater, und der Effekt auf
+`[wert]` räumte `roh` wieder — die Anzeige sprang mitten im Tippen auf den
+formatierten Zahlenwert zurück:
+
+```
+"150000,50" -> "1,01000,50"
+```
+
+Ein Referenzzähler des zuletzt selbst gesendeten Werts trennt jetzt „von außen
+geändert" von „von mir selbst gesetzt".
+
+**Und ein zweiter, erst im Test sichtbar:** Das Leeren des Pflichtfeldes wird
+vom Elternteil auf `0` normalisiert (`betragAktuell: v ?? 0`, weil das DTO eine
+Zahl verlangt). Ohne Sonderregel löschte der Effekt den Rohtext und zeigte
+sofort `0,00` — die nächste Eingabe landete an dieser Ziffer:
+
+```
+"0,001234,56"  ->  gespeichert wurde 0
+```
+
+#### Der Test prüft den gespeicherten Wert, nicht die Anzeige
+
+`betrag-eingabe.spec.ts` speichert und liest die Position zurück. Ein Test,
+der nur prüft, was im Feld steht, würde einen Fix belohnen, der die Zahl nur
+anzeigt und beim Speichern wieder verliert.
+
+**Negativprobe, zweimal versucht.** Der erste Versuch war grün für den Falschen:
+Ich hatte `type="number"` zurückgesetzt und damit auch `inputMode` entfernt —
+der Selektor fand das Feld nicht mehr, der Test war rot wegen des Markups statt
+wegen der Zahl. Erst der zweite Versuch, der **nur die Auflösung** zurücksetzt
+und das Markup unangetastet lässt, scheitert an der Zahl:
+
+```
+- unexpected value "1,50"     (erwartet "1.500,00")
+```
+
+Das ist derselbe Fehlschlag wie in Nachtrag 8, 12 und 15: eine Probe, die aus
+dem falschen Grund rot ist, beweist nichts.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2339,7 +2417,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 | Backend Unit-Tests | **722 / 722 grün** (76 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
-| Playwright e2e | **64 / 64 grün**, 0 übersprungen |
+| Playwright e2e | **66 / 66 grün**, 0 übersprungen |
 | Migrationen auf leerer DB | 8 angewandt, `migrate diff` ohne Abweichung |
 | Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
@@ -2349,6 +2427,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
+| Betragseingabe | ✅ deutsche Schreibweise (`1.500` = 1500), 1 Playwright-Test |
 | Filter-Parameter | ✅ `GeschaeftsjahrPipe` + `IsoDatumPipe`, 15 e2e |
 | Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |

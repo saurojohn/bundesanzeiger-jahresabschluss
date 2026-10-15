@@ -160,13 +160,17 @@ test('Gesperrte GuV: Betragsfelder sind deaktiviert (kein stiller Datenverlust)'
     gesperrt,
     'der geoeffnete GuV muss gesperrt sein — sonst prueft der Test nichts',
   ).toBeGreaterThan(0);
-  const gesamtFelder = await page.locator('table tbody input[type=number]').count();
+  // Die Betragsfelder sind seit 2026-10-15 `type="text"` mit
+  // `inputMode="decimal"` (deutsche Schreibweise). Der Selektor folgt dem
+  // Markup — die AUSSAGE des Tests bleibt: bei gesperrter GuV ist kein
+  // Betragsfeld editierbar.
+  const gesamtFelder = await page.locator('table tbody input[inputmode="decimal"]').count();
   expect(
     gesamtFelder,
     'der gesperrte GuV muss Betragsfelder anzeigen — sonst prüft der Test nichts',
   ).toBeGreaterThan(0);
   const aktiveFelder = await page
-    .locator('table tbody input[type=number]:not([disabled])')
+    .locator('table tbody input[inputmode="decimal"]:not([disabled])')
     .count();
   console.log(
     `Gesperrter GuV (${ziel!.positionen} Positionen): ${gesamtFelder} Betragsfelder, davon ${aktiveFelder} editierbar`,

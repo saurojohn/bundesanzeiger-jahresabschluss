@@ -7,6 +7,7 @@ import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
 import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
+import { BetragInput } from '@/components/common/BetragInput';
 
 type GuvPosition = {
   id?: string;
@@ -635,33 +636,22 @@ function GuvForm({
                 </td>
                 <td className="px-3 py-1.5 text-slate-900">{p.bezeichnung}</td>
                 <td className="px-3 py-1.5">
-                  <input
-                    type="number"
-                    step="0.01"
+                  <BetragInput
                     disabled={positionenSperre}
-                    value={p.betragVorjahr ?? ''}
-                    onChange={(e) =>
-                      updatePosition(idx, {
-                        betragVorjahr: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      })
-                    }
-                    className="block w-full text-right rounded border border-slate-200 px-2 py-1 text-sm num-de disabled:bg-slate-50 disabled:text-slate-500"
+                    ariaLabel={`${p.bezeichnung} Vorjahr`}
+                    wert={p.betragVorjahr}
+                    onWert={(v: number | null) => updatePosition(idx, { betragVorjahr: v })}
                   />
                 </td>
                 <td className="px-3 py-1.5">
-                  <input
-                    type="number"
-                    step="0.01"
+                  <BetragInput
                     disabled={positionenSperre}
-                    value={p.betragAktuell || ''}
-                    onChange={(e) =>
-                      updatePosition(idx, {
-                        betragAktuell: Number(e.target.value) || 0,
-                      })
+                    required
+                    ariaLabel={`${p.bezeichnung} aktuelles Jahr`}
+                    wert={p.betragAktuell}
+                    onWert={(v: number | null) =>
+                      updatePosition(idx, { betragAktuell: v ?? 0 })
                     }
-                    className="block w-full text-right rounded border border-slate-200 px-2 py-1 text-sm num-de"
                   />
                 </td>
               </tr>

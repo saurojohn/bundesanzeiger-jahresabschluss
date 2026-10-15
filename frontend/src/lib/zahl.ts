@@ -47,10 +47,13 @@ export function parseZahl(roh: string): number | null {
  * Formatiert eine Zahl in der deutschen Schreibweise — der Wert, der dem
  * Nutzer angezeigt wird, ist damit exakt der Wert, der gespeichert wird.
  */
-export function formatZahl(wert: number | null | undefined): string {
-  if (wert === null ||wert === undefined || !Number.isFinite(wert)) return '';
+export function formatZahl(
+  wert: number | null | undefined,
+  nachkommaStellen: 0 | 2 = 2,
+): string {
+  if (wert === null || wert === undefined || !Number.isFinite(wert)) return '';
   return wert.toLocaleString('de-DE', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: nachkommaStellen,
+    maximumFractionDigits: nachkommaStellen,
   });
 }

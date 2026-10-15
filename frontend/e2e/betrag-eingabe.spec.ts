@@ -42,12 +42,56 @@ async function mandantMitBilanz(page: Page): Promise<string> {
   });
 }
 
-async function bilanzPositionen(page: Page, mandantId: string) {
-  return page.evaluate(async (mid) => {
+/**
+ * Eigene Bilanz fuer den Test.
+ *
+ * BEFUND 2026-10-15: `wp-strecke.spec.ts` schliesst am Ende eine
+ * WP-Pruefung ab — und `finalizePruefung` setzt dabei
+ * `bilanz.status = 'APPROVED'`. Danach ist der Bilanz gesperrt (alles
+ * ausser DRAFT ist nicht mehr bearbeitbar). Jede spaetere Spec, die den
+ * geseedeten Bilanz der Demo GmbH oeffnen wollte, scheiterte dann — je nach
+ * Dateireihenfolge des Laufs, also **flaky**: im Gesamtlauf rot, einzeln
+ * gruen, im naechsten Gesamtlauf wieder gruen.
+ *
+ * Diese Spec legt darum ihren eigenen Satz an und raeumt ihn ab. Sie
+ * haengt damit nicht mehr am Zustand, den eine andere Spec hinterlaesst.
+ */
+async function eigeneBilanz(page: Page, mid: string): Promise<number> {
+  const jahr = 2078; // in keiner anderen Spec belegt
+  await page.evaluate(
+    async ({ mandantId, geschaeftsjahr }) => {
+      const t = localStorage.getItem('accessToken');
+      const r = await fetch(`/api/bilanz?mandantId=${mandantId}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Authorization: `Bearer ${t}`,
+          'x-mandant-id': mandantId,
+        },
+        body: JSON.stringify({
+          mandantId,
+          geschaeftsjahr,
+          hinweise: 'Signatur-Spec-Fixture',
+          positionen: [
+            { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+            { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+          ],
+        }),
+      });
+      if (!r.ok) throw new Error(`Bilanz-Fixture fehlgeschlagen: ${r.status}`);
+    },
+    { mandantId: mid, geschaeftsjahr: jahr },
+  );
+  return jahr;
+}
+
+async function bilanzPositionen(page: Page, mandantId: string, jahr: number) {
+  return page.evaluate(async ({ mid, geschaeftsjahr }) => {
     const t = localStorage.getItem('accessToken');
-    const liste = (await (await fetch(`/api/bilanz?mandantId=${mid}`, {
-      headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': mid },
-    })).json()) as Array<{ id: string; geschaeftsjahr: number }>;
+    const liste = (await (await fetch(
+      `/api/bilanz?mandantId=${mid}&geschaeftsjahr=${geschaeftsjahr}`,
+      { headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': mid } },
+    )).json()) as Array<{ id: string; geschaeftsjahr: number }>;
     const bilanz = liste[0];
     const detail = await (await fetch(`/api/bilanz/${bilanz!.id}?mandantId=${mid}`, {
       headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': mid },
@@ -57,7 +101,7 @@ async function bilanzPositionen(page: Page, mandantId: string) {
       positionen: Array<{ id: string; bezeichnung: string; betragAktuell: number }>;
     };
     return detail.positionen;
-  }, mandantId);
+  }, { mid: mandantId, geschaeftsjahr: jahr });
 }
 
 test('Betrag: deutsche Schreibweise wird korrekt gespeichert', async ({ page }) => {
@@ -68,15 +112,17 @@ test('Betrag: deutsche Schreibweise wird korrekt gespeichert', async ({ page }) 
   expect(mid, 'es muss einen Mandanten mit Bilanz geben').not.toBe('');
   await page.evaluate((m) => localStorage.setItem('activeMandantId', m), mid);
 
-  await page.goto('http://localhost:3001/de-DE/bilanz');
-  await page.waitForTimeout(2500);
-  await page
-    .locator('tr', { has: page.getByRole('button', { name: 'Bearbeiten' }) })
-    .first()
-    .getByRole('button', { name: 'Bearbeiten' })
-    .first()
-    .click();
-  await page.waitForTimeout(2000);
+  const jahr = await eigeneBilanz(page, mid);
+  try {
+    await page.goto(`http://localhost:3001/de-DE/bilanz?jahr=${jahr}`);
+    await page.waitForTimeout(2500);
+    await page
+      .locator('tr', { hasText: String(jahr) })
+      .first()
+      .getByRole('button', { name: 'Bearbeiten' })
+      .first()
+      .click();
+    await page.waitForTimeout(2000);
 
   const feld = page.locator('input[inputmode="decimal"][required]').first();
   await expect(feld, 'es muss ein Pflicht-Betragsfeld geben').toBeVisible();
@@ -111,11 +157,30 @@ test('Betrag: deutsche Schreibweise wird korrekt gespeichert', async ({ page }) 
   await speichern.click();
   await page.waitForTimeout(3500);
 
-  const gespeichert = await bilanzPositionen(page, mid);
-  const aktueller = gespeichert.find((p) => Number(p.betragAktuell) === 1234.56);
+    const gespeichert = await bilanzPositionen(page, mid, jahr);
+    const aktueller = gespeichert.find((p) => Number(p.betragAktuell) === 1234.56);
 
-  expect(
-    aktueller,
-    'der gespeicherte Betrag muss 1234,56 sein — nicht 123456, nicht 1234.56-falsch',
-  ).toBeTruthy();
+    expect(
+      aktueller,
+      'der gespeicherte Betrag muss 1234,56 sein — nicht 123456, nicht 1.234',
+    ).toBeTruthy();
+  } finally {
+    // Aufraeumen: eigene Bilanz, damit sie keinen anderen Stoert.
+    await page.evaluate(
+      async ({ mandantId, geschaeftsjahr }) => {
+        const t = localStorage.getItem('accessToken');
+        const liste = (await (await fetch(
+          `/api/bilanz?mandantId=${mandantId}&geschaeftsjahr=${geschaeftsjahr}`,
+          { headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': mandantId } },
+        )).json()) as Array<{ id: string }>;
+        for (const b of liste) {
+          await fetch(`/api/bilanz/${b.id}?mandantId=${mandantId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': mandantId },
+          });
+        }
+      },
+      { mandantId: mid, geschaeftsjahr: jahr },
+    );
+  }
 });

@@ -41,6 +41,7 @@ export function BetragInput({
   required = false,
   platzhalter,
   ariaLabel,
+  nachkommaStellen = 2,
 }: {
   wert: number | null | undefined;
   onWert: (v: number | null) => void;
@@ -48,6 +49,12 @@ export function BetragInput({
   required?: boolean;
   platzhalter?: string;
   ariaLabel?: string;
+  /**
+   * 2 fuer Geldbetraege, 0 fuer ganze Zahlen wie Mitarbeiterzahl oder
+   * Beteiligungsquote. Dieselbe deutsche Aufloesung gilt fuer beide; nur die
+   * Anzeige unterscheidet sich.
+   */
+  nachkommaStellen?: 0 | 2;
 }) {
   const [roh, setRoh] = useState<string | null>(null);
   const [ungueltig, setUngueltig] = useState(false);
@@ -70,7 +77,7 @@ export function BetragInput({
     selbstGesendet.current = wert;
   }, [wert]);
 
-  const anzeige = roh ?? formatZahl(wert);
+  const anzeige = roh ?? formatZahl(wert, nachkommaStellen);
 
   function handleChange(text: string) {
     setRoh(text);

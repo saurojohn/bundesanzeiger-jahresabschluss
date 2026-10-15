@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken } from '@/lib/api';
+import { BetragInput } from '@/components/common/BetragInput';
 
 /**
  * Mandanten-Erfassung (M4, Ergänzung nach dem Steuernummer-Befund).
@@ -129,14 +130,24 @@ export function MandantForm() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function setGf(index: number, key: keyof FormState['geschaeftsfuehrer'][number], value: string): void {
+  function setGf(
+    index: number,
+    key: keyof FormState['geschaeftsfuehrer'][number],
+    value: string | number,
+  ): void {
     setForm((prev) => {
       const next = [...prev.geschaeftsfuehrer];
       const entry = { ...next[index] };
       if (key === 'anteilProzent') {
-        entry.anteilProzent = Number.parseFloat(value) || 0;
+        // Zahlen kommen seit 2026-10-15 aus `BetragInput` und sind bereits
+        // aufgeloest. Der String-Zweig bleibt fuer Aufrufer, die rohen Text
+        // liefern — und darf hier NICHT mehr `parseFloat` sein: das macht
+        // aus "33,33" die 33.
+        entry.anteilProzent =
+          typeof value === 'number' ? value : (Number.parseFloat(value) || 0);
       } else {
-        entry[key] = value;
+        // Die uebrigen Felder (name, geburtsdatum) sind Text.
+        entry[key] = String(value);
       }
       next[index] = entry;
       return { ...prev, geschaeftsfuehrer: next };
@@ -564,14 +575,12 @@ export function MandantForm() {
                   <label htmlFor={`gf-share-${i}`} className={labelCls}>
                     {t('mandant.field.managerShare')}
                   </label>
-                  <input
-                    id={`gf-share-${i}`}
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={g.anteilProzent}
-                    onChange={(e) => setGf(i, 'anteilProzent', e.target.value)}
-                    className={inputCls}
+                  {/* „33,33" statt „33.33" — dieselbe deutsche
+                      Schreibweise wie in den Betragsfeldern. */}
+                  <BetragInput
+                    ariaLabel={t('mandant.field.managerShare')}
+                    wert={g.anteilProzent}
+                    onWert={(v) => setGf(i, 'anteilProzent', v ?? 0)}
                   />
                 </div>
               </div>

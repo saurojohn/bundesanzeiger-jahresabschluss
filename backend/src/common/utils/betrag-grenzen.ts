@@ -43,9 +43,21 @@ export const INT4_MAX = 2_147_483_647;
  * Format fuer Betraege, die laut DTO als STRING transportiert werden
  * ("Decimal als String (Prisma)").
  *
- * Erlaubt sind optional `-`, optional `+` nicht (Geld ist nicht negativ
- * signiert zu schreiben), Ziffern mit optionalem Komma und genau zwei
- * Nachkommastellen. Ohne diese Pruefung landet jeder Freitext in der
- * Decimal-Spalte.
+ * ERLAUBT SIND BEIDE NOTATIONEN — und zwar dieselben wie in der Oberflaeche
+ * (`frontend/src/lib/zahl.ts`, `parseZahl`):
+ *
+ *   "12345.67"   englisch
+ *   "12345,67"   deutsch
+ *   "1.234,56"   deutsch mit Tausendertrennzeichen
+ *
+ * KORREKTUR 2026-10-15: Die erste Fassung erlaubte nur ein einzelnes
+ * Komma ODER einen Punkt am Ende — "1.234,56" wurde abgelehnt, waehrend
+ * dasselbe Feld im Bilanz-Formular jetzt ausdruecklich unterstuetzt wird.
+ * Die Anwendung hatte damit an einer Stelle eine Notation eingefuehrt und
+ * an einer anderen verboten. Regeln, die auseinanderlaufen, sind zwei
+ * Fehlerquellen statt einer.
+ *
+ * Der Test `betrag-grenzen.spec.ts` haelt beide Seiten deckungsgleich —
+ * dieselbe Fallliste, dieselbe Erwartung.
  */
-export const BETRAG_STRING_PATTERN = /^-?\d{1,16}(?:[.,]\d{1,2})?$/;
+export const BETRAG_STRING_PATTERN = /^-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?$|^-?\d+(?:[.,]\d{1,2})?$/;

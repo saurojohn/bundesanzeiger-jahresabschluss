@@ -65,15 +65,46 @@ test('Signatur: P12 prüfen und Bilanz signieren', async ({ page }) => {
     return liste[0]?.id ?? '';
   });
   await page.evaluate((m) => localStorage.setItem('activeMandantId', m), mid);
+
+  // EIGENE Bilanz statt des geseedeten Satzes.
+  //
+  // BEFUND 2026-10-15: Diese Spec war im Gesamtlauf rot, einzeln gruen und
+  // im naechsten Gesamtlauf wieder gruen — also flaky. Ursache:
+  // `wp-strecke.spec.ts` schliesst eine WP-Pruefung ab, und
+  // `finalizePruefung` setzt dabei `bilanz.status = 'APPROVED'`. Danach ist
+  // der Bilanz gesperrt (alles ausser DRAFT ist nicht mehr bearbeitbar), und
+  // die erste Zeile der Liste ist nicht mehr die, die diese Spec braucht.
+  // Je nach Dateireihenfolge traf es diese Spec oder nicht.
+  //
+  // Mit eigener Fixture haengt sie an keinem Zustand, den eine andere Spec
+  // hinterlaesst.
+  const jahr = await page.evaluate(async (mandantId) => {
+    const t = localStorage.getItem('accessToken');
+    const r = await fetch(`/api/bilanz?mandantId=${mandantId}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${t}`,
+        'x-mandant-id': mandantId,
+      },
+      body: JSON.stringify({
+        mandantId,
+        geschaeftsjahr: 2079,
+        hinweise: 'Signatur-Spec-Fixture',
+        positionen: [
+          { seite: 'AKTIVA', kontonummer: 'B.IV.', bezeichnung: 'Kasse', betragAktuell: 1000, reihenfolge: 1 },
+          { seite: 'PASSIVA', kontonummer: 'A.I.', bezeichnung: 'Kapital', betragAktuell: 1000, reihenfolge: 1 },
+        ],
+      }),
+    });
+    if (!r.ok) throw new Error(`Bilanz-Fixture fehlgeschlagen: ${r.status}`);
+    return 2079;
+  }, mid);
+
   await page.goto('http://localhost:3001/de-DE/bilanz');
   await page.waitForTimeout(2500);
 
-  // Bestimmte Zeile oeffnen, nicht die erste: der Vorauswahl-Mandant kann
-  // leere Listen haben, dann gibt es gar keinen "Bearbeiten"-Knopf und der
-  // Klick lief in einen 30-s-Timeout.
-  const zielZeile = page
-    .locator('tr', { has: page.getByRole('button', { name: 'Bearbeiten' }) })
-    .first();
+  const zielZeile = page.locator('tr', { hasText: String(jahr) }).first();
   await expect(zielZeile, 'es muss eine Bilanz zum Bearbeiten geben').toBeVisible();
 
   // Der Signatur-Knopf (`canSign`) sitzt NICHT in der Liste, sondern im

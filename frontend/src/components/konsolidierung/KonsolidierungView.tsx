@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken } from '@/lib/api';
+import { BetragInput } from '@/components/common/BetragInput';
 
 type KonsolidierungEinheit = {
   id: string;
@@ -428,16 +429,15 @@ export function KonsolidierungView() {
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   {t('konsolidierung.fields.beteiligungsquote')}
                 </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="0.01"
-                  value={beteiligungsquote}
-                  onChange={(e) =>
-                    setBeteiligungsquote(Number(e.target.value))
-                  }
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+                {/* Deutsche Schreibweise: „50,5" muss 50,5 sein und nicht
+                    505. Als `type="number"` wurde das Komma verworfen und
+                    aus „50,5" die 505 — die das Backend mit 400 abweisen
+                    wuerde, nach einer Korrektur des Nutzers aber als
+                    Fehler in seinen Eingaben erscheint. */}
+                <BetragInput
+                  ariaLabel={t('konsolidierung.fields.beteiligungsquote')}
+                  wert={beteiligungsquote}
+                  onWert={(v: number | null) => setBeteiligungsquote(v ?? 0)}
                 />
               </div>
               <div>

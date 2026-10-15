@@ -1795,6 +1795,93 @@ dem falschen Grund rot ist, beweist nichts.
 ---
 
 
+### Nachtrag 2026-10-15 (Nachtrag 20): Eine Inkonsistenz, die ich selbst eingebaut habe
+
+**Befund:** Nach der Umstellung auf deutsche Schreibweise (Nachtrag 19)
+akzeptierte das Bilanz-Formular `1.234,56`. Das Backend lehnte denselben
+String im Feld `bilanzsummeVorjahr` ab:
+
+```
+OK     "12345.67"
+OK     "12345,67"
+FAIL   "1.234,56"      <-- die Schreibweise, die das Formular jetzt lehrt
+```
+
+`BETRAG_STRING_PATTERN` erlaubte genau **ein** Komma **oder** **einen** Punkt
+am Ende — keine Tausendertrennung. Die Anwendung hatte damit an einer Stelle
+eine Notation eingeführt und an einer anderen verboten. Regeln, die
+auseinanderlaufen, sind zwei Fehlerquellen statt einer.
+
+**Behoben:** dasselbe Muster wie im Frontend — beide Schreibweisen, mit und
+ohne Tausendertrennzeichen. `betrag-grenzen.spec.ts` hält eine Fallliste
+fest, die mit der des Frontend identisch ist.
+
+**Reichweite eingeschränkt:** Das Frontend bietet `bilanzsummeVorjahr` und
+`umsatzVorjahr` **überhaupt nicht an** (im Formular existiert nur das
+Übersetzungslabel, kein Eingabefeld). Die Inkonsistenz war latent, nicht
+erreichbar. Festgehalten, weil das REST-API sie jederzeit auslösen könnte.
+
+#### Zwei weitere Stellen mit derselben Mechanik
+
+| Feld | Vorher | Jetzt |
+|---|---|---|
+| Gesellschafter-Anteil (`anteilProzent`) | `parseFloat("33,33")` → **33** | `33,33` |
+| Beteiligungsquote (`beteiligungsquote`) | `type="number"`: Komma verworfen → **505**, vom Backend mit 400 abgewiesen — der Fehler erscheint dann in den Eingaben des Nutzers statt in der Prozentangabe | `50,5` |
+
+Bei der Quote war der Fehler immerhin sichtbar (400). Beim Gesellschafter-
+Anteil war er es nicht: `Number.parseFloat("33,33")` ergibt **33** — ein
+still verlorenes Drittel. Dieselbe Fehlerklasse wie Nachtrag 19.
+
+**Geprüft und nicht geändert:** `mitarbeiterAnzahl`. Das DTO-Feld existiert,
+das Formular hat **kein Eingabefeld** dafür — nur einen Übersetzungsschlüssel.
+Ein Tippfehler-Risiko ohne Bedienweg.
+
+---
+
+
+### Nachtrag 2026-10-15 (Nachtrag 21): Zwei Playwright-Tests waren flaky — und die Ursache ist Produktverhalten
+
+**Beobachtung:** Nach einer Änderung an den Betragsfeldern meldete ein
+Gesamtlauf zwei Fehlschläge (`mandant.spec`, `signatur.spec`). Einzeln
+gefahren: beide grün. Der nächste Gesamtlauf: grün. Also **flaky**, nicht
+verursacht von der Änderung.
+
+**Ursache gemessen, nicht vermutet:** `finalizePruefung` setzt bei APPROVED
+
+```ts
+await this.wpRepository.setBilanzStatus(existing.bilanzId, 'APPROVED', user.id);
+```
+
+Der Bilanz ist danach **gesperrt** — die Statusregel erlaubt Fortschreiben nur
+in `DRAFT`. `wp-strecke.spec.ts` schließt am Ende eine WP-Prüfung ab. Jede
+später laufende Spec, die den geseedeten Bilanz der Demo GmbH öffnen wollte,
+fand eine gesperrte Zeile vor. **Ob es diese Spec traf, hing von der
+Dateireihenfolge des Laufs ab** — deshalb flackerte es statt konsequent zu
+scheitern.
+
+Das ist dieselbe Klasse wie der Befund in Nachtrag 14 auf der Backend-Seite:
+die Suite teilt veränderlichen Zustand, und `globalSetup` setzt ihn nur
+einmal zurück.
+
+**Behoben** für die zwei betroffenen Specs: `signatur.spec` und
+`betrag-eingabe.spec` legen ihren eigenen Bilanz an (GJ 2079 bzw. 2078) und
+räumen ihn ab. Sie hängen damit an keinem Zustand, den eine andere Spec
+hinterlässt.
+
+**Offen und nicht behauptet:** dass dies die *einzige* solche Stelle ist,
+wurde **nicht** vollständig geprüft. Belegt ist die Kette
+`wp-strecke → Bilanz APPROVED → spaetere Spec gesperrt`. Weitere Specs, die
+den geseedeten Bilanz oeffnen, koennen denselben Weg nehmen; das ist eine
+Vermutung, bis sie gemessen ist.
+
+**Zur Belastbarkeit:** Zwei Fehlschlaege, die einmal auftreten und dann
+verschwinden, sind kein Grund, sie zu ignorieren — sie sind ein Grund, die
+Ursache zu suchen. Ein gruener Lauf nach einem roten beweist fuer sich
+genommen nichts, solange der Auslöser nicht benannt ist.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2414,10 +2501,10 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 |---|---|
 | Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
 | Backend eslint-Warnings | 0 (`--max-warnings 0`) |
-| Backend Unit-Tests | **722 / 722 grün** (76 Dateien; zweimal hintereinander gefahren) |
+| Backend Unit-Tests | **738 / 738 grün** (77 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
-| Playwright e2e | **66 / 66 grün**, 0 übersprungen |
+| Playwright e2e | **66 / 66 grün**, 0 übersprungen; zweimal hintereinander gefahren |
 | Migrationen auf leerer DB | 8 angewandt, `migrate diff` ohne Abweichung |
 | Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |

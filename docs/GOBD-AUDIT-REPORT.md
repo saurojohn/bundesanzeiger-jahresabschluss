@@ -1615,6 +1615,63 @@ belohnen, der pauschal alles zurueckweist.
 ---
 
 
+### Nachtrag 2026-10-15 (Nachtrag 17): Filter-Parameter — fünf 500er und ein still verschwundener Filter
+
+**Gemessen, HTTP 500 mit unbehandeltem Prisma-Fehler:**
+
+| Eingabe | Serverantwort |
+|---|---|
+| `GET /api/audit?from=abc` | 500 |
+| `GET /api/audit?to=31.12.2025` | 500 — deutsches Datumsformat |
+| `GET /api/audit?from=2025-13-45` | 500 — kein Kalenderdatum |
+| `GET /api/bilanz?geschaeftsjahr=abc` | 500 |
+| `GET /api/bilanz?geschaeftsjahr=99999999999` | 500 — Int4-Überlauf |
+
+`to=31.12.2025` ist keine Fantasie: das ist die Schreibweise, in der ein
+Anwender ein Datum eingibt.
+
+**Der schlimmere Befund kam aus der Negativprobe.** Mit entfernter Pipe
+liefern `geschaeftsjahr=abc`, `=99999999999` und `=42abc` **200 mit der
+kompletten Liste**. Der Service prüft `typeof args.jahr === 'number'`; ein
+String ist keine Zahl, also wird der Filter **verworfen** — die Abfrage
+läuft ungefiltert durch und meldet Erfolg.
+
+Ein Anwender, der nach einem Geschäftsjahr filtert, sieht damit alle
+Jahre und glaubt, er habe gefiltert. Das ist schlimmer als ein Fehler,
+weil es unsichtbar ist: Bei einer Jahresabschlussliste ist ein
+übersehener Abschluss genau der Fehler, den das Produkt verhindern soll.
+
+Dasselbe galt vorher für `42abc`: `parseInt` machte daraus still 42 und
+die Liste zeigte das **falsche** Jahr.
+
+**Behoben** mit `GeschaeftsjahrPipe` und `IsoDatumPipe` an der Grenze
+(Bilanz, GuV, Anhang, Audit, Public API). Das doppelte `parseInt` in den
+Controllern ist entfallen — es hätte `"42abc"` still zu 42 gemacht.
+
+**Nur ISO-8601 wird akzeptiert.** `new Date()` nimmt viele Formate an
+(`31.12.2025`, `2025/12/31`); eine Filter-API, die drei Formate
+akzeptiert, ist am Ende eine, bei der niemand weiß welches gilt.
+
+#### Ein Fehler in meinem eigenen Fix
+
+Die erste Fassung prüfte nur das Format und die NaN-Fähigkeit. Der Test
+`from=2025-02-30` blieb grün — **`new Date('2025-02-30')` ist kein NaN**,
+JavaScript rechnet auf den 2. März um. `2025-13-45` wurde abgelehnt,
+`2025-02-30` still verschoben: dieselbe Fehlerklasse, die ich abstellen
+wollte, in meiner eigenen Zeile.
+
+Die Pipe prüft den Kalender jetzt gegen seine normalisierte Form. Der Test
+war das, was es gefunden hat — ein Test, der nur die 500-Fälle prüft,
+hätte diesen Zweitfehler durchgelassen.
+
+**Negativprobe:** Beide Pipes zu reinen Durchreichen gemacht → **13 von 15
+Tests rot**, jede mit dem Status, den der alte Code geliefert hat
+(`expected 500 to be 400` bzw. `expected 200 to be 400` mit der
+ungefilterten Liste).
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2234,7 +2291,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 |---|---|
 | Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
 | Backend eslint-Warnings | 0 (`--max-warnings 0`) |
-| Backend Unit-Tests | **696 / 696 grün** (73 Dateien; zweimal hintereinander gefahren) |
+| Backend Unit-Tests | **722 / 722 grün** (76 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
 | Playwright e2e | **64 / 64 grün**, 0 übersprungen |
@@ -2247,6 +2304,7 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
+| Filter-Parameter | ✅ `GeschaeftsjahrPipe` + `IsoDatumPipe`, 15 e2e |
 | Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
 | WORM-Audit-Script | ✅ |
 | CI (backend + frontend) | ✅ beide Jobs grün |

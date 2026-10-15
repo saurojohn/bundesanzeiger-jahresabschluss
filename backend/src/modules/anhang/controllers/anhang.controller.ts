@@ -27,6 +27,7 @@ import { AnhangService } from '../services/anhang.service';
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
 import { pageSizePipe } from '../../../common/dto/pagination.dto';
+import { geschaeftsjahrPipe } from '../../../common/pipes/query-pipes';
 
 /**
  * Controller für Anhang (§ 284-289 HGB).
@@ -57,16 +58,16 @@ export class AnhangController {
   @UseGuards(MandantGuard)
   findAll(
     @MandantId() mandantId: string,
-    @Query('geschaeftsjahr') geschaeftsjahr: string | undefined,
+    @Query('geschaeftsjahr', geschaeftsjahrPipe) geschaeftsjahr: number | undefined,
     @Query('cursor') cursor: string | undefined,
     @Query('pageSize', pageSizePipe) pageSize: number | undefined,
     @Query('page') pageRaw: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
-    const jahr =
-      typeof geschaeftsjahr === 'string' && geschaeftsjahr.length > 0
-        ? Number.parseInt(geschaeftsjahr, 10)
-        : undefined;
+    // Die Pipe liefert bereits eine Zahl (oder undefined) — siehe
+    // `GeschaeftsjahrPipe`. Ein zweites parseInt hier waere doppelt und
+    // haette "42abc" still zu 42 gemacht.
+    const jahr = geschaeftsjahr;
     const page =
       typeof pageRaw === 'string' && pageRaw.length > 0
         ? Number.parseInt(pageRaw, 10)

@@ -19,6 +19,7 @@ import { isAuditAction } from '../constants/audit-actions';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../services/audit.service';
 import { AuditIntegrityService } from '../services/audit-integrity.service';
+import { auditFromPipe, auditToPipe } from '../../../common/pipes/query-pipes';
 
 /**
  * Audit-Read-Endpoint.
@@ -44,8 +45,8 @@ export class AuditController {
     @MandantIdOptional() mandantId?: string,
     @Query('entityType') entityType?: string,
     @Query('action') action?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @Query('from', auditFromPipe) from?: Date,
+    @Query('to', auditToPipe) to?: Date,
     @Query('page') pageRaw?: string,
     @Query('pageSize') pageSizeRaw?: string,
     @Query('cursor') cursor?: string,

@@ -23,6 +23,7 @@ import { RequireScope } from '../../decorators/require-scope.decorator';
 import { CurrentApiKey } from '../../decorators/current-api-key.decorator';
 import type { APIKeyContext } from '../../services/api-key.service';
 import { PublicApiReadService } from '../../services/public-api-read.service';
+import { geschaeftsjahrPipe } from '../../../../common/pipes/query-pipes';
 import {
   type PublicMandantenListResponse,
   type PublicBilanzenListResponse,
@@ -123,15 +124,12 @@ export class ApiV1Controller {
   async listBilanzen(
     @CurrentApiKey() ctx: APIKeyContext,
     @Param('id', new ParseUUIDPipe({ version: '4' })) mandantId: string,
-    @Query('geschaeftsjahr') geschaeftsjahrRaw?: string,
+    @Query('geschaeftsjahr', geschaeftsjahrPipe) geschaeftsjahrRaw?: number,
     @Query('cursor') cursor?: string,
     @Query('pageSize') pageSizeRaw?: string,
   ): Promise<PublicBilanzenListResponse> {
     return this.readService.listBilanzen(ctx, mandantId, {
-      geschaeftsjahr:
-        typeof geschaeftsjahrRaw === 'string' && geschaeftsjahrRaw.length > 0
-          ? Number.parseInt(geschaeftsjahrRaw, 10)
-          : undefined,
+      geschaeftsjahr: geschaeftsjahrRaw, // durch `geschaeftsjahrPipe` validiert
       cursor,
       pageSize: this.parsePageSize(pageSizeRaw, 20),
     });
@@ -146,14 +144,11 @@ export class ApiV1Controller {
   async listGuV(
     @CurrentApiKey() ctx: APIKeyContext,
     @Param('id', new ParseUUIDPipe({ version: '4' })) mandantId: string,
-    @Query('geschaeftsjahr') geschaeftsjahrRaw?: string,
+    @Query('geschaeftsjahr', geschaeftsjahrPipe) geschaeftsjahrRaw?: number,
     @Query('pageSize') pageSizeRaw?: string,
   ): Promise<PublicGuVListResponse> {
     return this.readService.listGuV(ctx, mandantId, {
-      geschaeftsjahr:
-        typeof geschaeftsjahrRaw === 'string' && geschaeftsjahrRaw.length > 0
-          ? Number.parseInt(geschaeftsjahrRaw, 10)
-          : undefined,
+      geschaeftsjahr: geschaeftsjahrRaw, // durch `geschaeftsjahrPipe` validiert
       pageSize: this.parsePageSize(pageSizeRaw, 20),
     });
   }
@@ -167,14 +162,11 @@ export class ApiV1Controller {
   async listAnhang(
     @CurrentApiKey() ctx: APIKeyContext,
     @Param('id', new ParseUUIDPipe({ version: '4' })) mandantId: string,
-    @Query('geschaeftsjahr') geschaeftsjahrRaw?: string,
+    @Query('geschaeftsjahr', geschaeftsjahrPipe) geschaeftsjahrRaw?: number,
     @Query('pageSize') pageSizeRaw?: string,
   ): Promise<PublicAnhangListResponse> {
     return this.readService.listAnhang(ctx, mandantId, {
-      geschaeftsjahr:
-        typeof geschaeftsjahrRaw === 'string' && geschaeftsjahrRaw.length > 0
-          ? Number.parseInt(geschaeftsjahrRaw, 10)
-          : undefined,
+      geschaeftsjahr: geschaeftsjahrRaw, // durch `geschaeftsjahrPipe` validiert
       pageSize: this.parsePageSize(pageSizeRaw, 20),
     });
   }

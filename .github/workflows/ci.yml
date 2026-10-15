@@ -22,6 +22,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+# ---------------------------------------------------------------------------
+# Node-20-Abschaltung (2026-10-15)
+#
+# Der Lauf 38785164924 meldete:
+#   „Node.js 20 is deprecated … actions/checkout@v4, actions/setup-node@v4,
+#    actions/upload-artifact@v4 … forced to run on Node.js 24"
+#
+# Drei Major-Versions zurueck: die Actions sind inzwischen bei v7
+# (checkout v7.0.1, setup-node v7.1.0, upload-artifact v7.0.2).
+#
+# Diese Pipeline ist der einzige Ort, an dem ein Fehler von aussen sichtbar
+# wird — der lokale Lauf hat keinen dieser Runtime-Hinweise. Deshalb wird der
+# Sprung nicht lokal „geprueft", sondern durch den naechsten Lauf auf GitHub.
+# ---------------------------------------------------------------------------
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -81,9 +96,9 @@ jobs:
       FRONTEND_URL: http://localhost:3001
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -134,7 +149,7 @@ jobs:
 
       - name: Artefakte
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-logs
           path: /tmp/backend.log
@@ -196,9 +211,9 @@ jobs:
       NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -254,7 +269,7 @@ jobs:
 
       - name: Trace/Reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: frontend/playwright-report

@@ -1672,6 +1672,51 @@ ungefilterten Liste).
 ---
 
 
+### Nachtrag 2026-10-15 (Nachtrag 18): Vier Prüfungen ohne Befund — und was ich dabei falsch gemessen habe
+
+Nach den Eingabepfaden (Nachträge 16/17) vier Bereiche geprüft, die als
+wahrscheinliche Fundorte galten. Ergebnis: **kein Defekt.** Das wird
+festgehalten, weil "geprüft und sauber" eine Aussage ist.
+
+| Bereich | Ergebnis |
+|---|---|
+| PDF-Vollständigkeit | Beide Templates paginieren (`bilanz.template.ts:350`, `guv.template.ts:114`) mit echter Seitenumbruch-Prüfung. Im GuV-Template steht der Grund in einem Kommentar: eine frühere feste Zeilenhöhe schnitt Kontobezeichnungen ab **und** verhinderte den Umbruch. Keine `.slice()`-Kürzung im PDF-Pfad. |
+| Audit-Abdeckung | Jeder Service mit Schreibzugriffen hat Audit-Einträge: Mandant 5/5, Auth 4/4, Konsolidierung 1/5, Subscription 1/3, Signatur 2/1 (WORM + Signature-Record in **einer** Transaktion, ein Audit-Eintrag — gewollt). |
+| Beteiligungsquote | `@Min(0)`/`@Max(100)` vorhanden, Kommentar stimmt mit dem Code überein. |
+| BAnz-Einreichung | `POST /api/v1/banz-submissions` gibt bewusst **501** zurück. Früher stand dort 202 mit `id: "placeholder-<timestamp>"` — fachlich falsch, weil nichts persistiert wurde. Der Verweis auf einen nie existierenden Datensatz war behoben; kein Archivschutz nötig, weil es keinen Pfad gibt. |
+
+#### Ein Fehler in meiner Messung
+
+Die erste Audit-Abdeckungs-Auswertung meldete **sechs Services ohne
+Audit** — darunter `tsa-client.service.ts` mit zehn Schreibvorgängen.
+
+Gemessen war das falsch: die zehn "Schreibvorgänge" waren
+`forge.asn1.create(...)`, also ASN.1-Bauer von node-forge, keine
+Datenbankzugriffe. Meine Regex zählte `create` ohne den Receiver zu
+prüfen. Mit eingegrenztem Muster (`this.prisma.…` bzw.
+`…Repository.…`) bleibt kein Service ohne Audit zurück.
+
+**Merksatz:** Eine Auswertung, die eine *Auffälligkeit* findet, ist zuerst
+ein Verdacht gegen die Auswertung. Sechs Treffer auf einmal sind eher ein
+Muster im Messgerät als in der Wirklichkeit.
+
+#### `returnUrl` — geprüft, nicht erreichbar
+
+`GET /api/subscription/:kanzleiId/portal` reicht den Query-Parameter
+`returnUrl` ungeprüft als `return_url` an Stripe weiter. Ein Open-Redirect
+wäre die naheliegende Befundung.
+
+**Nicht belegt.** Das Frontend ruft den Endpunkt nirgends auf
+(`SubscriptionView.tsx` nutzt nur `/subscription/tiers` und
+`/subscription/:kanzleiId`), ein e2e-Test ebenso wenig, und der
+Mock-Provider **ignoriert** den Parameter. Es gibt heute keinen Weg zu
+diesem Parameter. Eine Allowlist zu erfinden hieße, eine
+Deployment-Konfiguration zu raten, die ich nicht kenne — deshalb nur
+festgehalten, nicht „repariert".
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 

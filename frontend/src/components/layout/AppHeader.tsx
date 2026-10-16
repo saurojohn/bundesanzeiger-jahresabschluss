@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useRouter, usePathname } from 'next/navigation';
 import { MandantSwitcher } from './MandantSwitcher';
+import { apiFetch } from '@/lib/api';
 
 type SessionUser = {
   id: string;
@@ -96,15 +97,16 @@ export function AppHeader() {
           router.push('/de-DE/login');
           return;
         }
-        const response = await fetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!response.ok) {
-          router.push('/de-DE/login');
-          return;
-        }
+        // `apiFetch` statt rohem `fetch` — BEFUND 2026-10-16: Diese Zeile
+        // war ein eigenstaendiger 401-Pfad. Sie umging den Refresh-Mechanismus
+        // komplett und schob bei abgelaufenem Access-Token (TTL 15 min) sofort
+        // zum Login, obwohl ein gueltiger Refresh-Token vorhanden war.
+        //
+        // `apiFetch` erneuert die Sitzung einmal und wiederholt den Aufruf;
+        // erst wenn das scheitert, wird die Sitzung aufgeraeumt.
+        const me = await apiFetch<SessionUser>('/auth/me', { accessToken: token });
         if (!cancelled) {
-          setUser(await response.json());
+          setUser(me);
           setLoading(false);
         }
       } catch {

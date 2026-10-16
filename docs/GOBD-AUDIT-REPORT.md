@@ -1995,6 +1995,73 @@ Abschnitt korrigiert das.
 ---
 
 
+### Nachtrag 2026-10-16 (Nachtrag 25): Der Benutzer wurde alle 15 Minuten ausgeloggt
+
+**Gemessen:**
+
+| Verhalten | Ergebnis |
+|---|---|
+| `expiresIn` beim Login | **900 Sekunden = 15 Minuten** |
+| `/auth/refresh` im Frontend aufgerufen? | **nie** (kein Treffer in `src/`) |
+| Login → Refresh-Token | 64 Zeichen, liegt in `localStorage` |
+
+`POST /api/auth/refresh` existierte im Backend, vollständig implementiert,
+mit SHA-256-Hash, Ablaufprüfung, Widerrufsprüfung und Audit-Eintrag — und
+**hatte keinen Aufrufer in der Oberfläche**. Der Mechanismus, der genau das
+verhindern soll, war vorhanden und unerreichbar.
+
+**Zwei weitere Befunde derselben Stelle:**
+
+1. **Ein Kommentar behauptete ein Cookie, das es nicht gibt.** In `api.ts`
+   stand: „Der Refresh-Mechanismus des Projekts nutzt ein separates
+   `refreshToken`-Cookie". Der Token liegt in `localStorage`
+   (`LoginForm.tsx:59`). Dieselbe Klasse wie die falsche Behauptung zur
+   Mandantensortierung (Nachtrag 10) und die `import type`-DTO (Nachtrag 15).
+
+2. **`AppHeader` und `WPView` umgingen `apiFetch`.** Beide riefen `/auth/me`
+   per rohem `fetch` und schoben bei 401 direkt zum Login. Selbst mit
+   repariertem `apiFetch` wäre die Sitzung nach 15 Minuten vorbei gewesen —
+   der erste Entwurf des Fixes blieb deshalb grün, **im echten Browser
+   gemessen** (`GET /auth/me` → 401, **kein** `/auth/refresh`).
+
+**Behoben:** `apiFetch` erneuert die Sitzung einmal (Single-Flight, damit
+parallele Aufrufe einen einzigen Refresh auslösen) und wiederholt den
+Aufruf. Erst wenn das scheitert, wird aufgeräumt und zum Login geführt.
+`AppHeader` und `WPView` benutzen jetzt `apiFetch`.
+
+**Zwei Tests, weil eine Behauptung zu wenig ist:**
+
+| Test | Ergebnis |
+|---|---|
+| gültiger Refresh-Token + abgelaufener Access-Token → Sitzung bleibt | muss grün |
+| **kein** Refresh-Token + 401 → führt zum Login | muss grün bleiben |
+
+Der zweite Test ist der Gegenprobe: der Mechanismus darf nicht jede
+401-Umleitung verschlucken.
+
+**Negativprobe:** Refresh-Token-Ausgangspunkt abgeschaltet → der erste Test
+**rot** („Redirect zum Login"), der zweite bleibt grün.
+
+#### Drei eigene Werkzeugfehler in dieser Stunde
+
+1. **Ich habe beim Neuschreiben von `/tmp/bzenv.sh`
+   `NODE_ENV=development` gesetzt** — und `next build` brach daraufhin mit
+   `<Html> should not be imported outside of pages/_document` beim Prerendern
+   von `/404` ab. Genau der Fehler, den ich **schon einmal** in diesem
+   Projekt hatte. Die Warnung steht jetzt in der Datei selbst.
+2. **`npx tsc --noEmit` meldete keinen Typfehler, den `next build` fand**
+   (`string | null` an `string | undefined`). Für diese Anwendung ist
+   `npm run build` die strengere Prüfung — `tsc` allein ist es nicht.
+3. **Meine erste Negativprobe war nicht build-sicher** und verhinderte
+   deshalb erst den Testlauf. Zwei Anläufe später war sie es.
+
+**Merksatz:** Ein Test, der eine Zustandsänderung behauptet, braucht eine
+**Gegenprobe**. Und ein Prüfwerkzeug, das nur eine von zwei Aussagen trifft,
+ist für diese Entscheidung nicht verwendbar.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 

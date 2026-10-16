@@ -9,6 +9,57 @@ const BASE_API = '/api';
 
 type FetchOptions = RequestInit & { accessToken?: string };
 
+/**
+ * Erneuert die Sitzung einmalig und teilt sich den Versuch zwischen allen
+ * parallelen Aufrufen (Single-Flight).
+ *
+ * BEFUND 2026-10-16: `POST /api/auth/refresh` existierte im Backend, wurde
+ * aber von **keiner** Stelle der Oberflaeche aufgerufen. Gemessen:
+ * `expiresIn: 900` — der Access-Token ist 15 Minuten gueltig, der Benutzer
+ * wurde also alle 15 Minuten zum Login geschickt, mitten in einer
+ * Abschlussarbeit. Der Mechanismus, der genau das verhindern soll, war
+ * vorhanden und unerreichbar.
+ *
+ * `null` heisst: kein Refresh-Token vorhanden oder der Versuch ist
+ * gescheitert. In beiden Faellen bleibt der alte 401-Zweig.
+ */
+let refreshLaeuft: Promise<string | null> | null = null;
+
+function sitzungErneuern(): Promise<string | null> {
+  if (refreshLaeuft) return refreshLaeuft;
+  if (typeof window === 'undefined') return Promise.resolve(null);
+
+  const refreshToken = localStorage.getItem('refreshToken');
+  if (!refreshToken) return Promise.resolve(null);
+
+  refreshLaeuft = fetch(`${BASE_API}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+  })
+    .then(async (r) => {
+      if (!r.ok) return null;
+      const daten = (await r.json()) as {
+        accessToken?: string;
+        refreshToken?: string;
+      };
+      if (!daten.accessToken) return null;
+      localStorage.setItem('accessToken', daten.accessToken);
+      // Der Server kann einen neuen Refresh-Token zurueckgeben (Rotation).
+      // Solange er nicht rotiert, ist das hier ein No-op.
+      if (daten.refreshToken && daten.refreshToken !== refreshToken) {
+        localStorage.setItem('refreshToken', daten.refreshToken);
+      }
+      return daten.accessToken;
+    })
+    .catch(() => null)
+    .finally(() => {
+      refreshLaeuft = null;
+    });
+
+  return refreshLaeuft;
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   options: FetchOptions = {},
@@ -67,12 +118,28 @@ export async function apiFetch<T = unknown>(
     // scheiterte identisch. Der Arbeitsstand war tot, ohne dass er es
     // merken konnte.
     //
-    // Jetzt wird die Sitzung aufgeräumt und zum Login geführt. Der
-    // Refresh-Mechanismus des Projekts nutzt ein separates
-    // refreshToken-Cookie; ein Redirect ist der einzige Weg, den
-    // Benutzer zuverlaessig zurueckzubringen.
+    // Bugfix 2026-10-16: Der 401-Zweig raeumte sofort auf und leitete zum
+    // Login. Dabei wurde behauptet, der Refresh-Mechanismus nutze ein
+    // separates `refreshToken`-Cookie — **das gibt es nicht**. Der Token
+    // liegt in `localStorage` (siehe `LoginForm`), und `/auth/refresh`
+    // wurde von **keiner** Stelle aufgerufen. Gemessen: `expiresIn: 900`.
+    // Der Benutzer wurde also alle 15 Minuten rausgeworfen, und der
+    // Mechanismus, der das verhindert, war vorhanden und unerreichbar.
+    //
+    // Jetzt wird ZUERST erneuert und der Aufruf einmal wiederholt.
+    // Erst wenn das scheitert, wird aufgeräumt und zum Login gefuehrt.
+    const istLoginOderRefresh =
+      path.includes('/auth/refresh') || path.includes('/auth/login');
+    if (!istLoginOderRefresh) {
+      const neuerToken = await sitzungErneuern();
+      if (neuerToken) {
+        return apiFetch<T>(path, { ...options, accessToken: neuerToken });
+      }
+    }
+
     if (typeof window !== 'undefined') {
       localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
       localStorage.removeItem('activeMandantId');
       const ziel = window.location.pathname;
       window.location.href = `/${ziel.split('/')[1] ?? 'de-DE'}/login?expired=1`;

@@ -111,11 +111,9 @@ export function WPView() {
     async function load() {
       const token = getAccessToken();
       if (!token) return;
-      const meRes = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!meRes.ok) return;
-      const me = (await meRes.json()) as SessionUser;
+      // `apiFetch` statt rohem `fetch` — siehe AppHeader: der rohe 401-Pfad
+      // umging den Refresh-Mechanismus und beendete die Sitzung nach 15 min.
+      const me = await apiFetch<SessionUser>('/auth/me', { accessToken: token });
       if (cancelled) return;
       setUser(me);
       // Bugfix 2026-10-04: hier stand '/mandanten' (Plural). Der Endpoint

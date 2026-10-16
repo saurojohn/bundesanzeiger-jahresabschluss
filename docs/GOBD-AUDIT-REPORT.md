@@ -2735,7 +2735,7 @@ rot**, darunter exakt der aus der CI.
 | Backend Unit-Tests | **742 / 742 grün** (77 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
-| Playwright e2e | **66 / 66 grün**, 0 übersprungen; zweimal hintereinander gefahren |
+| Playwright e2e | **68 / 68 grün**, 0 übersprungen |
 | Migrationen auf leerer DB | 8 angewandt, `migrate diff` ohne Abweichung |
 | Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
@@ -2745,6 +2745,7 @@ rot**, darunter exakt der aus der CI.
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
+| Sitzungsdauer | ✅ `apiFetch` erneuert bei 401 (Single-Flight); 2 Playwright-Tests inkl. Gegenprobe |
 | Betragseingabe | ✅ deutsche Schreibweise (`1.500` = 1500), 1 Playwright-Test |
 | Filter-Parameter | ✅ `GeschaeftsjahrPipe` + `IsoDatumPipe`, 15 e2e |
 | Hash-Chain verifizierbar | 🟡 `sequenz`-basiert, `verifyIntegrity()` lückenlos **im Ketteninneren**. Loeschung am Kettenende nicht erkennbar — kein externer Anker (Nachtrag 24, gemessen) |

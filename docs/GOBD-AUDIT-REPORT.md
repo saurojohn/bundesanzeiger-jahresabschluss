@@ -2556,7 +2556,49 @@ Layer 3: assertMandantAccess() (Runtime-Check)
 |---|---|
 | Backend tsc-Errors | 0 (`npm run typecheck`, inkl. `tsconfig.test.json`) |
 | Backend eslint-Warnings | 0 (`--max-warnings 0`) |
-| Backend Unit-Tests | **738 / 738 grün** (77 Dateien; zweimal hintereinander gefahren) |
+### Nachtrag 2026-10-16 (Nachtrag 23): Die CI hat eine Regression gefunden, die lokal durchging
+
+**Befund:** Lauf `38876133530` auf dem Commit mit Nachtrag 20 war **rot**:
+
+```
+FAIL  e2e/betrag-grenzen.e2e.spec.ts > bilanzsummeVorjahr mit 24 Stellen -> 400
+AssertionError: expected 500 to be 400
+```
+
+**Ursache — meine eigene Änderung von zwei Stunden vorher.** Das Muster,
+das ich in Nachtrag 20 gelockert habe, um die deutsche Schreibweise
+zuzulassen, hatte im zweiten Zweig ein `\d+` **ohne Zifferngrenze**:
+
+```
+vorher (zu streng):  ^-?\d{1,16}(?:[.,]\d{1,2})?$
+nach der Lockerung:  ^-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?$  |  ^-?\d+(?:[.,]\d{1,2})?$
+```
+
+Damit war genau der 500er aus Nachtrag 16 — den diese Änderung eigentlich
+beheben sollte — wieder ausloesbar. Und weil `bilanzsummeVorjahr` vom
+Frontend ohnehin **nicht bedienbar** ist, fiel der Fehler lokal nicht auf:
+es gab keinen lokalen Weg, der die Zeile ausgeloest haette.
+
+**Behoben** an der Spaltenbreite festgemacht, nicht am Gefuehl:
+
+```
+^-?\d{1,3}(?:\.\d{3}){0,5}(?:,\d{1,2})?$  |  ^-?\d{1,16}(?:[.,]\d{1,2})?$
+```
+
+Geprueft gegen die Datenbank statt gegen mein Gefuehl: 16 Ziffern kommen
+durch, 19 und 24 werden abgelehnt.
+
+**Merksatz:** Ein Muster zu lockern, um einen Fall zuzulassen, prueft den
+Fall, den man im Kopf hatte — nicht den, den man verschlossen hat. Und
+ein Test, der einen Eingabeweg voraussetzt, den die Oberflaeche nicht
+anbietet, ist ein Test, der nur in der CI etwas sagen kann.
+
+**Negativprobe:** Auf die ungegrenzte Fassung zurueckgesetzt → **3 Tests
+rot**, darunter exakt der aus der CI.
+
+---
+
+| Backend Unit-Tests | **742 / 742 grün** (77 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
 | Playwright e2e | **66 / 66 grün**, 0 übersprungen; zweimal hintereinander gefahren |

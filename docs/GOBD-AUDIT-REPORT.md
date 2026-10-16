@@ -1937,6 +1937,64 @@ gespeichert, als gültig gemeldet und kann signiert werden.
 ---
 
 
+### Nachtrag 2026-10-16 (Nachtrag 24): Der Audit-Hash-Chain erkennt keine Löschung am Kettenende
+
+**Gemessen**, zwei Szenarien getrennt (ein gemeinsamer Lauf hätte nichts
+gezeigt — der Mittelteil-Bruch trägt das Ergebnis):
+
+```
+A: Ausgangslage                   -> status=OK      geprueft=4
+A: Loeschung IN DER MITTE         -> status=BROKEN  geprueft=2
+
+B: Ausgangslage                   -> status=OK      geprueft=4
+B: NUR letzter Eintrag geloescht  -> status=OK      geprueft=3   <-- NICHT erkannt
+```
+
+**Die Mitte wird erkannt**, weil die Kette neu berechnet und nicht dem
+gespeicherten `prevHash` geglaubt wird: fehlt ein Eintrag, weicht der
+rekombinierte Hash des Nachfolgers ab (`BROKEN`).
+
+**Das Ende nicht** — und das ist keine Implementierungslücke, sondern die
+Eigenschaft jeder Hash-Kette ohne externen Anker. Nach dem Löschen ist die
+verbleibende Kette wieder in sich schlüssig; es gibt nichts, womit sie
+verglichen werden könnte.
+
+**Warum das hier schwerer wiegt als sonst.** § 147 AO verlangt
+Unveränderbarkeit. Wer im System etwas verbergen will, löscht die
+**jüngsten** Einträge — denn die ältesten sind über WORM-Retention und
+Hash gesichert, die eigenen Handlungen sind es nicht. Genau dieser Fall
+wird als `OK` gemeldet.
+
+#### Was das NICHT ist
+
+* Kein Fehler in der Verkettung — die ist korrekt und im Middle-Case
+  nachgewiesen.
+* Kein Beweis, dass manipuliert wurde — es ist eine **nicht erkennbare
+  Lücke**, die man kennen muss, um sie nicht für Manipulationsfreiheit zu
+  halten.
+
+#### Mögliche Gegenmaßnahmen — alle brauchen eine Entscheidung
+
+| Maßnahme | Wirkung | Kosten / Risiko |
+|---|---|---|
+| **Anker im WORM-Storage** — periodisch den Kettenkopf (letzter `sequenz` + `entryHash`) als Object-Lock-Objekt ablegen | Kettenende wird prüfbar | braucht Bucket im Betrieb; der S3-Mock in den Tests bildet das nur nach |
+| externer Zeitstempel (TSA) auf den Kettenkopf | dasselbe, ohne eigenen Storage | externe Abhängigkeit + Kosten je Intervall |
+| **bewusst nichts** | — | die Lücke ist dokumentiert; die Aussage „Hash-Chain erkennt Manipulation" muss auf „im Ketteninneren" **eingeschränkt** werden |
+
+**Nicht gebaut.** Jede der ersten beiden ist eine Architekturentscheidung mit
+Betriebsfolge — der Anker, wie oft, wohin, und wer gibt ihn frei. Die dritte
+ist eine Entscheidung über die **Zusicherung im Audit-Bericht**, und die
+korrigiere ich sofort, weil sie sonst über den Prüfbarkeitsumfang täuscht:
+
+> „Hash-Chain (SHA-256(prevHash + entry)) zur Manipulationserkennung"
+
+Diese Zeile steht seit M4 Sprint 5 im Bericht. Sie ist für Manipulationen
+**innerhalb** der Kette richtig und am Kettenende unvollständig. Nachstehender
+Abschnitt korrigiert das.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2441,9 +2499,18 @@ geschlossen; dass er die urspruengliche Ausloesung war, ist **nicht belegt**.
 - Vorher/Nachher-JSON-Snapshots für alle Mutationen
 - Append-only (kein UPDATE/DELETE auf Audit-Log)
 - M4 Sprint 5: Hash-Chain (SHA-256(prevHash + entry)) für Manipulations-
-  erkennung
+  erkennung **innerhalb** der Kette
 - Endpoint: GET /api/audit/integrity für Wirtschaftsprüfer
 ```
+
+> **Einschränkung, gemessen 2026-10-16 (Nachtrag 24).** Die Kette erkennt
+> eine Löschung **im Ketteninneren** als `BROKEN` — belegt. Sie erkennt eine
+> Löschung **am Kettenende nicht**: die verbleibende Kette ist wieder in sich
+> schlüssig und ohne externen Anker nicht widerlegbar. Die Formulierung
+> „für Manipulationserkennung" war deshalb zu weit gefasst und ist hier auf
+> den tatsächlich abgedeckten Bereich eingeschränkt. Gegenmaßnahmen erfordern
+> einen Anker (WORM-Objekt, TSA-Zeitstempel) und damit eine
+> Architekturentscheidung — siehe Nachtrag 24.
 
 ### 2.3 Hash-Chain-Algorithmus (M4 Sprint 5)
 
@@ -2613,7 +2680,7 @@ rot**, darunter exakt der aus der CI.
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
 | Betragseingabe | ✅ deutsche Schreibweise (`1.500` = 1500), 1 Playwright-Test |
 | Filter-Parameter | ✅ `GeschaeftsjahrPipe` + `IsoDatumPipe`, 15 e2e |
-| Hash-Chain verifizierbar | ✅ `sequenz`-basiert, `verifyIntegrity()` lückenlos |
+| Hash-Chain verifizierbar | 🟡 `sequenz`-basiert, `verifyIntegrity()` lückenlos **im Ketteninneren**. Loeschung am Kettenende nicht erkennbar — kein externer Anker (Nachtrag 24, gemessen) |
 | WORM-Audit-Script | ✅ |
 | CI (backend + frontend) | ✅ beide Jobs grün |
 

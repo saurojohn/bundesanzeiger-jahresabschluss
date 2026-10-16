@@ -1882,6 +1882,61 @@ genommen nichts, solange der Auslöser nicht benannt ist.
 ---
 
 
+### Nachtrag 2026-10-16 (Nachtrag 22): Bilanz und GuV werden nicht gegeneinander geprüft
+
+**Gemessen.** Bilanz GJ 2068 mit `A.V. Jahresüberschuss = 100.000`, GuV
+gleiches Jahr mit Erlösen 200.000 / Aufwand 150.000, also
+Jahresergebnis **50.000**:
+
+```
+Bilanz GJ 2068: HTTP 201 | saldostimmt = true | differenz = 0
+GuV    GJ 2068: HTTP 201 | Jahresergebnis = 50000
+
+>> Abweichung 50000 — nirgends gemeldet
+```
+
+Beide Sätze sind einzeln **richtig**: Die Bilanz geht auf, die GuV ist in
+sich schlüssig. § 264 Abs. 2 HGB verlangt aber, dass Bilanz und
+GuV-Rechnung **übereinstimmen** — das ausgewiesene Jahresergebnis muss in
+der Eigenkapitalentwicklung wiederkehren.
+
+**Was vorhanden ist:** eine GuV-interne Prüfung (Σ Erlöse − Σ Aufwendungen
+= Jahresergebnis) und eine XBRL-Prüfung
+(`xbrl-validator`, Meldung `NET_INCOME_MISMATCH`, **Warnung**). Was fehlt, ist
+die Kreuzprüfung zwischen den beiden Sätzen. `A.V.` wird nirgends gegen die
+GuV gelesen (gemessen: keine Treffer in `bilanz.service` und
+`xbrl-generator`).
+
+#### Warum ich das NICHT gebaut habe
+
+Eine Sperre wäre eine **erfundene Fachregel**. `A.V.` ist nicht
+zwangsläufig das Jahresergebnis: Kapitalerhöhungen, Entnahmen und andere
+Eigenkapitalveränderungen verschieben den Saldo, ohne in der GuV zu
+erscheinen. Das Produkt modelliert diese Bewegungen an keiner Stelle
+(geprüft: keine Equity-Movement-Entität, kein Feld). Ob eine Abweichung ein
+Fehler oder eine Eigenkapitalbewegung ist, lässt sich aus den Daten
+**nicht entscheiden** — und eine harte Sperre würde einen berechtigten
+Jahresabschluss blockieren.
+
+Selbst eine Warnung hätte denselben Fehler: sie schlägt bei jeder
+Kapitalerhöhung an, ohne sagen zu können, ob das ein Problem ist.
+
+**Deshalb als Entscheidung offen, nicht als fehlende Zeile im Code.**
+Drei mögliche Formen, mit meiner Empfehlung:
+
+| Form | Wirkung | Bewertung |
+|---|---|---|
+| Warnung (wie `NET_INCOME_MISMATCH`) | sichtbar, blockiert nicht | **empfohlen**, sobald Eigenkapitalbewegungen modelliert werden |
+| harte Sperre | verhindert unrichtige Veröffentlichung | nur mit Equity-Bewegungs-Erfassung, sonst zu weit |
+| nichts | wie heute | vertretbar **nur**, solange die Lücke dokumentiert ist |
+
+Bis dahin ist der Nachteil der fehlenden Prüfung nicht aus der Welt: Ein
+Jahresabschluss mit 50.000 Abweichung zwischen Bilanz und GuV wird
+gespeichert, als gültig gemeldet und kann signiert werden.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 

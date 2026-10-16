@@ -59,5 +59,18 @@ export const INT4_MAX = 2_147_483_647;
  *
  * Der Test `betrag-grenzen.spec.ts` haelt beide Seiten deckungsgleich —
  * dieselbe Fallliste, dieselbe Erwartung.
+ *
+ * ZWEITER FEHLER DERSELBEN ÄNDERUNG — von der CI gefunden (Lauf 38876133530):
+ * Die Fassung mit `\d+` im zweiten Zweig hatte **keine Zifferngrenze**. Damit
+ * kam die 24-stellige Zahl wieder durch, die `Decimal(18,2)` nicht fasst —
+ * der 500er aus Nachtrag 16, den diese Änderung eigentlich beheben sollte,
+ * war damit erneut ausloesbar. Die Belegung ist jetzt an der Spaltenbreite
+ * festgemacht: hoechstens 16 Ziffern im Ganzen, was `Decimal(18,2)` genau
+ * entspricht.
+ *
+ * `\d{1,3}(?:\.\d{3}){0,5}` erlaubt 1 + 5*3 = 16 Ziffern in deutscher
+ * Schreibweise; `\d{1,16}` dieselbe Zahl ohne Trenner. Geprueft gegen die
+ * Datenbank, nicht gegen mein Gefuehl fuer "reicht".
  */
-export const BETRAG_STRING_PATTERN = /^-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?$|^-?\d+(?:[.,]\d{1,2})?$/;
+export const BETRAG_STRING_PATTERN =
+  /^-?\d{1,3}(?:\.\d{3}){0,5}(?:,\d{1,2})?$|^-?\d{1,16}(?:[.,]\d{1,2})?$/;

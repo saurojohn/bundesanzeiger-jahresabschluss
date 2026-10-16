@@ -24,6 +24,9 @@ const ANNAHMEN: string[] = [
   '-500',
   '1500',
   '1234567.89',
+  // 16 Ziffern — genau die Kapazitaet von `Decimal(18,2)`.
+  '9999999999999999',
+  '1.234.567.890.123.456',
 ];
 
 const ABLEHNUNGEN: string[] = [
@@ -35,6 +38,9 @@ const ABLEHNUNGEN: string[] = [
   '1.2.3',
   '--5',
   '12,345',
+  // 19 Ziffern — `Decimal(18,2)` fasst hoechstens 16.
+  '1.000.000.000.000.000.000',
+  '999999999999999999999999',
 ];
 
 describe('Betrags-String (Decimal als String)', () => {

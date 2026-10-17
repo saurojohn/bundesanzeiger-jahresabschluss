@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
+import { P12UploadDialog } from '@/components/signatur/P12UploadDialog';
 
 type JahresabschlussSummary = {
   id: string;
@@ -32,6 +33,8 @@ export function JahresabschlussView() {
   const [pruefung, setPruefung] = useState<FinalizeAntwort | null>(null);
   /** Geschaeftsjahr fuer den neu anzulegenden Abschluss. */
   const [jahr, setJahr] = useState(2025);
+  /** Abschluss, dessen Signatur-Dialog offen ist (null = keiner). */
+  const [signierZiel, setSignierZiel] = useState<string | null>(null);
 
   useEffect(() => {
     void loadList();
@@ -251,12 +254,41 @@ export function JahresabschlussView() {
                           {t('jahresabschluss.actions.finalize')}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="text-sm text-brand-600 hover:text-brand-700"
-                      >
-                        {t('jahresabschluss.actions.signAbschluss')}
-                      </button>
+                      {/* BEFUND 2026-10-17: Diese Schaltfläche hatte
+                          **keinen `onClick`** — sie war ein toter Knopf. Ein
+                          Klick tat nichts, ohne jede Fehlermeldung.
+
+                          Das ist derselbe Fehler, den das Projekt am
+                          2026-10-05 für GuV und Anhang gefunden und behoben
+                          hat ("`POST /signatur/sign-guv` existiert im
+                          Backend, hatte aber keinen Bedienweg"). Er wurde
+                          beim Bau dieser Ansicht unverändert wiederholt.
+
+                          Der Bedienweg existierte die ganze Zeit: `P12UploadDialog`
+                          nimmt `jahresabschlussId` + `signTarget="abschluss"`
+                          entgegen, und `ExportActions` reicht beides für
+                          `entityType="abschluss"` durch. Es fehlte nur der
+                          Aufruf.
+
+                          Sichtbar nur bei `FINALIZED`: der Server lässt eine
+                          Signatur ausschließlich in diesem Zustand zu
+                          (Nachtrag 35) — bei `DRAFT` und bei `SIGNED` wäre der
+                          Knopf eine Einladung zu einer 409. */}
+                      {j.status === 'FINALIZED' && (
+                        <button
+                          type="button"
+                          onClick={() => setSignierZiel(j.id)}
+                          data-testid="jahresabschluss-signieren"
+                          className="text-sm text-brand-600 hover:text-brand-700"
+                        >
+                          {t('jahresabschluss.actions.signAbschluss')}
+                        </button>
+                      )}
+                      {j.status === 'SIGNED' && (
+                        <span className="text-xs text-slate-400">
+                          {t('jahresabschluss.actions.alreadySigned')}
+                        </span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -321,6 +353,20 @@ export function JahresabschlussView() {
             );
           })()}
         </div>
+      )}
+
+      {signierZiel && (
+        <P12UploadDialog
+          jahresabschlussId={signierZiel}
+          signTarget="abschluss"
+          onClose={() => {
+            setSignierZiel(null);
+            // Nach der Signatur steht der Abschluss auf `SIGNED` — die Liste
+            // muss den neuen Zustand zeigen, sonst bleibt die Zeile auf
+            // "Finalisiert" und der Knopf verschwindet nicht.
+            void loadList();
+          }}
+        />
       )}
     </div>
   );

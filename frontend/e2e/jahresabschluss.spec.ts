@@ -255,3 +255,86 @@ test('ein nicht vollstaendiger Abschluss wird als Fehlschlag gezeigt', async ({
     'ein abgelehnter Abschluss darf nicht als finalisiert erscheinen',
   ).toContainText('Entwurf');
 });
+
+// ---------------------------------------------------------------------------
+// BEFUND 2026-10-17 (Nachtrag 38): Der Knopf „Jahresabschluss signieren" war
+// ein **toter Knopf** — er hatte keinen `onClick`. Ein Klick tat nichts, ohne
+// jede Rueckmeldung.
+//
+// Das ist derselbe Fehler, den das Projekt am 2026-10-05 fuer GuV und Anhang
+// gefunden und behoben hat. Er wurde beim Bau dieser Ansicht wiederholt.
+//
+// `formulare.spec.ts` heisst „Fachformulare: Aktionen, nicht nur Rendering",
+// deckt aber nur Branding, Webhooks, API-Keys und Audit ab — **nicht**
+// Bilanz, GuV, Anhang oder Jahresabschluss. Deshalb konnte der Fehler
+// wieder entstehen, ohne dass ein Wächter ihn sah.
+// ---------------------------------------------------------------------------
+
+test('der Signier-Knopf ist belegt und öffnet den P12-Dialog', async ({ page }) => {
+  test.setTimeout(90_000);
+  await anmelden(page);
+
+  const jahr = 2081;
+  await saetzeAnlegen(page, jahr, true);
+  await abschlussAnlegen(page, jahr);
+
+  const zeile = page.locator('tr', { hasText: String(jahr) }).first();
+
+  // Erst abschliessen — der Knopf ist bewusst nur bei FINALIZED sichtbar,
+  // weil der Server eine Signatur ausschliesslich in diesem Zustand annimmt
+  // (Nachtrag 35).
+  await zeile.getByRole('button', { name: /abschlie/i }).click();
+  await expect(zeile, 'der Status muss auf FINALIZED stehen').toContainText(
+    'Finalisiert',
+    { timeout: 20_000 },
+  );
+
+  const knopf = zeile.getByTestId('jahresabschluss-signieren');
+  await expect(
+    knopf,
+    'nach dem Abschliessen muss der Signier-Knopf dastehen',
+  ).toBeVisible();
+
+  // Das ist die eigentliche Zusicherung: **der Knopf muss etwas tun.**
+  // Ohne `onClick` bliebe das DOM unveraendert — der Test faellt dann an
+  // genau der Stelle durch, an der der Anwender sonst nur Ratlosigkeit sieht.
+  const dialog = page.getByRole('heading', { name: /zertifikat|signatur/i });
+  await expect(
+    dialog,
+    'ein Klick auf "Jahresabschluss signieren" muss den P12-Dialog oeffnen',
+  ).not.toBeVisible();
+
+  await knopf.click();
+
+  await expect(
+    dialog,
+    'der P12-Dialog hat sich nicht geoeffnet — der Knopf ist tot',
+  ).toBeVisible({ timeout: 15_000 });
+
+  // Und im Dialog muss die Dateiauswahl stehen, sonst waere es ein leerer
+  // Dialog, der auch nichts koennte.
+  await expect(
+    page.locator('div.fixed input[type="file"]').first(),
+    'der Dialog muss eine P12-Datei entgegennehmen',
+  ).toBeAttached();
+});
+
+test('bei DRAFT ist der Signier-Knopf nicht sichtbar', async ({ page }) => {
+  test.setTimeout(90_000);
+  await anmelden(page);
+
+  // Absichtlich OHNE VALIDATED: der Abschluss bleibt DRAFT. Der Server
+  // wuerde eine Signatur mit 409 abweisen — der Knopf darf den Anwender
+  // nicht erst in einen Fehler laufen lassen, den er selbst nicht ausloesen
+  // kann.
+  const jahr = 2082;
+  await saetzeAnlegen(page, jahr, false);
+  await abschlussAnlegen(page, jahr);
+
+  const zeile = page.locator('tr', { hasText: String(jahr) }).first();
+  await expect(zeile).toContainText('Entwurf');
+  await expect(
+    zeile.getByTestId('jahresabschluss-signieren'),
+    'ein DRAFT-Abschluss darf nicht signierbar aussehen',
+  ).toHaveCount(0);
+});

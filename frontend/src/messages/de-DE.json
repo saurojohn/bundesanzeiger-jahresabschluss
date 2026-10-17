@@ -437,7 +437,8 @@
       "downloadAll": "Alle PDFs herunterladen",
       "delete": "Löschen",
       "finalize": "Abschluss prüfen und abschließen",
-      "createHint": "Bilanz, GuV und Anhang dieses Jahres werden benötigt."
+      "createHint": "Bilanz, GuV und Anhang dieses Jahres werden benötigt.",
+      "alreadySigned": "Bereits signiert"
     },
     "pruefung": {
       "ok": "Alle Pflichtangaben erfüllt.",

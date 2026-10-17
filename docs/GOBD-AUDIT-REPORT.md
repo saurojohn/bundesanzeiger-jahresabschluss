@@ -2111,6 +2111,74 @@ mal lag es am Server, nicht am Produkt.
 ---
 
 
+### Nachtrag 2026-10-17 (Nachtrag 27): Der Jahresabschluss existiert in der Anwendung nicht
+
+Das ist kein Detail, sondern der zentrale Befund dieser Prüfrunde — und er
+geht allen anderen Nachträgen voraus.
+
+**Gemessen, vierfach abgesichert:**
+
+| Prüfung | Ergebnis |
+|---|---|
+| Schreibzugriffe auf `jahresabschluss` (create/update/upsert/delete) in `src/` **und** im Seed | **keine** |
+| Controller-Routen mit `jahresabschluss` im Pfad | **keine** |
+| `GET /api/jahresabschluss?mandantId=…` | **404** |
+| Datensätze nach `prisma db seed` | **0** |
+
+**Was daran hängt und damit unerreichbar ist:**
+
+* `POST /api/signatur/sign-abschluss` — die qeS-Signatur des Jahresabschlusses
+* `POST /api/pdf/abschluss/:id/generate` — das Abschluss-PDF
+* `POST /api/v1/banz-submissions` — bereits als 501 dokumentiert
+* `Signature.findLatestByJahresabschluss` — die Abfrage „ist signiert?" hat
+  seit jeher **keinen Aufrufer** (im README als Konsequenz vermerkt)
+
+Bilanz, GuV und Anhang lassen sich einzeln anlegen, bearbeiten und
+**einzeln signieren** — das ist der Stand, den die Tests belegen. Das
+Aggregat, um das es in § 314 HGB geht, kann die Anwendung nicht erzeugen.
+
+#### Warum es bisher niemand gesehen hat
+
+`JahresabschlussView` ruft `GET /api/jahresabschluss` und **fängt das 404 als
+leere Liste ab**:
+
+```ts
+if (status === 404) return []; // erwartet: Endpunkt existiert noch nicht
+```
+
+Der Kommentar sagt es offen. Der Playwright-Smoke-Test prüft danach nur, dass
+die Seite **darstellbar** ist — und eine Seite mit leerem Zustand ist
+darstellbar. Der Test ist grün, der Smoke-Test meldet „13 Fachseiten
+geladen", und die eine Seite, die nie Inhalt haben kann, zählt mit.
+
+**Das ist dieselbe Fehlerklasse wie in Nachtrag 12, 14 und 21** — ein grüner
+Test, der nichts prüft — nur diesmal **im Produktcode verankert**, nicht in
+einem Test. Ein `catch` auf 404 hat einen echten Fehlerzustand in einen
+Erfolgszustand verwandelt.
+
+#### Einordnung
+
+Es ist kein unentdeckter Fehler, sondern ein **nie gebautes Modul**: die
+geplante Verzeichnisstruktur nennt `abschluss/ — Jahresabschluss-Orchestrierung`.
+Die Prüfungsreihenfolge dieser Nachträge hat Bilanz, GuV, Anhang, Signatur,
+Audit und Paginierung erreicht, ohne die Lücke zu berühren, weil jede dieser
+Sätze **für sich** funktioniert.
+
+Was daraus folgt, ist eine Frage der Zusicherung, nicht des Codes: Das README
+beschreibt als Zweck, den „Jahresabschluss (Bilanz + GuV + Anhang +
+Lagebericht) rechtssicher" zu führen. **Diese Kette ist derzeit nicht
+geschlossen** — vom Einzelsatz bis zur Veröffentlichung.
+
+**Nicht gebaut**, weil es keine Auslegungsentscheidung ist, sondern ein
+Baustein: Ein Abschluss braucht die verbindlichen Sätze, eine
+Vollständigkeitsprüfung (Balance, Saldoabgleich Bilanz↔GuV, offene
+Platzhalter im Anhang — beide sind inzwischen messbar vorhanden) und einen
+Statusübergang, der die Einreichung freigibt. Der Aufwand ist erheblich und
+gehört zu den Entscheidungen, die hier offen sind.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2792,6 +2860,7 @@ rot**, darunter exakt der aus der CI.
 | Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge, 1 Backend- + 1 Playwright-Test |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
+| Jahresabschluss-Aggregat | 🔴 **existiert nicht als Schreibpfad** (Nachtrag 27) — 0 Routen, 0 Schreibzugriffe, 0 Datensätze nach Seed |
 | Anhang-Platzhalter | ✅ `offenePlatzhalter` in der Detailantwort, 5 Unit + 1 e2e |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |

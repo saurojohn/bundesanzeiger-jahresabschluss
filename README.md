@@ -6,6 +6,21 @@ Die digitale Plattform für mittelständische GmbHs, Steuerberater und Wirtschaf
 um den **Jahresabschluss (Bilanz + GuV + Anhang + Lagebericht)** gemäß **HGB / PublG** rechtssicher
 im **Bundesanzeiger** zu veröffentlichen — papierlos, GoBD-konform und ohne DATEV-Briefing.
 
+> **Stand 2026-10-17 — diese Kette ist noch nicht geschlossen.** Gemessen und
+> belegt (GoBD-Nachtrag 27): Die Einzelsätze **Bilanz, GuV und Anhang** lassen
+> sich anlegen, bearbeiten, abschließen und einzeln signieren. Das Aggregat
+> **Jahresabschluss** kann die Anwendung nicht erzeugen — es gibt keinen
+> Schreibpfad, keine Route, und nach dem Seed 0 Datensätze. Damit sind
+> `sign-abschluss`, `abschluss/:id/generate` und die BAnz-Einreichung
+> unerreichbar.
+>
+> Die Lücke ist bisher **unsichtbar** gewesen, weil die Oberfläche das 404 von
+> `GET /api/jahresabschluss` als leere Liste behandelt und der Smoke-Test nur
+> prüft, dass die Seite darstellbar ist. Eine Seite ohne Inhalt ist darstellbar.
+>
+> Die Vision ist das **Ziel**, nicht der Ist-Stand. Was heute geht, steht in den
+> Tabellen unten; was nicht geht, steht hier.
+
 ## Verifikationsstand (Stand 2026-10-14)
 
 > **Vor der Reparatur war dieser Abschnitt nicht vorhanden.** Die vorherige Fassung

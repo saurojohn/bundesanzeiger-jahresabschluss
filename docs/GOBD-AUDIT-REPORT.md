@@ -2062,6 +2062,55 @@ ist für diese Entscheidung nicht verwendbar.
 ---
 
 
+### Nachtrag 2026-10-17 (Nachtrag 26): Der Anhang liess seine Platzhalter stehen und wurde trotzdem als PDF erzeugt
+
+**Gemessen, der ganze Weg:**
+
+| Schritt | Ergebnis |
+|---|---|
+| Vorlage holen (`/api/anhang/templates`) | 5 Abschnitte, Platzhalter `[Ort]`, `[Nummer]`, `[Steuernummer]`, `[Name]`, `[Anzahl]` |
+| Anhang aus der Vorlage anlegen | **201** |
+| Platzhalter im gespeicherten Anhang | **7** (davon 5 verschiedene) |
+| Anhang validieren | **gibt es keine Route** |
+| PDF erzeugen | **200** |
+
+Ein unfertiger Anhang erzeugt also ein **veröffentlichungsfähiges PDF**, in dem
+„[Ort]" steht. § 264 Abs. 4 HGB verlangt konkrete Angaben; § 284 HGB die
+Pflichtangaben. Der Seed-Anhang fiel durch, weil der Seed die Platzhalter
+bereits befüllt — die Lücke liegt im Weg, den die Oberfläche nimmt.
+
+**Behoben als Meldung, nicht als Sperre.** `findOne` liefert jetzt
+`offenePlatzhalter: string[]` mit.
+
+**Warum eine Liste und kein Muster.** `[Wert]` im Fließtext ist auch eine
+**legitime** Angabe: „Vgl. [Anlage zum Anhang]". Eine Mustersuche auf eckige
+Klammern würde darauf anschlagen und den Anwender mit einem Fehler behelligen,
+der keiner ist. Geprüft wird ausschließlich gegen die Platzhalter, die **das
+System selbst** in die Vorlage geschrieben hat — `ANHANG_VORLAGEN_PLATZHALTER`,
+zur Compile-Zeit aus der Vorlage abgeleitet. Ein Test prüft, dass die Liste
+nicht hartcodiert ist, sondern der Vorlage folgt.
+
+**Warum keine Sperre.** Es ist nicht das System, das entscheidet, ob eine
+Angabe noch offen ist — das ist der Anwender bzw. der Wirtschaftsprüfer. Und
+der Jahresabschluss wäre der richtige Ort für eine Sperre, nicht der Anhang
+allein. Dort ist die Frage aber dieselbe wie bei Nachtrag 22.
+
+#### Ein Testfehler, der mich Zeit gekostet hat
+
+Der erste e2e-Entwurf schickte den Detailabruf **ohne `Authorization`** —
+die Route hängt am globalen `JwtAuthGuard`, also kam 401 und die Meldung
+fehlte. Danach meldete der Test „4 statt 5", was ich auf einen echten Fehler
+hielt; es war ein **veralteter Server**, weil mein Neustart verkettet lief.
+Erst der direkte Aufruf zeigte alle fünf.
+
+**Merksatz:** Wenn ein Test eine Zahl „zu klein" findet, ist zuerst die
+Frage zu stellen, ob er überhaupt den aktuellen Code gesehen hat. Ich habe
+das in dieser Stunde zweimal getan (hier und bei der Signatur-ID) — beides
+mal lag es am Server, nicht am Produkt.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2732,7 +2781,7 @@ rot**, darunter exakt der aus der CI.
 
 ---
 
-| Backend Unit-Tests | **742 / 742 grün** (77 Dateien; zweimal hintereinander gefahren) |
+| Backend Unit-Tests | **748 / 748 grün** (79 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
 | Playwright e2e | **68 / 68 grün**, 0 übersprungen |
@@ -2743,6 +2792,7 @@ rot**, darunter exakt der aus der CI.
 | Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge, 1 Backend- + 1 Playwright-Test |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
+| Anhang-Platzhalter | ✅ `offenePlatzhalter` in der Detailantwort, 5 Unit + 1 e2e |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
 | Sitzungsdauer | ✅ `apiFetch` erneuert bei 401 (Single-Flight); 2 Playwright-Tests inkl. Gegenprobe |

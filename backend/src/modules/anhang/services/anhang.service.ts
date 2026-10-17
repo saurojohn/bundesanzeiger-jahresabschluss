@@ -21,6 +21,7 @@ import { AuditService } from '../../audit/services/audit.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import {
   ANHANG_TEMPLATE_ABSCHNITTE,
+  ANHANG_VORLAGEN_PLATZHALTER,
 } from '../constants/anhang.constants';
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
@@ -105,6 +106,28 @@ export class AnhangService {
     });
 
     return anhang;
+  }
+
+  /**
+   * Platzhalter, die in den Abschnitten noch unaufgeloest stehen.
+   *
+   * BEFUND 2026-10-17: Ein aus der Vorlage angelegter Anhang speichert
+   * `[Ort]`, `[Nummer]`, `[Steuernummer]`, `[Name]` und `[Anzahl]`
+   * unaufgeloest, und die PDF-Erzeugung liefert trotzdem HTTP 200 — ein
+   * veroeffentlichungsfaehiges Dokument mit "[Ort]" darin (§ 264 Abs. 4 HGB
+   * verlangt konkrete Angaben). Fuer den Anhang gab es keine
+   * Validierungsroute.
+   *
+   * Bewusst eine **Meldung, keine Sperre**: die Liste enthaelt nur
+   * Platzhalter, die das System selbst gesetzt hat, aber es ist nicht das
+   * System, das entscheidet, ob eine Angabe noch offen ist. § 284 HGB
+   * verlangt den Inhalt, nicht unsere Freigabe. Zusaetzlich ist der
+   * Jahresabschluss der Ort, an dem die Vollstaendigkeit geprueft wird —
+   * dort waere die Sperre am richtigen Ort.
+   */
+  offenePlatzhalter(abschnitte: Array<{ inhalt: string }>): string[] {
+    const inhalt = abschnitte.map((a) => a.inhalt ?? '').join('\n');
+    return ANHANG_VORLAGEN_PLATZHALTER.filter((p) => inhalt.includes(`[${p}]`));
   }
 
   async findAll(
@@ -206,11 +229,15 @@ export class AnhangService {
     id: string,
     mandantId: string,
     user: AuthUser,
-  ): Promise<AnhangEntity> {
+  ): Promise<AnhangEntity & { offenePlatzhalter: string[] }> {
     this.assertMandantAccess(mandantId, user);
     const anhang = await this.anhangRepository.findWithAbschnitte(id, mandantId);
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
-    return anhang;
+    // BEFUND 2026-10-17: Ein aus der Vorlage angelegter Anhang speichert
+    // die Platzhalter unaufgeloest und liefert trotzdem ein PDF (HTTP 200).
+    // Damit der Anwender das vor der Veroeffentlichung sieht, haengt die
+    // Liste an der Detailantwort — dort, wo er ohnehin arbeitet.
+    return { ...anhang, offenePlatzhalter: this.offenePlatzhalter(anhang.abschnitte) };
   }
 
   async update(

@@ -52,3 +52,26 @@ export const ANHANG_TEMPLATE_ABSCHNITTE: AnhangTemplateAbschnitt[] = [
       '## Sonstige Pflichtangaben\n\n### Geschäftsführung\nGeschäftsführer: [Name]\n\n### Mitarbeiter\nDie Gesellschaft beschäftigte im Geschäftsjahr durchschnittlich [Anzahl] Mitarbeiter.\n\n### Ergebnisverwendung\nDer Jahresüberschuss wird auf neue Rechnung vorgetragen.',
   },
 ];
+/**
+ * Die Platzhalter, die DIESE Vorlage selbst setzt.
+ *
+ * BEFUND 2026-10-17: Die Anhang-Vorlage enthaelt `[Ort]`, `[Nummer]`,
+ * `[Steuernummer]`, `[Name]` und `[Anzahl]`. Ein daraus angelegter Anhang
+ * speichert sie unaufgeloest, und die PDF-Erzeugung liefert trotzdem HTTP
+ * 200 — ein veroeffentlichungsfaehiges Dokument mit "[Ort]" darin. Es gibt
+ * fuer den Anhang ueberhaupt keine Validierungsroute.
+ *
+ * Warum eine Liste und kein Muster: `[Wert]` im Text einer
+ * Anlagenverzeichnis ist auch eine **legitime** Angabe ("[Anlage zum
+ * Anhang]"). Ein Muster auf eckige Klammern wuerde darauf anschlagen und
+ * den Anwender mit einem Fehler behelligen, der keiner ist. Diese Liste
+ * enthaelt ausschliesslich Platzhalter, die das System selbst geschrieben
+ * hat — da kann es keine Fehlalarme geben.
+ */
+export const ANHANG_VORLAGEN_PLATZHALTER: readonly string[] = [
+  ...new Set(
+    ANHANG_TEMPLATE_ABSCHNITTE.flatMap((a) =>
+      [...a.inhaltVorlage.matchAll(/\[([^\]\n]{1,40})\]/g)].map((m) => m[1]!),
+    ),
+  ),
+];

@@ -3372,6 +3372,8 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.8 | Audit-Trail "fire and forget" (~50 Stellen) bewerten: Fachschreibvorgang + Audit in eine Transaktion, plus Condition auf Alter des ältesten Eintrags (Nachtrag 31) | Dev + Compliance | Sprint 5 |
 | TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
+| TODO-8.11 | **Kein Wächter für tote Knöpfe.** `formulare.spec.ts` heißt „Aktionen, nicht nur Rendering", deckt aber nur Branding, Webhooks, API-Keys und Audit — **nicht** Bilanz, GuV, Anhang und Jahresabschluss. Nachtrag 38: derselbe Fehler fiel 2026-10-05 (GuV, Anhang) und jetzt erneut (Jahresabschluss) auf, weil niemand die vier Fachformulare prüft | Dev | Sprint 5 |
+| TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
 
 ---
 
@@ -3701,6 +3703,122 @@ Lücke nicht". Der Grund war eine verrutschte Zeilennummer im Skript, nicht
 der Test. **Ein grüner Lauf nach einem fehlgeschlagenen Umbau ist kein
 Befund, sondern eine kaputte Messung.** Erst als die zweite, zeilenweise
 Variante griff, war die Aussage belastbar.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 38): Der Knopf „Jahresabschluss signieren" war tot — zum zweiten Mal derselbe Fehler
+
+**Dieser Fehler war bereits einmal im Projekt.** Er wurde am 2026-10-05 behoben
+und beim Bau der Jahresabschluss-Ansicht unverändert wiederholt.
+
+#### Der Vorgänger (2026-10-05), wörtlich aus dem Quelltext
+
+```jsx
+{/* Bugfix 2026-10-05: Die GuV war über die Oberfläche
+    nicht signierbar — `POST /signatur/sign-guv` existiert
+    im Backend, hatte aber keinen Bedienweg. */}
+<ExportActions entityType="guv" entityId={g.id} canSign … />
+
+{/* Bugfix 2026-10-05: Der Anhang war über die Oberfläche nicht
+    signierbar — `POST /signatur/sign-anhang` existierte, ohne
+    dass die Schaltfläche irgendwo erreichbar war. */}
+<ExportActions entityType="anhang" entityId={a.id} … canSign />
+```
+
+#### Was ich gebaut habe (2026-10-17)
+
+```jsx
+<button
+  type="button"
+  className="text-sm text-brand-600 hover:text-brand-700"
+>
+  {t('jahresabschluss.actions.signAbschluss')}
+</button>
+```
+
+**Kein `onClick`.** Kein `data-testid`. Kein `ExportActions`. Ein Klick tat
+nichts — ohne jede Rückmeldung, ohne Fehlermeldung, ohne Network-Request.
+Die Schaltfläche sah aus wie eine Funktion.
+
+Dazu war sie in **jedem** Zustand sichtbar, auch bei `DRAFT` — wo der Server
+eine Signatur seit Nachtrag 35 mit 409 abweist.
+
+#### Der ironische Teil: der Bedienweg existierte bereits
+
+`ExportActions` akzeptiert `entityType: 'bilanz' | 'guv' | 'anhang' |
+'abschluss'` und reicht für `abschluss` genau das durch, was der Dialog
+braucht:
+
+```tsx
+<P12UploadDialog
+  bilanzId={bilanzId} guvId={guvId} anhangId={anhangId}
+  jahresabschlussId={entityType === 'abschluss' ? entityId : undefined}
+  signTarget={entityType}
+  onClose={() => setSignOpen(false)}
+/>
+```
+
+Und `P12UploadDialog` nimmt `jahresabschlussId` + `signTarget="abschluss"`
+längst entgegen. **Es fehlte ausschließlich der Aufruf.** Die Kette war
+vollständig gebaut — und trotzdem unerreichbar.
+
+#### Warum das wieder passieren konnte
+
+`formulare.spec.ts` heißt ausdrücklich **„Fachformulare: Aktionen, nicht nur
+Rendering"**. Es deckt aber nur:
+
+| abgedeckt | nicht abgedeckt |
+|---|---|
+| Branding | Bilanz |
+| Webhooks | GuV |
+| API-Keys | Anhang |
+| Audit | **Jahresabschluss** |
+
+**Vier der acht Fachseiten werden auf gerendert geprüft, vier nicht.** Der
+Wächter existiert und schaut an der falschen Stelle vorbei.
+
+#### Behoben
+
+Der Knopf ruft jetzt `setSignierZiel(j.id)` auf, was den
+`P12UploadDialog` mit `jahresabschlussId` und `signTarget="abschluss"`
+öffnet. Nach dem Schließen wird die Liste neu geladen — sonst bliebe die
+Zeile auf „Finalisiert" stehen, während der Abschluss längst `SIGNED` ist.
+
+Sichtbar ist er nur bei `FINALIZED`: das ist der einzige Zustand, den der
+Server annimmt. Bei `SIGNED` steht statt dessen „Bereits signiert".
+
+#### Zwei Tests, und was sie prüfen
+
+1. **Der Knopf muss etwas tun.** Zuerst wird geprüft, dass der Dialog
+   *nicht* sichtbar ist, dann geklickt, dann dass er sichtbar ist. Ohne
+   `onClick` bliebe das DOM unverändert — der Test fällt genau dort durch,
+   wo der Anwender sonst nur Ratlosigkeit sieht.
+2. **Bei `DRAFT` ist er nicht sichtbar.** Der Knopf darf den Anwender nicht
+   erst in einen Fehler laufen lassen, den er selbst nicht auslösen kann.
+
+**Negativprobe:** `onClick` entfernt, neu gebaut, neu gestartet:
+
+```
+✓ Jahresabschluss anlegen und abschliessen
+✓ ein nicht vollstaendiger Abschluss wird als Fehlschlag gezeigt
+✘ der Signier-Knopf ist belegt und öffnet den P12-Dialog
+    Error: der P12-Dialog hat sich nicht geoeffnet — der Knopf ist tot
+✓ bei DRAFT ist der Signier-Knopf nicht sichtbar
+```
+
+#### Und was ich dabei verschwiegen hätte (TODO-8.12)
+
+Der Knopf ist jetzt belegt — aber **er ist an fünf Stellen ohne
+Rollenprüfung sichtbar**, während `POST /signatur/*` auf
+`WIRTSCHAFTSPRUEFER` beschränkt ist. Ein STEUERBERATER trägt sein P12 hoch,
+gibt das Passwort ein, drückt auf Signieren — und erhält 403.
+
+Das ist das bestehende Muster (`canSign` wird in `BilanzForm`,
+`BilanzListView`, `GuvListView` und `AnhangListView` bedingungslos gesetzt),
+und ich habe es **nicht** an einer einzigen Stelle angebrochen: Fünf Stellen
+umstellen und die Rollenprüfung einführen ist eine eigene Entscheidung mit
+eigenen Folgen für die Oberfläche, keine Korrektur. `GET /api/auth/me`
+liefert `mandanten: [{ rolle }]` — die Auswertung fehlt nur.
 
 ---
 

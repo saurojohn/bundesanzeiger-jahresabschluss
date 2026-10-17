@@ -2311,6 +2311,351 @@ eslint 0.
 
 ---
 
+### Nachtrag 2026-10-17 (Nachtrag 30): Eine Ablehnung des Servers wurde als Erfolg dargestellt
+
+**Der schwerwiegendste Frontend-Befund dieser Runde.** Er ist nicht im
+Quelltext aufgefallen, sondern beim Negativprobe des Jahresabschluss-Tests.
+
+Der Ablauf war: `jahresabschluss.spec.ts` legte Bilanz, GuV und Anhang an
+und rief danach sofort `POST /finalize`. Der Server antwortete **zu Recht**
+mit 409 — alle drei Sätze standen noch auf `DRAFT` und konnten sich damit
+noch ändern:
+
+```
+$ curl -X POST .../api/jahresabschluss/<id>/finalize
+HTTP 409
+{"message":"Der Jahresabschluss ist noch nicht vollstaendig. ...",
+ "pruefungen":[
+   {"gegenstand":"Bilanz (Bearbeitungsstatus)","bestanden":false,
+    "meldung":"Die Bilanz steht noch auf DRAFT und kann sich aendern ..."},
+   {"gegenstand":"GuV (Bearbeitungsstatus)","bestanden":false, ...},
+   {"gegenstand":"Anhang (Bearbeitungsstatus)","bestanden":false, ...}]}
+```
+
+Und was die Oberfläche daraus machte (wörtlich aus dem vom Test
+mitgegebenen Seitenzustand):
+
+> **Alle Pflichtangaben erfüllt.**
+> ✓ Bilanz (Bearbeitungsstatus): Die Bilanz steht noch auf DRAFT und kann sich aendern — ein Jahresabschluss laesst sich sonst nicht fixieren.
+> ✓ GuV (Bearbeitungsstatus): Die GuV steht noch auf DRAFT und kann sich aendern …
+> ✓ Anhang (Bearbeitungsstatus): Die Anhang steht noch auf DRAFT und kann sich aendern …
+
+**Drei Fehler in einem Block.** Die Überschrift war fest auf
+`jahresabschluss.pruefung.ok` gesetzt, jede Prüfung bekam einen grünen
+Haken und grüne Schrift — **ungeachtet** von `p.bestanden`. Und die
+409-Behandlung (`err.body.pruefungen`) speist genau dieselbe Liste, die im
+Erfolgsfall die bestandenen Prüfungen zeigt.
+
+**Warum das mehr als Kosmetik ist.** Auf einem GoBD-Bildschirm behauptet
+die Oberfläche eine Eigenschaft, die der Server gerade bestritten hat. Ein
+Bearbeiter, der einen Abschluss nicht abschließen kann, sieht „alles
+erfüllt" mit drei grünen Häkchen — die naheliegende Deutung ist „die
+Software ist kaputt", nicht „meine Sätze sind noch in Bearbeitung". Der
+Fehler zeigt sich erst dort, wo er am meisten schadet: bei der
+Veröffentlichung eines Abschlusses.
+
+**Ursache.** Die Quelle der Wahrheit war nicht `bestanden` des Servers,
+sondern der HTTP-Status und ein hart verdrahteter Text. Zwei Stellen,
+eine Ursache.
+
+**Behoben.** Überschrift und Farbe werden jetzt aus den Prüfungen selbst
+abgeleitet, `data-ergebnis="vollstaendig|offen"` macht das Ergebnis für
+Tests und Stylesheets abgreifbar. Jede Prüfung rendert `✓`/`✗` und
+grün/rot nach `p.bestanden`.
+
+**Der Test, der das festhält** (`jahresabschluss.spec.ts`, Fall 2) ist der
+wichtigere der beiden: er lässt die Sätze absichtlich auf `DRAFT` und
+verlangt, dass die Oberfläche **nicht** „Alle Pflichtangaben erfüllt"
+anzeigt, **kein** grünes Häkchen liefert und der Abschluss `Entwurf`
+bleibt.
+
+**Zur Reihenfolge der Zusicherungen.** Die erste Negativprobe dieses
+Befunds war wertlos und fiel sofort auf: Der Test wurde rot, weil das von
+mir erfundene `data-ergebnis` fehlte — nicht weil die irreführende
+Meldung wieder da war. Ein Test, der an einem Attribut scheitert, das
+ich selbst ergänzt habe, beweist nichts über den Fehler. Die semantischen
+Zusicherungen stehen deshalb **vor** der Attributprüfung, damit die
+Negativprobe an ihnen scheitert.
+
+**Negativprobe (nach Reihenfolge-Korrektur).** Panel auf den alten Stand
+zurückgebaut → genau der zweite Test rot, mit der Erfolgsmeldung im
+Meldungstext:
+
+```
+Error: eine abgelehnte Pruefung darf nicht als Erfolg gemeldet werden
+Received string: "Alle Pflichtangaben erfüllt.✓ Bilanz (Bearbeitungsstatus):
+  Die Bilanz steht noch auf DRAFT und kann sich aendern ...✓ GuV ...✓ Anhang ..."
+```
+
+#### Nebenbefund desselben Laufs: der Test beschrieb einen unmöglichen Zustand
+
+Der ursprüngliche `jahresabschluss.spec.ts` konnte nie grün werden — und
+war nicht „flaky", sondern falsch: Er legte die drei Sätze an und rief
+sofort `finalize`, ohne sie aus `DRAFT` zu nehmen. `VALIDATED` ist per
+API setzbar (`BILANZ_STATUS` = DRAFT|VALIDATED|ARCHIVED), die Oberfläche
+bietet die Auswahl an allen drei Stellen. **Es gibt also keine Sackgasse**,
+in der ein Abschluss nie abgeschlossen werden könnte; das Fixture war
+unvollständig.
+
+Anmerkung zur Testumgebung: Der erste Lauf dieses Tests war grün, obwohl
+`.next/BUILD_ID` **drei Minuten älter** war als die geänderte Quelldatei.
+Der Frontend-Server lieferte den alten Production-Build. Wer nach einer
+Änderung an `.tsx` testet, ohne vorher `npm run build` zu fahren und den
+Prozess neu zu starten, prüft den Vorzustand und hält sich für grün.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 32): Der API-Wächter sah 13 % aller Aufrufe nicht — und war in genau der Datei blind, für die er geschrieben wurde
+
+**Zwei Mängel im selben Wächter** (`api-pfade.spec.ts`), gefunden weil ein
+neuer Aufruf einen **falschen** Alarm auslöste.
+
+#### Mangel 1: Die Routenliste war handgepflegt — und bereits veraltet
+
+```ts
+// Die Backend-Routen sind zur Compile-Zeit nicht verfuegbar; die Liste
+// wird bewusst gepflegt und im selben Commit mit dem Code geaendert.
+const bekannteRouten = ['/mandant', '/bilanz', ...];   // 18 Eintraege
+```
+
+Die Begründung trifft nicht zu: Die Routen stehen statisch im Quelltext.
+`/jahresabschluss` fehlte in der Liste, obwohl der Controller existierte —
+der Wächter meldete also einen Fehler, den es nicht gab.
+
+**Das eigentliche Problem ist nicht die fehlende Zeile.** Eine handgepflegte
+Liste unterscheidet einen echten Fehler nicht von einem erfundenen. Sie
+erzeugt Falsch-Alarme (laut, lästig) und Falsch-Bestätigungen (leise,
+teuer). Nachtrag 27/28 ist genau so entstanden: `GET /api/jahresabschluss`
+fehlte, die Oberfläche zeigte eine leere Liste, und kein Wächter sagte etwas.
+
+**Behoben:** Die Routen werden jetzt aus den `@Controller(...)`-Deklarationen
+im Backend-Quellbaum abgeleitet. Der Wächter kann nicht mehr hinter der
+Implementierung zurückbleiben, weil er aus ihr besteht. Zusätzlich eine
+ausdrückliche Zusicherung, dass überhaupt Routen gelesen wurden — eine
+leere Menge darf nicht als „alles gut" durchgehen.
+
+#### Mangel 2: Das Suchmuster übersah jede Form mit Query-String
+
+```ts
+// ALT: nach dem ersten Pfadabschnitt MUSS ein ' ` ' oder '/' folgen
+/apiFetch(?:<[^>]*>)?\(\s*[`'](\/[a-z][a-z0-9-]*)[`'/]/gi
+```
+
+Bei `` `/bilanz?mandantId=${id}` `` folgt auf `bilanz` ein `?` — das Muster
+greift **überhaupt nicht**. Gemessen an fünf Formen:
+
+| Aufruf | alter Wächter | neuer Wächter |
+|---|---|---|
+| `apiFetch('/mandant')` | gefunden | gefunden |
+| `` apiFetch(`/jahresabschluss/${id}/finalize`) `` | gefunden | gefunden |
+| `` apiFetch(`/bilanz?mandantId=${m}`) `` | **übersehen** | gefunden |
+| `` apiFetch(`/jahresabschlussTYPO?mandantId=…`) `` | **übersehen** | gefunden |
+| `apiFetch('/mandanten')` | gefunden | gefunden |
+
+**Abdeckung im echten Quellbaum: 73 von 86 `apiFetch`-Aufrufen (85 %).**
+Mit dem korrigierten Muster: 86 von 86.
+
+Die drei Aufrufe, die der alte Wächter nie gesehen hat:
+
+```
+components/audit/AuditLogView.tsx → /audit
+components/audit/AuditLogView.tsx → /audit
+components/wp/WPView.tsx          → /bilanz      ← /bilanz?mandantId=${id}
+```
+
+**`WPView` ist die Datei, in der dieser Wächter ursprünglich entstanden
+ist.** Dort stand `/mandanten` statt `/mandant`, der 404 beendete die
+Ladefunktion, und die Seite blieb für immer auf „Wird geladen …". Der
+Wächter wurde genau deshalb gebaut. Hätte derselbe Fehler **einen
+Query-String getragen** — `/bilanzen?mandantId=${id}` —, wäre der Wächter
+**still geblieben**.
+
+Das ist der Kern: Ein Wächter, der die Fehlerklasse übersieht, für die er
+geschrieben wurde, ist schlechter als keiner, weil er gezählt wird.
+
+**Behoben:** Der Terminator ist ersatzlos entfallen — der erste
+Pfadabschnitt ist das Prüfziel, der Rest des Strings ist egal.
+
+**Negativproben.** Beide Mängel einzeln nachgewiesen, jeweils an einer
+Stelle, die der alte Wächter **nie inspiziert hat**:
+
+1. `/jahresabschluss` → `/jahresabschlussTYPO` in `JahresabschlussView.tsx:60`
+   → Wächter rot: *„kein @Controller im Backend"*. Mit dem alten Muster:
+   grün.
+2. `/bilanz` → `/bilanzen` in `WPView.tsx:145` (historischer Fundort)
+   → Wächter rot: *„src/components/wp/WPView.tsx:145 → /bilanzen"*.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 33): Ein Test ermittelte dieselbe Sache zweimal — und war deshalb lange stimmig
+
+**Kein Produktdefekt, sondern die Ursache eines roten Laufs**, der sich als
+Produktdefekt ausgab.
+
+`wp-strecke.spec.ts` ermittelt die Bilanz **zweimal**, auf zwei Wegen:
+
+| Abschnitt | Weg | Ergebnis |
+|---|---|---|
+| 0 (Dropdown) | `sel.options[0].value` | die neueste Bilanz |
+| 5b (Nachsuche) | `find(geschaeftsjahr === 2025) ?? bl[0]` | GJ 2025 |
+
+Solange der Mandant **genau eine** Bilanz hatte, lieferten beide Wege
+dasselbe Objekt. Sobald `jahresabschluss.spec.ts` zwei weitere Bilanzen
+anlegt (GJ 2079, 2080), ist die Liste
+
+```
+[2080, 2079, 2025]      ← absteigend nach Jahr
+```
+
+Der Dropdown nimmt **2080**, die Nachsuche sucht in **2025**. Ergebnis:
+
+```
+Freigabe durch WP2: {"status":0,"message":"keine offene Prüfung"}
+```
+
+Die Vier-Augen-Freigabe schlug fehl, weil der Test an zwei verschiedenen
+Orten nach derselben Sache gefragt hatte.
+
+**Bemerkenswert ist die Reihenfolge.** Ohne den neuen
+`jahresabschluss.spec.ts` wäre der Fehler nie aufgefallen. Ein Test, der
+ein anderes Testverhalten voraussetzt, ist kein Test — er ist eine
+Zusicherung über die Reihenfolge hinweg.
+
+**Behoben:** Abschnitt 5b verwendet die bereits bekannte `bilanzId`; nur
+die Mandanten-ID wird noch ermittelt, weil die API sie daneben braucht.
+
+**Merksatz für künftige Tests:** Wenn ein Test zweimal dasselbe Objekt
+ermittelt, ist das kein Redundanz-Schutz, sondern eine stille
+Vorbedingung. Wer sie auflöst, muss sie *an einer Stelle* haben.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 34): Drei verschiedene Gründe, warum eine grüne Negativprobe lügt — und ein toter Prüfzweig
+
+**Der interessanteste Befund dieser Runde, weil er die Methode selbst betrifft.**
+
+#### Der Auslöser
+
+Der neue Jahresabschluss-Service war die **einzige** von zehn Stellen, die
+für die Mandantentrennung `BadRequestException` (400) statt
+`ForbiddenException` (403) warf. Semantisch falsch: 400 heißt „deine
+Anfrage ist fehlerhaft", 403 heißt „du darfst das nicht". Also geändert und
+ein Test ergänzt.
+
+#### Die Negativprobe blieb grün
+
+Service auf 400 zurückgebaut, Server neu gestartet, Test gefahren:
+
+```
+✓ e2e/jahresabschluss.e2e.spec.ts (8 tests) 712ms
+Tests  8 passed (8)
+```
+
+**Grün.** Nach der eigenen Regel ist das verdächtig: entweder steckt der
+Fix noch drin, oder der Server lief mit altem Code. Also geprüft:
+
+| Prüfung | Ergebnis |
+|---|---|
+| Quelldatei wirklich zurückgebaut? | ja (`throw new BadRequestException`, Import vorhanden) |
+| Server wirklich neu? | ja (Prozess neu, Log frisch, `/health` antwortet) |
+| Antwort des laufenden Servers direkt abgefragt | **403** |
+
+Der Server fuhr also den neuen Code — und antwortete trotzdem 403. Die
+Antwort kam gar nicht aus dem geprüften Code:
+
+```
+mandant.guard.ts:72   if (user.globalRole === 'SYSTEM_ADMIN') return true;
+mandant.guard.ts:77   if (!accessibleMandantIds.includes(mandantId))
+mandant.guard.ts:79     throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
+```
+
+Der `MandantGuard` macht **genau dieselbe Prüfung** — gleiche SYSTEM_ADMIN-
+Ausnahme, gleiche `user.mandanten`-Prüfung, **gleiche Fehlermeldung** — und
+läuft vor dem Service. Jede Jahresabschluss-Route trägt `@UseGuards(
+MandantGuard)`. Der Controller weist zusätzlich `dto.mandantId !==
+mandantId` mit 400 ab.
+
+**Ergebnis: Der `assertMandantAccess` im Jahresabschluss-Service ist über
+HTTP nicht erreichbar.** Er ist Tiefenschutz, der nie auslöst — in diesem
+Modul und, nach dem Muster, in den neun Geschwisterservices ebenso.
+
+#### Die Regel, die daraus folgt
+
+Bis heute gab es zwei bekannte Gründe für eine grüne Negativprobe. Es sind
+**drei**, und der dritte ist der gefährlichste:
+
+| Grund | Erkennbar an | |
+|---|---|---|
+| Der Fix steckt noch drin | Quelldatei prüfen | harmlos |
+| Der Server lief mit altem Code | Prozesszeit, Log, Direktabfrage | Prozess neu starten |
+| **Der Test erreicht den Code nicht** | **Direktabfrage zeigt ein Verhalten, das der geänderte Code nicht haben kann** | **Code liest** |
+
+Der dritte Grund sieht aus, als wäre nichts passiert. Man „repariert" den
+Test dann durch Entfernen der Zusicherung, und der Zweig bleibt ungetestet
+— für immer, weil niemand mehr weiß, dass er existiert.
+
+**Deshalb wird der Test nicht als Beleg geführt.** Er prüft die
+Mandantentrennung auf **Guard-Ebene** und sagt das auch so. Die
+Umstellung im Service bleibt als Angleichung an die Geschwister bestehen —
+mit dem ausdrücklichen Vermerk, dass sie über HTTP nicht prüfbar ist.
+
+**Offen, bewusst nicht entschieden:** Ob `assertMandantAccess` in den zehn
+Services bleiben soll (Tiefenschutz gegen eine künftige Route ohne Guard)
+oder entfernt wird (toter Code, der eine Prüfung vortäuscht), ist eine
+Architekturfrage — siehe TODO unten.
+
+| ID | Aufgabe | Owner | Frist |
+|---|---|---|---|
+| TODO-8.7 | Entscheiden: `assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code? Empfehlung: behalten, aber als „nur ohne Guard wirksam" kennzeichnen und einen Test schreiben, der den Service **direkt** (ohne HTTP) prüft | Dev + Compliance | Sprint 5 |
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 31): Der Audit-Trail wird „fire and forget" geschrieben — projektweit
+
+**Nicht behoben, sondern offengelegt.** Dies ist eine Musterentscheidung,
+kein Einzelfehler, und sie gehört dem Nutzer, nicht mir.
+
+Rund 50 Aufrufstellen schreiben so:
+
+```ts
+const aktualisiert = await this.prisma.jahresabschluss.update({ ... });
+void this.auditService.record({ ... });        // ← nicht awaited
+return aktualisiert;                            // ← Antwort geht raus
+```
+
+**Das Risiko.** Stürzt der Prozess zwischen dem Fachschreibvorgang und dem
+Audit-Eintrag ab, existiert die Änderung **ohne** Nachvollziehbarkeit. § 146
+Abs. 1 AO verlangt, dass die Aufzeichnung so erfolgt, dass sie bei späterer
+Einsichtnahme nachvollziehbar ist — ein Audit-Eintrag, der vom Erfolg der
+Fachoperation abhängt und ihr nachläuft, kann ausfallen.
+
+**Warum ich das nicht einfach geändert habe.** Drei Gründe, und jeder ist
+für sich relevant:
+
+1. **Es ist einheitlich.** Alle Module machen es so — Bilanz, GuV, Anhang,
+   Mandant, Webhooks, Branding, PDF, Signatur, DATEV, E-Bilanz, Auth.
+   Eine einzelne Stelle umzustellen erzeugt zwei verschiedene Semantiken im
+   selben Audit-Log, ohne dass jemand es sieht.
+2. **Es ist vermutlich bewusst.** Ein Fehler im Audit darf den
+   Fachvorgang nicht zurückrollen — das ist die übliche Begründung für
+   dieses Muster, und sie ist nicht schwach.
+3. **Der Umfang.** ~50 Stellen plus alle Tests, die auf die bisherige
+   Reihenfolge reagieren. Das ist eine Architekturentscheidung, keine
+   Korrektur.
+
+**Die Auflösung, die ich empfehle** (und die beide Anforderungen
+miteinander vereint): Fachschreibvorgang und Audit-Eintrag in **eine**
+Transaktion, und die Prüfung, ob der Audit-Eintrag wirklich gelandet ist,
+als **eigene** Condition — ein Zähler oder eine tägliche Abfrage auf
+`AuditLog`, dessen Alter die Aufbewahrungsfrist überschreitet. Damit bleibt
+der Fachvorgang unabhängig vom Audit, aber die Lücke wird *messbar*
+statt *stillschweigend*.
+
+**Bis dahin** ist das eine bewusste Lücke und keine unbekannte: sie steht
+hier, damit ein externer Auditor sie nicht als Fund entdeckt.
+
+---
+
 
 | # | Fundstelle | Befund |
 |---|---|---|
@@ -2993,7 +3338,7 @@ rot**, darunter exakt der aus der CI.
 | Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge, 1 Backend- + 1 Playwright-Test |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
-| Jahresabschluss-Aggregat | 🟡 **anlegbar und lesbar** (Nachtrag 28: POST + GET). `finalize` fehlt — es braucht die Entscheidung zum Saldoabgleich |
+| Jahresabschluss-Aggregat | 🟡 **anlegen, lesen und abschließen** (Nachtrag 28/30: POST + GET, `POST :id/finalize` mit Vollständigkeitsprüfung). Offen: der Saldoabgleich A.V.↔GuV **warnt** statt zu sperren (Entscheidung 1); das UI muss den Reject jetzt korrekt als Fehlschlag zeigen (Nachtrag 30, behoben) |
 | Anhang-Platzhalter | ✅ `offenePlatzhalter` in der Detailantwort, 5 Unit + 1 e2e |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
@@ -3023,6 +3368,8 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.4 | Schema-Migration für Audit-Hash-Chain ausführen | DevOps | nach Pilot-Phase-2-Ende |
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
 | TODO-8.6 | Automatisierter monatlicher Restore-Test in CI | DevOps | Sprint 5+ |
+| TODO-8.7 | `assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code? (Nachtrag 34: über HTTP nicht erreichbar, der `MandantGuard` wirkt identisch zuerst) | Dev + Compliance | Sprint 5 |
+| TODO-8.8 | Audit-Trail „fire and forget" (~50 Stellen) bewerten: Fachschreibvorgang + Audit in eine Transaktion, plus Condition auf Alter des ältesten Eintrags (Nachtrag 31) | Dev + Compliance | Sprint 5 |
 
 ---
 

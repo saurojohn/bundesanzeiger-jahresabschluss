@@ -7,6 +7,7 @@ import { PdfActions } from '@/components/pdf/PdfActions';
 import { ExportActions } from '@/components/exports/ExportActions';
 import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
+import { StatusLabel } from '@/components/common/StatusLabel';
 
 type AnhangAbschnitt = {
   id?: string;
@@ -202,7 +203,7 @@ export function AnhangListView() {
                 <div className="text-xs text-slate-500">
                   {a._count?.abschnitte ?? 0}{' '}
                   {(a._count?.abschnitte ?? 0) === 1 ? 'Abschnitt' : 'Abschnitte'} · Status:{' '}
-                  {t(`bilanz.status.${a.status}`)}
+                  <StatusLabel status={a.status} />
                 </div>
               </div>
               <SignaturStatusBadge

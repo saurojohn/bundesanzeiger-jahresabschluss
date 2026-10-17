@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationService } from '../../common/services/pagination.service';
+import { BILANZ_DATENSTATUS } from '../bilanz/constants/hgb-bilanz.constants';
 
 /**
  * Repository für WP-spezifische Persistenz.
@@ -352,13 +353,27 @@ export class WPRepository {
   }
 
   /**
-   * Setzt Bilanz.status auf APPROVED (via WP-Pruefungs-Finalize).
+   * Setzt Bilanz.status (via WP-Pruefungs-Finalize).
+   *
+   * Der Status kommt aus `BILANZ_DATENSTATUS`, nicht aus einem freien
+   * String-Literal: `APPROVED` ist ein Zustand, den nur der
+   * Wirtschaftsprüfer setzt, und der in der Oberflaeche übersetzt sein
+   * muss (Nachtrag 29). Der Parameter bleibt bewusst `string`, damit
+   * dieser Aufruf **kein** Weg wird, den Status per API zu setzen —
+   * `BILANZ_STATUS` (die setzbare Menge) enthält `APPROVED` absichtlich
+   * nicht.
    */
   async setBilanzStatus(
     bilanzId: string,
     status: string,
     userId: string,
   ): Promise<void> {
+    if (!(BILANZ_DATENSTATUS as readonly string[]).includes(status)) {
+      throw new Error(
+        `Unbekannter Bilanz-Status "${status}" — erlaubt sind ` +
+          `${BILANZ_DATENSTATUS.join(', ')}`,
+      );
+    }
     await this.prisma.bilanz.update({
       where: { id: bilanzId },
       data: { status, updatedById: userId },

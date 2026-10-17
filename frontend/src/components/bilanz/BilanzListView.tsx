@@ -9,6 +9,7 @@ import { ExportActions } from '@/components/exports/ExportActions';
 import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { DatevImportDialog } from '@/components/datev-import/DatevImportDialog';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
+import { StatusLabel } from '@/components/common/StatusLabel';
 
 type BilanzSummary = {
   id: string;
@@ -246,7 +247,7 @@ export function BilanzListView() {
                               : 'bg-slate-100 text-slate-700')
                         }
                       >
-                        {t(`bilanz.status.${b.status}`)}
+                        <StatusLabel status={b.status} />
                       </span>
                     </div>
                   </div>
@@ -372,7 +373,7 @@ export function BilanzListView() {
                             : 'bg-slate-100 text-slate-700')
                       }
                     >
-                      {t(`bilanz.status.${b.status}`)}
+                      <StatusLabel status={b.status} />
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right num-de">

@@ -527,9 +527,41 @@ export const HGB_BILANZ_SCHEMA: HgbBilanzPosition[] = [
 
 /**
  * Status-Konstanten für Bilanz.
+ *
+ * ACHTUNG — zwei verschiedene Mengen, und der Unterschied ist nicht
+ * kosmetisch:
+ *
+ * 1. `BILANZ_STATUS` = die **per API setzbaren** Status. Der Client darf
+ *    einen Datensatz in DRAFT, VALIDATED oder ARCHIVED setzen.
+ *
+ * 2. `BILANZ_DATENSTATUS` = alle Status, die **in der Datenbank stehen
+ *    können**. Zusätzlich zu 1. gibt es `APPROVED`: das schreibt der
+ *    Wirtschaftsprüfer bei der Vier-Augen-Freigabe (`setBilanzStatus`).
+ *
+ * BEFUND 2026-10-17: `APPROVED` stand in keiner der beiden Mengen, obwohl
+ * der WP-Service genau das schreibt. Zwei Folgen, beide gemessen:
+ *
+ *   - Die Oberflaeche zeigte den **rohen Übersetzungsschlüssel**
+ *     `bilanz.status.APPROVED` in der Bilanzliste (nach einer
+ *     Wirtschaftsprüfer-Freigabe).
+ *   - `APPROVED` per PATCH zu setzen war unmöglich (400) — der Zustand
+ *     war also nur auf Umwegen erreichbar. Genau deshalb gehört es
+ *     **nicht** in `BILANZ_STATUS`: ein Bearbeiter dürfte sonst eine
+ *     Bilanz ohne Vier-Augen-Prüfung als freigegeben markieren.
+ *
+ * `BILANZ_STATUS` bleibt deshalb bewusst die kleinere Menge. Wer die
+ * Vollständigkeit der Oberflächen-Übersetzung absichern will, prüft
+ * `BILANZ_DATENSTATUS` — nicht `BILANZ_STATUS`.
  */
 export const BILANZ_STATUS = ['DRAFT', 'VALIDATED', 'ARCHIVED'] as const;
 export type BilanzStatus = (typeof BILANZ_STATUS)[number];
+
+/** Alle Status, die in der Datenbank stehen können (inkl. WP-interner). */
+export const BILANZ_DATENSTATUS = [
+  ...BILANZ_STATUS,
+  'APPROVED',
+] as const;
+export type BilanzDatenstatus = (typeof BILANZ_DATENSTATUS)[number];
 
 /**
  * Seite-Konstanten.

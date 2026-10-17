@@ -8,6 +8,7 @@ import { ExportActions } from '@/components/exports/ExportActions';
 import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 import { Pagination, usePaginationLabels } from '@/components/common/Pagination';
 import { BetragInput } from '@/components/common/BetragInput';
+import { StatusLabel } from '@/components/common/StatusLabel';
 
 type GuvPosition = {
   id?: string;
@@ -289,7 +290,7 @@ export function GuvListView() {
                             : 'bg-slate-100 text-slate-700')
                       }
                     >
-                      {t(`bilanz.status.${g.status}`)}
+                      <StatusLabel status={g.status} />
                     </span>
                   </td>
                   <td className="px-4 py-3">

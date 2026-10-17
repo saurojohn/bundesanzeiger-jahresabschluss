@@ -2248,6 +2248,70 @@ eslint 0.
 ---
 
 
+### Nachtrag 2026-10-17 (Nachtrag 29): Nach der WP-Freigabe stand ein roher Schlüssel in der Bilanzliste
+
+**Gemessen im Browser**, nach einer echten Vier-Augen-Freigabe:
+
+```
+Statuszelle VOR der Manipulation:  Entwurf
+Statuszelle NACH der Manipulation: bilanz.status.APPROVED
+```
+
+Der Nutzer bekam also **keinen Text**, sondern den Schlüsselpfad der
+Übersetzung.
+
+**Ursache.** Die Vier-Augen-Freigabe setzt `bilanz.status = 'APPROVED'`
+(`setBilanzStatus`, direkt per Prisma — das DTO kann den Wert nicht
+setzen). `APPROVED` stand aber:
+
+* in **keiner** Statusmenge des Backends (`BILANZ_STATUS` =
+  DRAFT | VALIDATED | ARCHIVED),
+* in **keiner** Übersetzung (`bilanz.status.*` = Entwurf | Geprüft | Archiviert).
+
+Und die Oberfläche hat **vier** Stellen, die den Status so rendern
+(Bilanz ×2, GuV, Anhang — die letzten beiden nutzen ebenfalls den
+`bilanz.status.*`-Namensraum).
+
+**Zwei Mengen, und der Unterschied ist nicht kosmetisch.** Neu:
+
+| Menge | Bedeutung |
+|---|---|
+| `BILANZ_STATUS` | die **per API setzbaren** Status — bleibt DRAFT/VALIDATED/ARCHIVED |
+| `BILANZ_DATENSTATUS` | alle Status, die in der DB stehen **können** — zusätzlich `APPROVED` |
+
+`APPROVED` gehört **nicht** in `BILANZ_STATUS`: ein Bearbeiter dürfte sonst
+eine Bilanz ohne Vier-Augen-Prüfung als freigegeben markieren. Der
+Status muss sichtbar sein, aber nicht setzbar.
+
+**Behoben:** Übersetzung ergänzt („Freigegeben (WP)"), `setBilanzStatus`
+nimmt den Status aus `BILANZ_DATENSTATUS` und lehnt unbekannte Werte ab, und
+die vier Renderstellen nutzen jetzt `StatusLabel` mit **Fallback**: ein Status,
+den die Oberfläche nicht kennt, erscheint im Klartext statt als
+Schlüsselpfad. Damit ist die Fehlerklasse für alle künftigen Status
+geschlossen, nicht nur für diesen.
+
+**Invarianten als Test** (`bilanz-status-konsistenz.spec.ts`):
+
+1. Jeder Datenstatus hat eine Übersetzung — der Test liest die echte
+   Message-Datei des Frontends.
+2. `APPROVED` ist **nicht** per API setzbar.
+3. Die beiden Mengen unterscheiden sich ausschließlich in `APPROVED`.
+
+**Negativprobe:** Übersetzung entfernt → Test rot:
+`Status ohne Übersetzung: APPROVED — die Oberfläche zeigt dann den rohen
+Schlüsselpfad statt einer Beschriftung`.
+
+Der Browser-Nachweis hängt in `wp-strecke.spec.ts` (5c): dort entsteht der
+Zustand real — nach der Freigabe durch die zweite Person wird die
+Bilanzliste geladen und geprüft. Ein Test, der den Zustand per Datenbank
+setzt, prüft die Anzeige nicht so, wie der Anwender sie erlebt.
+
+Verifiziert: 758/758 Backend (81 Dateien), 69/69 Playwright, typecheck 0,
+eslint 0.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2918,7 +2982,7 @@ rot**, darunter exakt der aus der CI.
 
 ---
 
-| Backend Unit-Tests | **755 / 755 grün** (80 Dateien; zweimal hintereinander gefahren) |
+| Backend Unit-Tests | **758 / 758 grün** (81 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
 | Playwright e2e | **68 / 68 grün**, 0 übersprungen |
@@ -2935,6 +2999,7 @@ rot**, darunter exakt der aus der CI.
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
 | Sitzungsdauer | ✅ `apiFetch` erneuert bei 401 (Single-Flight); 2 Playwright-Tests inkl. Gegenprobe |
 | Betragseingabe | ✅ deutsche Schreibweise (`1.500` = 1500), 1 Playwright-Test |
+| Status-Anzeige | ✅ `BILANZ_DATENSTATUS` + Übersetzung, Fallback im Frontend, 3 Unit + 1 Browser-Nachweis |
 | Filter-Parameter | ✅ `GeschaeftsjahrPipe` + `IsoDatumPipe`, 15 e2e |
 | Hash-Chain verifizierbar | 🟡 `sequenz`-basiert, `verifyIntegrity()` lückenlos **im Ketteninneren**. Loeschung am Kettenende nicht erkennbar — kein externer Anker (Nachtrag 24, gemessen) |
 | WORM-Audit-Script | ✅ |

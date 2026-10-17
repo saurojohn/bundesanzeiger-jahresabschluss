@@ -232,7 +232,8 @@
     "status": {
       "DRAFT": "Entwurf",
       "VALIDATED": "Geprüft",
-      "ARCHIVED": "Archiviert"
+      "ARCHIVED": "Archiviert",
+      "APPROVED": "Freigegeben (WP)"
     },
     "positionenGesperrt": "Positionen sind nach der Validierung gesperrt. Nur Hinweise können noch geändert werden."
   },

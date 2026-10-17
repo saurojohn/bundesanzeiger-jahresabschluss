@@ -35,6 +35,10 @@ function aufzeichnung(page: Page) {
 }
 
 test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließen', async ({ page }) => {
+  // Der Standard-Timeout von 30 s reichte fuer den Ablauf bis zur
+  // Vier-Augen-Freigabe knapp; die zusaetzliche Pruefung der
+  // Bilanzliste (5c) braucht noch einmal einen Seitenaufbau.
+  test.setTimeout(60_000);
   await anmelden(page, 'wp@kanzlei.de');
   const aufrufe = aufzeichnung(page);
 
@@ -347,6 +351,30 @@ test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließe
 
   console.log('VIER-AUGEN-FREIGABE:', JSON.stringify(zweite));
   expect(zweite.status, `Freigabe durch WP2: ${JSON.stringify(zweite)}`).toBe(200);
+
+  // --- 5c) Der freigegebene Bilanz muss in der Liste lesbar sein
+  //
+  // BEFUND 2026-10-17: Die Vier-Augen-Freigabe setzt `bilanz.status` auf
+  // `APPROVED`. Der Status stand in keiner Statusmenge und in keiner
+  // Uebersetzung — die Bilanzliste zeigte dem Anwucher deshalb den rohen
+  // Schluesselpfad `bilanz.status.APPROVED` (im Browser gemessen).
+  //
+  // Der Punkt ist hier angekommen, weil der Zustand hier entsteht.
+  await page.evaluate(() => {
+    const t = localStorage.getItem('accessToken');
+    void t;
+  });
+  await page.goto('http://localhost:3001/de-DE/bilanz');
+  await page.waitForTimeout(3500);
+  const bilanzListe = await page.locator('main').first().innerText();
+  expect(
+    bilanzListe,
+    'ein unbekannter Status darf nie als Schluesselpfad erscheinen',
+  ).not.toContain('bilanz.status.');
+  expect(
+    bilanzListe,
+    'der freigegebene Bilanz muss als "Freigegeben" erkennbar sein',
+  ).toMatch(/Freigegeben/);
 
   const schreibzugriffe = aufrufe.filter((a) => a.methode !== 'GET');
   console.log('ALLE SCHREIBZUGRIFFE:', JSON.stringify(schreibzugriffe));

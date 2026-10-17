@@ -3375,119 +3375,6 @@ rot**, darunter exakt der aus der CI.
 
 ---
 
-### Nachtrag 2026-10-17 (Nachtrag 36): Nach dem Signieren blieb „UNSIGNIERT" stehen — der Leser kannte nur eine von zwei Achsen
-
-**Direkte Folge von Nachtrag 35, und die Ursache ist dieselbe Achsenentscheidung.**
-
-#### Der Fund
-
-Beim Messen von Nachtrag 35 (eine Bilanz signieren, die zu einem
-Jahresabschluss gehört) fiel auf, dass die Statusanzeige danach
-`UNSIGNIERT` blieb:
-
-```
-POST /api/signatur/sign-bilanz   ->  HTTP 200
-   (signiertes PDF liegt mit 10-Jahres-Object-Lock in WORM)
-
-GET /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
-  status:           "UNSIGNIERT"
-  anzahlSignaturen: 0
-
-DB: { entityType: null, entityId: null,
-      jahresabschlussId: "317a2dd2-a738-4fe2-bf18-ea26012f6a58" }
-```
-
-#### Ursache
-
-`Signature` trägt laut Schema **genau eine von zwei Bezugsachsen**:
-
-```prisma
-// Ein Record traegt deshalb GENAU EINE von zwei Bezugsachsen:
-//   * Jahresabschluss-Signatur -> `jahresabschlussId`
-//   * Entitaeten-Signatur       -> `entityType` + `entityId`
-entityType             String?
-entityId               String? @db.Uuid
-jahresabschlussId      String?   @db.Uuid
-```
-
-`resolveJahresabschlussId` setzt konsequent die *andere* Achse auf `null`:
-
-```ts
-entityType: abschlussId ? null : entityType,
-entityId:    abschlussId ? null : entityId,
-```
-
-Gehört die signierte Bilanz zu einem Jahresabschluss, landet der Record auf
-der Abschluss-Achse. Der Leser aber fragte ausschließlich die
-Entitäten-Achse:
-
-```ts
-// SignatureRepository.findByEntity — VOR der Reparatur
-where: { entityType, entityId },
-```
-
-**Damit fand er genau die Datensätze nicht, die der Fix vom 2026-10-13
-gerade erst repariert hatte.** Damals wurde bei einer Bilanz-Signatur
-gar kein Record geschrieben (toter `signatureId`, Nachtrag vom 2026-10-13).
-Der Fix holte den Record zurück — und stellte ihn auf eine Achse, die
-niemand abfragt.
-
-**Betroffen sind alle Leser**, weil sie dieselbe Methode benutzen:
-`getSignaturStatus` (Status-Badge) und `listSignaturen` (Signaturliste).
-Damit war auch die **`ABWEICHEND`-Erkennung** blind — sie setzt auf
-`signaturen[0]` und hätte eine nachträgliche Datenänderung nie gemeldet.
-
-#### Behoben
-
-`findByEntity` berücksichtigt jetzt beide Achsen. Die Auflösung
-Abschluss → Entität ist dieselbe wie in `resolveJahresabschlussId`; für
-`entityType === 'Abschluss'` ist `entityId` bereits die Abschluss-ID.
-
-```
-GET /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
-  status:    "SIGNIERT"
-  anzahl:    1
-  signiertAm: 2026-10-17T21:16:46.069Z
-```
-
-#### Negativprobe
-
-Abfrage auf die Ein-Achsen-Form zurückgebaut, Server neu gestartet:
-
-```
-× Bilanz MIT Jahresabschluss-Bezug -> SIGNIERT
-    expected 'UNSIGNIERT' to be 'SIGNIERT'   Received: "UNSIGNIERT"
-× listSignaturen findet die gebundene Bilanz ebenfalls
-    expected +0 to be 1
-✓ Bilanz OHNE Jahresabschluss-Bezug -> SIGNIERT      ← bleibt grün
-✓ Record liegt auf der jahresabschlussId-Achse     ← bleibt grün
-```
-
-**Dass zwei Tests grün bleiben, ist Teil des Belegs.** Der Fall ohne
-Jahresabschluss war nie kaputt. Ein Test, der bei der Reparatur *alles*
-rot werden lässt, prüft nicht die Fehlerklasse, sondern den Testlauf.
-
-Der vierte Test hält ausdrücklich fest, dass der Record auf der
-Abschluss-Achse liegt (`entityType === null`). Ohne diese Voraussetzung
-wäre der zweite Test auch dann grün, wenn der Record auf der
-Entitäten-Achse läge — und würde nichts Besonderes prüfen.
-
-#### Nebenbefund: ein stiller Leerlauf im eigenen Test
-
-Beim Schreiben der Spec stand im `afterAll`:
-
-```ts
-await prisma.signature.deleteMany({ where: { entityType: 'Abschluss', entityId: id } });
-```
-
-Das ist dieselbe falsche Achse — die Abfrage passte auf **keine Zeile**
-und ließ alle Signatur-Datensätze liegen. TypeScript hat es nicht
-gemerkt, Prisma nicht, der Test blieb grün. Ein `deleteMany`, das nichts
-löscht, ist das harmlose Gesicht derselben Fehlerklasse wie die
-falsche Leseabfrage: Beide sehen erfolgreich aus und tun nichts.
-
----
-
 ### Nachtrag 2026-10-17 (Nachtrag 35): Ein Wirtschaftsprüfer konnte einen nie abgeschlossenen Jahresabschluss signieren
 
 **Der schwerwiegendste Fund dieser Prüfrunde.** Gefunden nicht durch Lesen,
@@ -3645,6 +3532,175 @@ Der zweite Test ist der wichtigste: Er prüft nicht den Statuscode,
 sondern das **Artefakt**. Eine Sperre, die *nach* dem WORM-Upload greift,
 lässt den ersten Test grün und hinterlässt trotzdem das irreversible
 Objekt.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 36): Nach dem Signieren blieb „UNSIGNIERT" stehen — der Leser kannte nur eine von zwei Achsen
+
+**Direkte Folge von Nachtrag 35, und die Ursache ist dieselbe Achsenentscheidung.**
+
+#### Der Fund
+
+Beim Messen von Nachtrag 35 (eine Bilanz signieren, die zu einem
+Jahresabschluss gehört) fiel auf, dass die Statusanzeige danach
+`UNSIGNIERT` blieb:
+
+```
+POST /api/signatur/sign-bilanz   ->  HTTP 200
+   (signiertes PDF liegt mit 10-Jahres-Object-Lock in WORM)
+
+GET /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
+  status:           "UNSIGNIERT"
+  anzahlSignaturen: 0
+
+DB: { entityType: null, entityId: null,
+      jahresabschlussId: "317a2dd2-a738-4fe2-bf18-ea26012f6a58" }
+```
+
+#### Ursache
+
+`Signature` trägt laut Schema **genau eine von zwei Bezugsachsen**:
+
+```prisma
+// Ein Record traegt deshalb GENAU EINE von zwei Bezugsachsen:
+//   * Jahresabschluss-Signatur -> `jahresabschlussId`
+//   * Entitaeten-Signatur       -> `entityType` + `entityId`
+entityType             String?
+entityId               String? @db.Uuid
+jahresabschlussId      String?   @db.Uuid
+```
+
+`resolveJahresabschlussId` setzt konsequent die *andere* Achse auf `null`:
+
+```ts
+entityType: abschlussId ? null : entityType,
+entityId:    abschlussId ? null : entityId,
+```
+
+Gehört die signierte Bilanz zu einem Jahresabschluss, landet der Record auf
+der Abschluss-Achse. Der Leser aber fragte ausschließlich die
+Entitäten-Achse:
+
+```ts
+// SignatureRepository.findByEntity — VOR der Reparatur
+where: { entityType, entityId },
+```
+
+**Damit fand er genau die Datensätze nicht, die der Fix vom 2026-10-13
+gerade erst repariert hatte.** Damals wurde bei einer Bilanz-Signatur
+gar kein Record geschrieben (toter `signatureId`, Nachtrag vom 2026-10-13).
+Der Fix holte den Record zurück — und stellte ihn auf eine Achse, die
+niemand abfragt.
+
+**Betroffen sind alle Leser**, weil sie dieselbe Methode benutzen:
+`getSignaturStatus` (Status-Badge) und `listSignaturen` (Signaturliste).
+Damit war auch die **`ABWEICHEND`-Erkennung** blind — sie setzt auf
+`signaturen[0]` und hätte eine nachträgliche Datenänderung nie gemeldet.
+
+#### Behoben
+
+`findByEntity` berücksichtigt jetzt beide Achsen. Die Auflösung
+Abschluss → Entität ist dieselbe wie in `resolveJahresabschlussId`; für
+`entityType === 'Abschluss'` ist `entityId` bereits die Abschluss-ID.
+
+```
+GET /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
+  status:    "SIGNIERT"
+  anzahl:    1
+  signiertAm: 2026-10-17T21:16:46.069Z
+```
+
+#### Negativprobe
+
+Abfrage auf die Ein-Achsen-Form zurückgebaut, Server neu gestartet:
+
+```
+× Bilanz MIT Jahresabschluss-Bezug -> SIGNIERT
+    expected 'UNSIGNIERT' to be 'SIGNIERT'   Received: "UNSIGNIERT"
+× listSignaturen findet die gebundene Bilanz ebenfalls
+    expected +0 to be 1
+✓ Bilanz OHNE Jahresabschluss-Bezug -> SIGNIERT      ← bleibt grün
+✓ Record liegt auf der jahresabschlussId-Achse     ← bleibt grün
+```
+
+**Dass zwei Tests grün bleiben, ist Teil des Belegs.** Der Fall ohne
+Jahresabschluss war nie kaputt. Ein Test, der bei der Reparatur *alles*
+rot werden lässt, prüft nicht die Fehlerklasse, sondern den Testlauf.
+
+Der vierte Test hält ausdrücklich fest, dass der Record auf der
+Abschluss-Achse liegt (`entityType === null`). Ohne diese Voraussetzung
+wäre der zweite Test auch dann grün, wenn der Record auf der
+Entitäten-Achse läge — und würde nichts Besonderes prüfen.
+
+#### Nebenbefund: ein stiller Leerlauf im eigenen Test
+
+Beim Schreiben der Spec stand im `afterAll`:
+
+```ts
+await prisma.signature.deleteMany({ where: { entityType: 'Abschluss', entityId: id } });
+```
+
+Das ist dieselbe falsche Achse — die Abfrage passte auf **keine Zeile**
+und ließ alle Signatur-Datensätze liegen. TypeScript hat es nicht
+gemerkt, Prisma nicht, der Test blieb grün. Ein `deleteMany`, das nichts
+löscht, ist das harmlose Gesicht derselben Fehlerklasse wie die
+falsche Leseabfrage: Beide sehen erfolgreich aus und tun nichts.
+
+---
+
+
+### Nachtrag 2026-10-17 (Nachtrag 37): Jahresabschluss-PDF — keine Fehlstellung, aber erstmals überhaupt geprüft
+
+**Dieser Nachtrag meldet keinen Fund.** Er schließt eine Lücke, die beim
+Abschluss von Nachtrag 35 und 36 aufgefallen ist: Die beiden
+Jahresabschluss-PDF-Strecken waren — wie die Signaturstrecke — toter Code
+ohne Tests. `grep -rn "abschluss/:id/generate\|abschluss/:id/download" e2e/`
+lieferte nichts.
+
+#### Geprüft und in Ordnung (gemessen, nicht gelesen)
+
+`pdf-abschluss.e2e.spec.ts`, 6 Tests, über die öffentliche API:
+
+| Fall | Ergebnis |
+|---|---|
+| Download vor dem Erzeugen | 404 mit Handlungshinweis (`/generate`), kein 500 |
+| `POST /generate` | 200, WORM-Key, `sha256Hash` 64 Hex |
+| `GET /download` | 200, `application/pdf`, Header `%PDF-`, > 1 KB |
+| Cross-Mandant `generate` | 404 |
+| Cross-Mandant hinterlässt **kein** WORM-Objekt im fremden Kontext | 0 Objekte |
+| Cross-Mandant `download` | 404 (nicht 403 — der Kontext soll die Existenz nicht verraten) |
+
+**Die Mandantentrennung hält.** Sie war nie getestet, aber sie war richtig.
+
+#### Und doch zwei Negativproben — weil „alles grün" sonst nichts heißt
+
+Sechs grüne Tests beweisen nur, dass nichts Auffälliges passiert. Sie
+beweisen nicht, dass sie einen Rückschritt überhaupt bemerken würden. Also
+jede der beiden Mandanten-Sperren einzeln entfernt:
+
+| Entfernte Sperre | Ergebnis |
+|---|---|
+| `pdf.service.ts` → `assertEntityExists`, Fall `ABSCHLUSS`: `where: { id, mandantId }` → `{ id }` | **Cross-Mandant-Download → `expected 200 to be 404`** |
+| `pdf.service.ts` → `generateAbschlussPdf`: `where: { id: abschlussId, mandantId }` → `{ id: abschlussId }` | **Cross-Mandant-Erzeugen → `expected 400 to be 404`** |
+
+**Es sind zwei getrennte Sperren, und beide tragen.** Die eine schützt den
+Download-Weg, die andere den Erzeugungs-Weg. Das ist Tiefenschutz, der sich
+hier als zwei gleichlautende `findFirst`-Aufrufe darstellt — und genau
+darum ist es einen Test wert, dass beide einzeln nachweislich wirken.
+
+Der dritte Test (kein Objekt im fremden WORM-Kontext) blieb in **beiden**
+Proben grün, weil die jeweils andere Sperre noch stand. Er ist bewusst
+ergänzt: Ein 404 **nach** dem Upload wäre nur eine Verzögerung des Schadens,
+und diese Fehlerklasse trat in Nachtrag 35 real auf.
+
+#### Beim ersten Negativprobe ist mir dasselbe passiert wie in Nachtrag 34
+
+Das erste Zurückbauen wurde per Textersetzung versucht und schlug fehl —
+der Test blieb grün. Fast hätte ich geschlossen: „der Test erkennt die
+Lücke nicht". Der Grund war eine verrutschte Zeilennummer im Skript, nicht
+der Test. **Ein grüner Lauf nach einem fehlgeschlagenen Umbau ist kein
+Befund, sondern eine kaputte Messung.** Erst als die zweite, zeilenweise
+Variante griff, war die Aussage belastbar.
 
 ---
 

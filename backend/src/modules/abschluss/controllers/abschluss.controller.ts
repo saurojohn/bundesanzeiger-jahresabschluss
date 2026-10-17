@@ -17,6 +17,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { AbschlussService } from '../services/abschluss.service';
 import { CreateJahresabschlussDto } from '../dto/create-jahresabschluss.dto';
+import { FinalizeJahresabschlussDto } from '../dto/finalize-jahresabschluss.dto';
 
 /**
  * Jahresabschluss (§ 314 HGB).
@@ -74,6 +75,27 @@ export class AbschlussController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.abschlussService.findAll(mandantId, user);
+  }
+
+  /**
+   * POST /api/jahresabschluss/:id/finalize
+   *
+   * Die letzte Instanz vor der Veroeffentlichung: prueft die
+   * Vollstaendigkeit und schliesst den Abschluss ab.
+   */
+  @Post(':id/finalize')
+  @RequireMandant()
+  async finalize(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: FinalizeJahresabschlussDto,
+    @MandantId() mandantId: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ) {
+    return this.abschlussService.finalize(id, mandantId, dto, user, {
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string) ?? null,
+    });
   }
 
   @Get(':id')

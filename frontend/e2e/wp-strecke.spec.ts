@@ -298,7 +298,22 @@ test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließe
   // `wp2@kanzlei.de` ist der im Seed neu angelegte zweite
   // Wirtschaftsprüfer. Ohne ihn wäre die erzwungene Sperre wieder eine
   // Abschaltung des Freigabewegs.
-  const zweiter = await page.evaluate(async () => {
+  //
+  // BEFUND 2026-10-17: Dieser Abschnitt hat die Bilanz **ein zweites Mal
+  // ermittelt** — diesmal über `find(geschaeftsjahr === 2025)`, während
+  // Abschnitt 0 sie aus dem UI-Dropdown (`options[0]`) genommen hatte.
+  //
+  // Beide Wege lieferten dieselbe Bilanz, solange der Mandant genau eine
+  // Bilanz hatte. Sobald ein anderer Test weitere Bilanzen anlegt
+  // (jahresabschluss.spec.ts legt zwei an), ist die Liste `[2080, 2079,
+  // 2025]` — der Dropdown nimmr GJ 2080, die Nachsuche GJ 2025. Ergebnis:
+  //     Freigabe durch WP2: {"status":0,"message":"keine offene Prüfung"}
+  //
+  // Das war kein Produktdefekt, sondern ein Test, der dieselbe Tatsache
+  // auf zwei Wegen ermittelte und nur deshalb lange stimmig war. Jetzt wird
+  // die bereits bekannte `bilanzId` weitergegeben; ermittelt wird nur noch
+  // die Mandanten-ID, die die API daneben braucht.
+  const mandantId = await page.evaluate(async () => {
     const t = localStorage.getItem('accessToken');
     const l = await (
       await fetch('/api/mandant', { headers: { Authorization: `Bearer ${t}` } })
@@ -307,15 +322,9 @@ test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließe
     // mit `mandanten`. Beide Formen muessen funktionieren.
     const arr = Array.isArray(l) ? l : (l.mandanten ?? []);
     const m = arr.find((x: { firmenname: string }) => x.firmenname === 'Demo GmbH') ?? arr[0];
-    if (!m) return { bilanzId: '', mandantId: '' };
-    const bl = (await (
-      await fetch(`/api/bilanz?mandantId=${m.id}`, {
-        headers: { Authorization: `Bearer ${t}`, 'x-mandant-id': m.id },
-      })
-    ).json()) as Array<{ id: string; geschaeftsjahr: number }>;
-    const b = bl.find((x) => x.geschaeftsjahr === 2025) ?? bl[0];
-    return { bilanzId: b.id, mandantId: m.id };
-  }, { mandantId: '' });
+    return m?.id ?? '';
+  });
+  expect(mandantId, 'Mandant-ID muss ermittelt sein').toBeTruthy();
 
   const zweite = await page.evaluate(async ({ bilanzId: bId, mandantId: mId }: { bilanzId: string; mandantId: string }) => {
     const login = await fetch('/api/auth/login', {
@@ -347,7 +356,7 @@ test('WP: Prüfung starten → Regeln → Notiz → Notiz-Status → abschließe
       }),
     });
     return { status: r.status, body: await r.json() } as const;
-  }, zweiter);
+  }, { bilanzId, mandantId });
 
   console.log('VIER-AUGEN-FREIGABE:', JSON.stringify(zweite));
   expect(zweite.status, `Freigabe durch WP2: ${JSON.stringify(zweite)}`).toBe(200);

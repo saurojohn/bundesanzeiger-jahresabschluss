@@ -153,6 +153,7 @@ export async function apiFetch<T = unknown>(
     const body = (await response.json().catch(() => ({}))) as {
       message?: string | string[];
       code?: string;
+      [k: string]: unknown;
     };
     const meldung = Array.isArray(body.message)
       ? body.message.join(', ')
@@ -160,6 +161,15 @@ export async function apiFetch<T = unknown>(
     const err = new Error(meldung);
     (err as Error & { status?: number; code?: string }).status = response.status;
     (err as Error & { status?: number; code?: string }).code = body.code;
+    // Der vollstaendige Body bleibt am Fehler haengen.
+    //
+    // BEFUND 2026-10-17: `POST /api/jahresabschluss/:id/finalize` antwortet
+    // bei 409 mit einer Liste beanstandeter Punkte (`pruefungen`). Nur
+    // `message` weiterzugeben hat diese Information vernichtet — die
+    // Oberflaeche konnte die Pruefung nicht anzeigen, sondern nur einen
+    // nackten Fehlertext. Strukturierte Fehlerdetails des Servers gehen
+    // damit nicht mehr verloren.
+    (err as Error & { body?: unknown }).body = body;
     throw err;
   }
   if (response.status === 204) return undefined as T;

@@ -1,6 +1,6 @@
 import {
-  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,6 +10,15 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/services/audit.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { CreateJahresabschlussDto } from '../dto/create-jahresabschluss.dto';
+import {
+  FinalizeErgebnisDto,
+  FinalizeJahresabschlussDto,
+  VollstaendigkeitsPruefung,
+} from '../dto/finalize-jahresabschluss.dto';
+import { BilanzService } from '../../bilanz/services/bilanz.service';
+import { GuVService } from '../../guv/services/guv.service';
+import { AnhangService } from '../../anhang/services/anhang.service';
+import { WormObjectRepository } from '../../storage/repositories/worm-object.repository';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 
 /**
@@ -39,6 +48,10 @@ export class AbschlussService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly bilanzService: BilanzService,
+    private readonly guvService: GuVService,
+    private readonly anhangService: AnhangService,
+    private readonly wormObjectRepository: WormObjectRepository,
   ) {}
 
   /**
@@ -140,7 +153,7 @@ export class AbschlussService {
     this.logger.log(
       `Jahresabschluss angelegt: ${mandant.firmenname} GJ ${dto.geschaeftsjahr} → ${abschluss.id}`,
     );
-    return this.toResponse(abschluss);
+    return this.toResponse(abschluss, user);
   }
 
   /**
@@ -156,7 +169,7 @@ export class AbschlussService {
       orderBy: [{ geschaeftsjahr: 'desc' }],
       include: { bilanz: true, guv: true, anhang: true },
     });
-    return eintraege.map((a) => this.toResponse(a));
+    return Promise.all(eintraege.map((a) => this.toResponse(a, user)));
   }
 
   async findOne(id: string, mandantId: string, user: AuthUser) {
@@ -166,24 +179,251 @@ export class AbschlussService {
       include: { bilanz: true, guv: true, anhang: true },
     });
     if (!abschluss) throw new NotFoundException('Jahresabschluss nicht gefunden');
-    return this.toResponse(abschluss);
+    return this.toResponse(abschluss, user);
   }
 
-  private toResponse(a: {
-    id: string;
-    mandantId: string;
-    geschaeftsjahr: number;
-    bilanzId: string;
-    guvId: string;
-    anhangId: string;
-    status: string;
-    finalisiertAm: Date | null;
-    signiertAm: Date | null;
-    eingereichtAm: Date | null;
-    veroeffentlichtAm: Date | null;
-    banzBestellnummer: string | null;
-    createdAt: Date;
-  }) {
+  /**
+   * Schliesst den Jahresabschluss ab — die letzte Instanz vor der
+   * Veroeffentlichung.
+   *
+   * **Sperren** (der Abschluss wird abgelehnt):
+   *   - der Mandant ist archiviert (Entscheidung 2026-10-14)
+   *   - die Bilanz geht nicht auf (`saldostimmt`)
+   *   - die GuV fehlt oder ist nicht ausgewiesen
+   *   - der Anhang hat noch offene Platzhalter ("[Ort]" im PDF!)
+   *   - einer der drei Saetze steht noch auf DRAFT (in Bearbeitung)
+   *   - der Abschluss ist nicht DRAFT (kein Zuruecksetzen)
+   *
+   * **Meldung, ohne Sperre**:
+   *   - die Abweichung zwischen `A.V.` (Bilanz) und dem GuV-Ergebnis.
+   *
+   * Warum die Abweichung NICHT sperrt: `A.V.` ist nicht zwangslaeufig das
+   * Jahresergebnis — Kapitalerhoehungen und Entnahmen verschieben den
+   * Saldo, ohne in der GuV zu erscheinen, und solche
+   * Eigenkapitalbewegungen modelliert das Produkt nicht. Eine Sperre wuerde
+   * berechtigte Abschluesse blockieren. Sobald die Bewegungen erfasst sind,
+   * gehoert die Abweichung zu den Sperren.
+   */
+  async finalize(
+    id: string,
+    mandantId: string,
+    dto: FinalizeJahresabschlussDto,
+    user: AuthUser,
+    context: { ip?: string | null; userAgent?: string | null },
+  ): Promise<FinalizeErgebnisDto> {
+    this.assertMandantAccess(mandantId, user);
+
+    const abschluss = await this.prisma.jahresabschluss.findFirst({
+      where: { id, mandantId },
+      include: { bilanz: { include: { positionen: true } }, guv: true, anhang: { include: { abschnitte: true } } },
+    });
+    if (!abschluss) throw new NotFoundException('Jahresabschluss nicht gefunden');
+
+    if (abschluss.status !== 'DRAFT') {
+      throw new ConflictException(
+        `Der Jahresabschluss ist bereits abgeschlossen (Status ${abschluss.status}). ` +
+          'Ein Zuruecksetzen auf DRAFT ist nicht zulaessig — ' +
+          'ein korrigierter Abschluss wird als neuer Abschluss angelegt.',
+      );
+    }
+
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { archiviertAt: true, firmenname: true },
+    });
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+    assertMandantNichtArchiviert(mandant.archiviertAt, 'Jahresabschluss abschliessen');
+
+    const pruefungen: VollstaendigkeitsPruefung[] = [];
+
+    // 1) Bilanz: muss aufgehen
+    const bilanzValidierung = await this.bilanzService.validate(
+      abschluss.bilanzId,
+      mandantId,
+      user,
+    );
+    pruefungen.push({
+      gegenstand: 'Bilanz',
+      bestanden: bilanzValidierung.saldostimmt,
+      meldung: bilanzValidierung.saldostimmt
+        ? `Bilanz geht auf (Aktiva ${bilanzValidierung.aktivaSumme.toFixed(2)} = Passiva ${bilanzValidierung.passivaSumme.toFixed(2)}).`
+        : `Die Bilanz geht NICHT auf: Differenz ${bilanzValidierung.differenz.toFixed(2)} EUR. ` +
+          'Ein Jahresabschluss mit unausgeglichener Bilanz ist keine Bilanz.',
+    });
+
+    // 2) GuV: Ergebnis muss ausgewiesen sein
+    const guvValidierung = await this.guvService.validate(abschluss.guvId, mandantId, user);
+    const guvOk = Number.isFinite(guvValidierung.jahresergebnis);
+    pruefungen.push({
+      gegenstand: 'GuV',
+      bestanden: guvOk,
+      meldung: guvOk
+        ? `GuV-Ergebnis: ${guvValidierung.jahresergebnis.toFixed(2)} EUR.`
+        : 'Die GuV weist kein Jahresergebnis aus.',
+    });
+
+    // 3) Anhang: keine offenen Platzhalter
+    const offenePlatzhalter = this.anhangService.offenePlatzhalter(
+      abschluss.anhang.abschnitte,
+    );
+    pruefungen.push({
+      gegenstand: 'Anhang',
+      bestanden: offenePlatzhalter.length === 0,
+      meldung:
+        offenePlatzhalter.length === 0
+          ? 'Alle Pflichtangaben sind ausgefüllt.'
+          : `Der Anhang enthaelt noch offene Platzhalter: ${offenePlatzhalter.join(', ')}. ` +
+            'Ein PDF mit Platzhaltern ist kein veroeffentlichungsfaehiger Anhang.',
+    });
+
+    // 4) Die drei Saetze duerfen nicht mehr in Bearbeitung sein
+    for (const [bezeichnung, status] of [
+      ['Bilanz', abschluss.bilanz.status],
+      ['GuV', abschluss.guv.status],
+      ['Anhang', abschluss.anhang.status],
+    ] as const) {
+      pruefungen.push({
+        gegenstand: `${bezeichnung} (Bearbeitungsstatus)`,
+        bestanden: status !== 'DRAFT',
+        meldung:
+          status !== 'DRAFT'
+            ? `${bezeichnung} ist abgeschlossen (${status}).`
+            : `Die ${bezeichnung} steht noch auf DRAFT und kann sich aendern — ` +
+              'ein Jahresabschluss laesst sich sonst nicht fixieren.',
+      });
+    }
+
+    const verstoesse = pruefungen.filter((p) => !p.bestanden);
+    if (verstoesse.length > 0) {
+      throw new ConflictException({
+        message:
+          'Der Jahresabschluss ist noch nicht vollstaendig. ' +
+          '§ 314 HGB verlangt Bilanz, GuV und Anhang in abgeschlossener Fassung.',
+        pruefungen: verstoesse,
+      });
+    }
+
+    // --- Saldoabgleich: melden, nicht sperren (siehe Kommentar oben) ---
+    const aV = abschluss.bilanz.positionen.find(
+      (p) => p.kontonummer === 'A.V.',
+    );
+    const bilanzJahresueberschuss = aV ? Number(aV.betragAktuell) : null;
+    const guvJahresergebnis = Number(guvValidierung.jahresergebnis);
+    const abweichung =
+      bilanzJahresueberschuss !== null
+        ? bilanzJahresueberschuss - guvJahresergebnis
+        : null;
+
+    const warnungen: VollstaendigkeitsPruefung[] = [];
+    if (abweichung === null) {
+      warnungen.push({
+        gegenstand: 'Saldoabgleich Bilanz/GuV',
+        bestanden: true,
+        meldung:
+          'Die Bilanz fuehrt keine Position A.V. (Jahresueberschuss); ' +
+          'ein Abgleich war nicht moeglich.',
+      });
+    } else if (Math.abs(abweichung) > 0.01) {
+      warnungen.push({
+        gegenstand: 'Saldoabgleich Bilanz/GuV',
+        bestanden: true,
+        meldung:
+          `Die Bilanz weist ${bilanzJahresueberschuss!.toFixed(2)} EUR als ` +
+          `Jahresueberschuss aus, die GuV dagegen ${guvJahresergebnis.toFixed(2)} EUR ` +
+          `— Abweichung ${abweichung.toFixed(2)} EUR. ` +
+          'Das kann an Eigenkapitalbewegungen liegen (Kapitalerhoehung, Entnahme), ' +
+          'die das Produkt nicht erfasst — bitte pruefen.',
+      });
+    }
+
+    const aktualisiert = await this.prisma.jahresabschluss.update({
+      where: { id: abschluss.id },
+      data: {
+        status: 'FINALIZED',
+        finalisiertAm: new Date(),
+        finalizedById: user.id,
+      },
+    });
+
+    void this.auditService.record({
+      userId: user.id,
+      mandantId,
+      action: 'UPDATE',
+      entityType: AbschlussService.entityName,
+      entityId: aktualisiert.id,
+      previousState: { status: abschluss.status },
+      newState: {
+        status: aktualisiert.status,
+        finalisiertAm: aktualisiert.finalisiertAm?.toISOString(),
+        warnungen: warnungen.map((w) => w.meldung),
+        saldoabgleich: abweichung,
+      } as unknown as Prisma.JsonValue,
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+
+    this.logger.log(
+      `Jahresabschluss abgeschlossen: ${mandant.firmenname} GJ ${aktualisiert.geschaeftsjahr} -> ${aktualisiert.id}`,
+    );
+
+    return {
+      id: aktualisiert.id,
+      status: aktualisiert.status,
+      finalisiertAm: aktualisiert.finalisiertAm?.toISOString() ?? null,
+      pruefungen,
+      warnungen,
+      saldoabgleich: {
+        berechenbar: abweichung !== null,
+        bilanzJahresueberschuss,
+        guvJahresergebnis,
+        abweichung,
+        hinweis:
+          abweichung === null
+            ? 'Ein Abgleich war nicht moeglich (keine Position A.V. in der Bilanz).'
+            : Math.abs(abweichung) > 0.01
+              ? `Abweichung ${abweichung.toFixed(2)} EUR zwischen Bilanz (A.V.) und GuV. ` +
+                'Kann an Eigenkapitalbewegungen liegen — das Produkt erfasst sie nicht.'
+              : 'Bilanz und GuV stimmen ueberein.',
+      },
+    };
+  }
+
+  /**
+   * Antwortform des Jahresabschlusses.
+   *
+   * Die Felder `bilanzsumme`, `guvErgebnis`, `abgeschlossenAm` und
+   * `wormObjectKey` entsprechen dem Vertrag, den die Oberflaeche
+   * (`JahresabschlussView`) seit Anfang an erwartet. Sie werden ueber die
+   * vorhandenen `validate()`-Methoden der Fachservices berechnet — die
+   * Arithmetik (Summen, GuV-Ergebnis, Toleranz) bleibt damit an EINER Stelle.
+   */
+  private async toResponse(
+    a: {
+      id: string;
+      mandantId: string;
+      geschaeftsjahr: number;
+      bilanzId: string;
+      guvId: string;
+      anhangId: string;
+      status: string;
+      finalisiertAm: Date | null;
+      signiertAm: Date | null;
+      eingereichtAm: Date | null;
+      veroeffentlichtAm: Date | null;
+      banzBestellnummer: string | null;
+      createdAt: Date;
+    },
+    user: AuthUser,
+  ) {
+    const [bilanzValidierung, guvValidierung, worm] = await Promise.all([
+      this.bilanzService.validate(a.bilanzId, a.mandantId, user),
+      this.guvService.validate(a.guvId, a.mandantId, user),
+      this.wormObjectRepository.findActiveByEntity(
+        'ABSCHLUSS_PDF_SIGNED',
+        a.id,
+      ),
+    ]);
+
     return {
       id: a.id,
       mandantId: a.mandantId,
@@ -192,8 +432,14 @@ export class AbschlussService {
       guvId: a.guvId,
       anhangId: a.anhangId,
       status: a.status,
-      finalisiertAm: a.finalisiertAm?.toISOString() ?? null,
+      // Vertragsnamen der Oberflaeche:
+      bilanzsumme: bilanzValidierung.aktivaSumme,
+      guvErgebnis: guvValidierung.jahresergebnis,
+      abgeschlossenAm: a.finalisiertAm?.toISOString() ?? null,
       signiertAm: a.signiertAm?.toISOString() ?? null,
+      wormObjectKey: worm?.objectKey ?? null,
+      // Ergaenzungen:
+      finalisiertAt: a.finalisiertAm?.toISOString() ?? null,
       eingereichtAm: a.eingereichtAm?.toISOString() ?? null,
       veroeffentlichtAm: a.veroeffentlichtAm?.toISOString() ?? null,
       banzBestellnummer: a.banzBestellnummer,
@@ -202,9 +448,19 @@ export class AbschlussService {
   }
 
   private assertMandantAccess(mandantId: string, user: AuthUser): void {
+    // BEFUND 2026-10-17: stand hier `BadRequestException` (400). Neun
+    // Geschwisterservices (bilanz, guv, anhang, pdf, datev, datev-import,
+    // ebilanz, wp-pruefung, idw-pruefung, wp-notiz) werfen fuer **denselben
+    // Sachverhalt** `ForbiddenException` (403). Der neue Service war die
+    // einzige Abweichung.
+    //
+    // Der Unterschied ist nicht kosmetisch: 400 sagt dem Client "deine
+    // Anfrage ist fehlerhaft" (Formularfehler, Eingabe korrigieren), 403
+    // sagt "du darfst das nicht" (Rollen-/Zugriffsproblem). Ein Client, der
+    // 400 bekommt, versucht typischerweise erneut — mit derselben Wirkung.
+    if (user.globalRole === 'SYSTEM_ADMIN') return;
     const zugreifbar = (user.mandanten ?? []).some((m) => m.id === mandantId);
     if (zugreifbar) return;
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    throw new BadRequestException('Kein Zugriff auf diesen Mandanten');
+    throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
   }
 }

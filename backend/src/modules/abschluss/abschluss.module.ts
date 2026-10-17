@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { BilanzModule } from '../bilanz/bilanz.module';
+import { GuVModule } from '../guv/guv.module';
+import { AnhangModule } from '../anhang/anhang.module';
+import { StorageModule } from '../storage/storage.module';
 import { AbschlussController } from './controllers/abschluss.controller';
 import { AbschlussService } from './services/abschluss.service';
 
@@ -10,7 +14,7 @@ import { AbschlussService } from './services/abschluss.service';
  * es unter `abschluss/`. Siehe Nachtrag 27 des GoBD-Audit-Reports.
  */
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, BilanzModule, GuVModule, AnhangModule, StorageModule],
   controllers: [AbschlussController],
   providers: [AbschlussService],
   exports: [AbschlussService],

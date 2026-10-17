@@ -3,6 +3,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Post,
@@ -86,6 +88,15 @@ export class AbschlussController {
    * Vollstaendigkeit und schliesst den Abschluss ab.
    */
   @Post(':id/finalize')
+  // Abschliessen ist ein Uebergang auf einem bereits vorhandenen
+  // Aggregat, keine Erstellung: Nest wuerde fuer @Post sonst 201 Created
+  // zurueckgeben. Der Jahresabschluss existierte bereits vor diesem
+  // Request — es wird nichts Neues angelegt.
+  //
+  // BEFUND 2026-10-17: Dieser Endpunkt war die einzige Aktions-Route des
+  // Projekts ohne `@HttpCode(OK)` (37 andere haben ihn). Der Widerspruch
+  // fiel auf, als die neue Signatur-Spec auf 200 wartete und 201 bekam.
+  @HttpCode(HttpStatus.OK)
   @RequireMandant()
   async finalize(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

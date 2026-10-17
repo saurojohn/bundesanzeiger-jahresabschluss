@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -411,6 +412,33 @@ export class SignaturService {
 
   /**
    * Signiert einen kompletten Jahresabschluss (Bilanz + GuV + Anhang).
+   *
+   * BEFUND 2026-10-17 (Nachtrag 35): Dieser Weg war bis eben nicht
+   * erreichbar — es gab keinen Jahresabschluss (Nachtrag 27). Mit dem
+   * Abschluss-Modul wurde er aktiv, und er war ungeprueft: **eine
+   * qeS-Signatur auf einem `DRAFT`-Abschluss war moeglich.** Gemessen
+   * ueber die oeffentliche API:
+   *
+   *     status = DRAFT, abgeschlossenAm = null
+   *     POST /api/signatur/sign-abschluss  -> 200, signatureId 533ae411-…
+   *
+   * Eine qualifizierte elektronische Signatur bescheinigt die
+   * *Vollstaendigkeit* eines Dokuments (§ 126 BGB). Sie auf einen Abschluss
+   * zu setzen, der nie abgeschlossen wurde, ist unter keiner Lesart
+   * vertretbar — und weil das signierte PDF anschliessend mit
+   * COMPLIANCE-Object-Lock fuer 10 Jahre in WORM liegt, ist der
+   * Schaden nicht ruecknehmbar.
+   *
+   * Warum die Sperre hier und nicht in `signInternal`: Bilanz, GuV und
+   * Anhang werden auch im `DRAFT` signiert — dort bescheinigt die
+   * Signatur die *Sichtung*, nicht den Abschluss. Das ist eine andere
+   * Bedeutung und darf nicht mitverstreckt werden. Die Regel „ein
+   * Jahresabschluss wird erst nach dem Abschluss signiert" gehoert
+   * darum an diese eine Stelle.
+   *
+   * Bewusst NICHT erfunden: eine vollstaendige Zustandsmaschine fuer
+   * `SIGNED -> SUBMITTED -> PUBLISHED`. Diese Uebergaenge haben bis heute
+   * keinen Schreibpfad (siehe Nachtrag 35) und sind eine Fachentscheidung.
    */
   async signAbschluss(
     args: SignArgs,
@@ -420,7 +448,34 @@ export class SignaturService {
     if (!args.jahresabschlussId) {
       throw new BadRequestException('jahresabschlussId erforderlich');
     }
-    return this.signInternal(
+
+    // 1) Vorbedingung: der Abschluss muss abgeschlossen sein.
+    //
+    // Der Guard laeuft zwar vorher, aber `assertMandantAccess` ist — wie
+    // beim Jahresabschluss-Service gemessen (Nachtrag 34) — ueber HTTP
+    // nicht der Weg, der hier traegt. Die Pruefung auf den **Zustand**
+    // gibt es an keiner anderen Stelle; sie muss hier stehen, sonst
+    // entscheidet gar nichts darueber.
+    const abschluss = await this.prisma.jahresabschluss.findFirst({
+      where: { id: args.jahresabschlussId, mandantId: args.mandantId },
+      select: { id: true, status: true, finalisiertAm: true },
+    });
+    if (!abschluss) {
+      throw new NotFoundException('Jahresabschluss nicht gefunden');
+    }
+    if (abschluss.status !== 'FINALIZED') {
+      throw new ConflictException(
+        `Ein Jahresabschluss kann erst nach dem Abschluss signiert werden. ` +
+          `Dieser Abschluss steht auf ${abschluss.status}` +
+          `${abschluss.finalisiertAm ? '' : ' und wurde nie abgeschlossen'}. ` +
+          'Bitte zuerst "Abschluss prüfen und abschliessen" ausführen — ' +
+          'eine Signatur auf einen unfertigen Abschluss bescheinigt eine ' +
+          'Vollständigkeit, die es nicht gibt.',
+      );
+    }
+
+    // 2) Signieren.
+    const ergebnis = await this.signInternal(
       args,
       'Abschluss',
       args.jahresabschlussId,
@@ -437,6 +492,29 @@ export class SignaturService {
           },
         ),
     );
+
+    // 3) Der Datensatz muss die Signatur widerspiegeln.
+    //
+    // BEFUND 2026-10-17: `Jahresabschluss.signiertAm` existiert als Spalte
+    // im Schema — und **wurde von keiner Zeile im Projekt geschrieben.**
+    // Gemessen nach der Signatur eines DRAFT-Abschlusses:
+    //
+    //     status:       DRAFT
+    //     abgeschlossenAm: null
+    //     signiertAm:   null        <- obwohl signiert
+    //     wormObjectKey: …/abschluss-signed/…pdf   <- signiertes Objekt
+    //
+    // Ein Datensatz, der ein signiertes WORM-Objekt fuehrt und zugleich
+    // `signiertAm: null` meldet, widerspricht sich selbst. Bei
+    // Bilanz/GuV/Anhang wird `signiertAm` aus dem juengsten
+    // Signature-Datensatz **abgeleitet** (`signaturen` in der Antwort) —
+    // beim Jahresabschluss gibt es diese Ableitung nicht, nur die Spalte.
+    await this.prisma.jahresabschluss.update({
+      where: { id: args.jahresabschlussId },
+      data: { signiertAm: new Date(), status: 'SIGNED' },
+    });
+
+    return ergebnis;
   }
 
   /**

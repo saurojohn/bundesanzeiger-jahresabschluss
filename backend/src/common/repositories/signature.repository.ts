@@ -134,13 +134,66 @@ export class SignatureRepository {
   /**
    * Findet alle Signature-Records fuer eine signierte Entitaet
    * (Bilanz/GuV/Anhang), neueste zuerst.
+   *
+   * BEFUND 2026-10-17 (Nachtrag 36): Die Abfrage war
+   *
+   *     where: { entityType, entityId }
+   *
+   * und damit **falsch fuer genau die Records, die der Fix vom 2026-10-13
+   * erzeugt**. Ein Datensatz traegt GENAU EINE von zwei Bezugsachsen:
+   * `jahresabschlussId` ODER `entityType`+`entityId`
+   * (`resolveJahresabschlussId` im SignaturService setzt die andere jeweils
+   * auf `null`). Gehoert die signierte Entitaet zu einem Jahresabschluss,
+   * landet der Record auf der Abschluss-Achse — und `entityType` ist null.
+   *
+   * Gemessen, live ueber die oeffentliche API:
+   *
+   *     POST /api/signatur/sign-bilanz              -> 200 (signiert, PDF in WORM)
+   *     GET  /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
+   *       status:          "UNSIGNIERT"
+   *       anzahlSignaturen: 0
+   *
+   *     DB: { entityType: null, entityId: null,
+   *           jahresabschlussId: "317a2dd2-…" }
+   *
+   * Der Anwender signiert, bekommt 200, ein zehn Jahre gesperrtes Objekt
+   * liegt in WORM — und die Seite zeigt weiter "UNSIGNIERT". Betroffen sind
+   * **alle** Leser: `getSignaturStatus` (Status-Badge) und `listSignaturen`
+   * (Signaturliste). Damit ist auch die `ABWEICHEND`-Erkennung ("Daten nach
+   * der Signatur geaendert") blind — sie setzt auf `signaturen[0]`.
+   *
+   * Behoben: beide Achsen werden beruecksichtigt. Die Aufloesung
+   * Abschluss -> Entitaet ist dieselbe wie in `resolveJahresabschlussId`;
+   * fuer `entityType === 'Abschluss'` ist `entityId` bereits die Abschluss-ID.
    */
   async findByEntity(
     entityType: string,
     entityId: string,
   ): Promise<SignatureEntity[]> {
+    // Fuer einen Jahresabschluss ist die Entitaet-ID selbst die Abschluss-ID.
+    const abschlussId =
+      entityType === 'Abschluss'
+        ? entityId
+        : (
+            await this.prismaService.jahresabschluss.findFirst({
+              where: {
+                OR: [
+                  { bilanzId: entityId },
+                  { guvId: entityId },
+                  { anhangId: entityId },
+                ],
+              },
+              select: { id: true },
+            })
+          )?.id ?? null;
+
     return this.prismaService.signature.findMany({
-      where: { entityType, entityId },
+      where: {
+        OR: [
+          { entityType, entityId },
+          ...(abschlussId ? [{ jahresabschlussId: abschlussId }] : []),
+        ],
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

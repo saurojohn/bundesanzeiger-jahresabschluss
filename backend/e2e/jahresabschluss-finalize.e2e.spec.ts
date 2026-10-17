@@ -228,10 +228,19 @@ describe('Jahresabschluss E2E (abschliessen / Vollstaendigkeitspruefung)', () =>
 
     const res = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
       method: 'POST', headers: headers(),
+    // BEFUND 2026-10-17: Dieser Aufruf erwartete 201 Created — so gab Nest
+    // es zurueck. Abschliessen ist ein Uebergang auf einem vorhandenen
+    // Aggregat, keine Erstellung; 37 andere Aktions-Routen des Projekts
+    // antworten mit `@HttpCode(HttpStatus.OK)`. Der Endpunkt ist jetzt
+    // angeglichen, und **diese** Erwartung wurde mitgeaendert.
+    //
+    // Das ist eine bewusste Vertragsaenderung, kein Test, der sich der
+    // Implementierung beugt: die Aenderung ist im Nachtrag 35 begruendet
+    // und der Endpunkt liefert nachweislich 200.
       body: JSON.stringify({ zusammenfassung: 'Vollstaendig geprueft.' }),
     });
     const text = await res.text();
-    expect(res.status, `Abschliessen: ${text}`).toBe(201);
+    expect(res.status, `Abschliessen: ${text}`).toBe(200);
     const body = JSON.parse(text) as {
       status: string;
       finalisiertAm: string | null;
@@ -260,7 +269,7 @@ describe('Jahresabschluss E2E (abschliessen / Vollstaendigkeitspruefung)', () =>
     const erst = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
       method: 'POST', headers: headers(), body: JSON.stringify({}),
     });
-    expect(erst.status).toBe(201);
+    expect(erst.status).toBe(200);
 
     const zweit = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
       method: 'POST', headers: headers(), body: JSON.stringify({}),
@@ -304,7 +313,7 @@ describe('Jahresabschluss E2E (abschliessen / Vollstaendigkeitspruefung)', () =>
     const res = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
       method: 'POST', headers: headers(), body: JSON.stringify({}),
     });
-    expect(res.status, 'die Abweichung darf NICHT sperren — Eigenkapitalbewegungen sind nicht modelliert').toBe(201);
+    expect(res.status, 'die Abweichung darf NICHT sperren — Eigenkapitalbewegungen sind nicht modelliert').toBe(200);
     const body = (await res.json()) as {
       warnungen: Array<{ meldung: string }>;
       saldoabgleich: { abweichung: number | null; hinweis: string };

@@ -85,6 +85,14 @@ export CACHE_PROVIDER="${CACHE_PROVIDER:-memory}"
 # CORS-Callback jeden Browser-Request ab und antwortet mit 500.
 export FRONTEND_URL="${FRONTEND_URL:-http://localhost:3001}"
 
+# Billing im Mock-Modus. `mockActivate` ist fail-closed: ohne
+# BILLING_MOCK_ENABLED antwortet es mit 404 "Nicht gefunden". In der CI steht
+# die Variable ausdrücklich (`.github/workflows/ci.yml`) — lokal fehlte sie,
+# wodurch `subscription.spec.ts` und `custom-domain.spec.ts` mit 404
+# abbrachen, obwohl der Produktcode in Ordnung war.
+export BILLING_MOCK_ENABLED="${BILLING_MOCK_ENABLED:-true}"
+export BILLING_PROVIDER="${BILLING_PROVIDER:-mock}"
+
 # --- 1. PostgreSQL ------------------------------------------------------------
 say "PostgreSQL"
 

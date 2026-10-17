@@ -2179,6 +2179,75 @@ gehört zu den Entscheidungen, die hier offen sind.
 ---
 
 
+### Nachtrag 2026-10-17 (Nachtrag 28): Jahresabschluss — Schritt 1 und 2 umgesetzt
+
+Der Plan (`docs/JAHRESABSCHLUSS-MODUL-PLAN.md`) ist freigegeben worden; umgesetzt
+sind die beiden **freigabefreien** Schritte.
+
+**Neu:** `POST /api/jahresabschluss` und `GET /api/jahresabschluss`.
+`GET /api/jahresabschluss` lieferte vorher 404 — und die Oberflaeche fing das
+als leere Liste ab. Der 404-Schlucker ist entfernt: ein 404 ist wieder ein
+Fehler, eine leere Liste ist eine **Antwort des Servers**.
+
+**Die Bestandteile werden ermittelt, nicht entgegengenommen.** Der DTO nimmt
+nur `mandantId` und `geschaeftsjahr`; der Service sucht die drei Sätze dieses
+Mandanten und Jahres selbst. Grund: Ein Jahresabschluss ist per Definition die
+Verknüpfung *der* Bilanz, *der* GuV und *des* Anhangs. Würde der Aufrufer die
+IDs mitgeben, könnte er einen Abschluss zusammensetzen, der zu einem anderen
+Mandanten gehört — und der `MandantGuard` prüft den Mandanten, nicht die
+Zusammengehörigkeit der drei Sätze.
+
+**Fehlende Bestandteile sind ein 409, kein 400.** Die Anfrage war richtig, der
+Zustand ist es nicht. § 314 HGB verlangt alle drei, und die Meldung sagt,
+welcher fehlt.
+
+**`finalize` fehlt bewusst** — es braucht die offene Entscheidung zum
+Bilanz-GuV-Saldoabgleich (Nachtrag 22).
+
+#### Nebenbefund: eine Umgebungsvariable, die nirgends dokumentiert war
+
+Beim Testen fielen `subscription.spec.ts` und `custom-domain.spec.ts` mit 404
+um. Die Ursache war **nicht** der Produktcode: `mockActivate` ist fail-closed
+und antwortet ohne `BILLING_MOCK_ENABLED=true` mit „Nicht gefunden".
+
+* In der **CI** steht die Variable ausdrücklich.
+* In **`run-local.sh`** stand sie nicht.
+* In **`.env.example`** stand sie nicht.
+
+Wer der Anleitung folgte, bekam also 404er und zwei rote Tests. Behoben: beide
+Dateien setzen die Variable jetzt mit Begründung.
+
+**Und eine Warnung an mich selbst:** Die Datei `/tmp/bzenv.sh` war nach einem
+Neustart des Rechners weg, und ich habe sie **aus dem Gedächtnis**
+rekonstruiert — ohne `BILLING_MOCK_ENABLED`. Die daraus folgenden zwei
+Fehlschläge sahen kurz wie eine Regression meines Jahresabschluss-Moduls aus.
+Erst der **Kontrollversuch am sauberen Stand** (Änderungen gestasht) zeigte:
+Auch ohne meine Änderung rot. Das war der Moment, in dem aus „mein Fehler"
+„meine Umgebung" wurde.
+
+**Merksatz:** Ein Fehlschlag, der nach der eigenen Änderung auftritt, ist
+erst nach einem Kontrollversuch am unveränderten Stand der eigenen Änderung
+zuzuschreiben. Und: Wer eine Konfigurationsdatei aus dem Gedächtnis
+rekonstruiert, sollte die Vorlage im Repository als Quelle nehmen.
+
+#### Test der eigenen Testfehler
+
+Drei eigene Fehler in dieser Stunde, alle gefunden und korrigiert:
+
+1. Drei Tests teilten sich den Zustand — Test 1 legte Bilanz + Anhang an,
+   Test 2 kam mit der GuV dazu, und plötzlich waren alle drei da (201 statt
+   409). Jeder Test räumt jetzt seinen Jahrgang selbst ab.
+2. `if (false && …)` als Negativprobe **brach den Build** (TS18047). Die
+   Schwelle auf 99 ist build-sicher.
+3. Zwei `import type`-Zeilen (`CursorCodec`, `HttpCode`) blieben zurück —
+   eslint meldete sie als ungenutzt.
+
+Verifiziert: 755/755 Backend (80 Dateien), 70/70 Playwright, typecheck 0,
+eslint 0.
+
+---
+
+
 | # | Fundstelle | Befund |
 |---|---|---|
 
@@ -2849,7 +2918,7 @@ rot**, darunter exakt der aus der CI.
 
 ---
 
-| Backend Unit-Tests | **748 / 748 grün** (79 Dateien; zweimal hintereinander gefahren) |
+| Backend Unit-Tests | **755 / 755 grün** (80 Dateien; zweimal hintereinander gefahren) |
 | Globalskript-Wächter | ✅ `ts.isExternalModule` über alle `.ts` unter `src/` und `e2e/` |
 | Frontend tsc-Errors | 0 |
 | Playwright e2e | **68 / 68 grün**, 0 übersprungen |
@@ -2860,7 +2929,7 @@ rot**, darunter exakt der aus der CI.
 | Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge, 1 Backend- + 1 Playwright-Test |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
-| Jahresabschluss-Aggregat | 🔴 **existiert nicht als Schreibpfad** (Nachtrag 27) — 0 Routen, 0 Schreibzugriffe, 0 Datensätze nach Seed |
+| Jahresabschluss-Aggregat | 🟡 **anlegbar und lesbar** (Nachtrag 28: POST + GET). `finalize` fehlt — es braucht die Entscheidung zum Saldoabgleich |
 | Anhang-Platzhalter | ✅ `offenePlatzhalter` in der Detailantwort, 5 Unit + 1 e2e |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |

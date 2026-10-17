@@ -10,6 +10,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { MandantModule } from './modules/mandant/mandant.module';
 import { BilanzModule } from './modules/bilanz/bilanz.module';
 import { GuVModule } from './modules/guv/guv.module';
+import { AbschlussModule } from './modules/abschluss/abschluss.module';
 import { AnhangModule } from './modules/anhang/anhang.module';
 import { PdfModule } from './modules/pdf/pdf.module';
 import { EbilanzModule } from './modules/ebilanz/ebilanz.module';
@@ -77,6 +78,7 @@ import { HealthModule } from './health/health.module';
     BilanzModule,
     GuVModule,
     AnhangModule,
+    AbschlussModule,
     EbilanzModule,
     DatevModule,
     DatevImportModule,

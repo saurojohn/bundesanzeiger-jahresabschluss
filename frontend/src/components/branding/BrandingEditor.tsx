@@ -472,47 +472,42 @@ export function BrandingEditor() {
               </span>
             </div>
             <div className="flex gap-1">
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs font-medium text-slate-600"
+              <span
+                className="inline-block rounded px-2 py-1 text-xs font-medium text-slate-600"
               >
                 {t('navigation.bilanz')}
-              </button>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs font-medium"
+              </span>
+              <span
+                className="inline-block rounded px-2 py-1 text-xs font-medium"
                 style={{
                   backgroundColor: 'var(--brand-primary-50, #eff6ff)',
                   color: 'var(--brand-primary, #2563eb)',
                 }}
               >
                 {t('navigation.guv')}
-              </button>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs font-medium text-slate-600"
+              </span>
+              <span
+                className="inline-block rounded px-2 py-1 text-xs font-medium text-slate-600"
               >
                 {t('navigation.anhang')}
-              </button>
+              </span>
             </div>
           </div>
           <div className="bg-white p-4">
-            <button
-              type="button"
-              className="rounded px-3 py-1.5 text-xs font-medium text-white"
+            <span
+              className="inline-block rounded px-3 py-1.5 text-xs font-medium text-white"
               style={{
                 backgroundColor: 'var(--brand-primary, #2563eb)',
               }}
             >
               {t('branding.preview.samplePrimary')}
-            </button>
-            <button
-              type="button"
-              className="ml-2 rounded px-3 py-1.5 text-xs font-medium text-white"
+            </span>
+            <span
+              className="inline-block ml-2 rounded px-3 py-1.5 text-xs font-medium text-white"
               style={{ backgroundColor: 'var(--brand-accent, #0ea5e9)' }}
             >
               {t('branding.preview.sampleAccent')}
-            </button>
+            </span>
           </div>
         </div>
       </section>

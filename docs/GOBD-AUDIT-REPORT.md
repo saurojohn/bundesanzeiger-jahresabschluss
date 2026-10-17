@@ -3372,7 +3372,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.8 | Audit-Trail "fire and forget" (~50 Stellen) bewerten: Fachschreibvorgang + Audit in eine Transaktion, plus Condition auf Alter des ältesten Eintrags (Nachtrag 31) | Dev + Compliance | Sprint 5 |
 | TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
-| TODO-8.11 | **Kein Wächter für tote Knöpfe.** `formulare.spec.ts` heißt „Aktionen, nicht nur Rendering", deckt aber nur Branding, Webhooks, API-Keys und Audit — **nicht** Bilanz, GuV, Anhang und Jahresabschluss. Nachtrag 38: derselbe Fehler fiel 2026-10-05 (GuV, Anhang) und jetzt erneut (Jahresabschluss) auf, weil niemand die vier Fachformulare prüft | Dev | Sprint 5 |
+| ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
 
 ---
@@ -3819,6 +3819,89 @@ und ich habe es **nicht** an einer einzigen Stelle angebrochen: Fünf Stellen
 umstellen und die Rollenprüfung einführen ist eine eigene Entscheidung mit
 eigenen Folgen für die Oberfläche, keine Korrektur. `GET /api/auth/me`
 liefert `mandanten: [{ rolle }]` — die Auswertung fehlt nur.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 39): Ein Wächter für tote Knöpfe — und fünf, die sich als Knopf aussehen, es aber nicht sind
+
+**Nachtrag 38 hat einen einzelnen Knopf repariert. Dieser schließt die
+Fehlerklasse.**
+
+#### Warum statisch und nicht im Browser
+
+Ein Browser-Test müsste jede Schaltfläche anklicken und prüfen, ob sich
+etwas ändert. Das lässt sich nicht automatisieren, weil man nicht weiß, was
+sich ändern **muss**. Ein Knopf ohne `onClick` hat per Definition keinen
+Handler — und das steht im Quelltext.
+
+`formulare.spec.ts` („Aktionen, nicht nur Rendering") deckt vier der acht
+Fachseiten. Der Wächter läuft über den **gesamten Quellbaum**.
+
+#### Die Regel
+
+> Jedes `<button>` braucht `onClick` oder `type="submit"`.
+
+#### Und: keine Ausnahmeliste
+
+Beim Schreiben gab es **fünf** Kandidaten — sämtlich im Branding-Editor:
+
+```jsx
+<button type="button" className="rounded px-3 py-1.5 text-xs font-medium text-white"
+        style={{ backgroundColor: 'var(--brand-primary, #2563eb)' }}>
+  {t('branding.preview.samplePrimary')}
+</button>
+```
+
+Vorschau-Muster („Beispiel Primärfarbe") in der Live-Vorschau der
+Farbwahl. Sie sind nie klickbar gewesen — **aber sie waren `<button>`**,
+also fokussierbar und von Screenreadern als Schaltfläche angesagt. Wer sie
+mit dem Screenreader erreicht, hört „Schaltfläche, Beispiel Primärfarbe",
+aktiviert sie — und nichts passiert.
+
+Es gab zwei Wege: eine Ausnahmeliste führen, oder sie so rendern, wie sie
+gemeint sind. Sie sind **Vorschauen**, keine Aktionen, also sind sie jetzt
+`<span className="inline-block …">` — optisch identisch, nicht fokussierbar,
+nicht als Knopf angesagt.
+
+**Damit ist die Regel ohne jede Ausnahme durchsetzbar.** Das ist der Punkt:
+Eine Ausnahmeliste wird wie jede handgepflegte Liste veralten und
+still Falsch-Bestätigungen liefern (Nachtrag 32, `api-pfade`). Eine Regel,
+die keine Ausnahme braucht, kann das nicht.
+
+```
+105 <button>-Elemente im Quellbaum · 105 mit onClick oder submit · 0 verdächtig
+```
+
+#### Zwei Negativproben — eine davon gegen den Wächter selbst
+
+**1. Der ursprüngliche Fehler wiederhergestellt:**
+
+```
+✘ keine Schaltfläche ohne Handler
+    Error: Schaltflächen ohne Wirkung:
+    src/components/jahresabschluss/JahresabschlussView.tsx:278 →
+      ein <button> ohne onClick und ohne type="submit" —
+      der Knopf sieht wie eine Funktion aus und tut nichts
+```
+
+**2. Der Wächter auf einen Ordner ohne `.tsx` gezeigt** — der stille
+Ausfall, gegen den die Zusicherung `gesamt > 50` steht:
+
+```
+✘ keine Schaltfläche ohne Handler
+    Error: der Wächter hat keine <button>-Elemente gefunden —
+      er prüft dann nichts und meldet trotzdem „grün"
+```
+
+Ohne diese Zusicherung wäre ein Wächter, der ein umbenanntes Verzeichnis
+nicht mehr findet, **still grün** — das schlimmste Ergebnis, weil er
+gezählt wird. Dasselbe Argument wie bei `api-pfade` (Nachtrag 32).
+
+#### Was der Wächter nicht behauptet
+
+Er sagt **nichts** darüber, ob ein `onClick` das Richtige tut.
+`onClick={() => setNichts()}` gilt ihm als belegt. Er findet nur das, was
+im Quelltext sichtbar ist: gar nichts.
 
 ---
 

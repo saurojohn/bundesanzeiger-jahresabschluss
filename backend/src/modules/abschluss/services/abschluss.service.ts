@@ -29,12 +29,21 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
  * Damit waren `signatur.signAbschluss()` und `pdf/abschluss/:id/generate`
  * vorhandener, aber unerreichbarer Code.
  *
- * Dieser Service baut **nur die Anlage und das Lesen**. Das Abschließen
- * (`finalize`) ist bewusst NICHT enthalten: Es braucht die Entscheidung, ob
- * eine Abweichung zwischen Bilanz-`A.V.` und GuV-Ergebnis sperrt oder nur
- * warnt (Nachtrag 22). `A.V.` ist nicht zwangsläufig das Jahresergebnis —
- * Kapitalerhöhungen und Entnahmen verschieben den Saldo, ohne in der GuV zu
- * erscheinen, und das Produkt modelliert solche Bewegungen nicht.
+ * **Umfang: Anlegen, Lesen und Abschliessen** (Schritt 1-3 des
+ * Jahresabschluss-Plans).
+ *
+ * Dieser Kommentar stand hier bis eben als "Das Abschliessen (`finalize`)
+ * ist bewusst NICHT enthalten". Das war nach Schritt 3 **falsch** - und ein
+ * Kommentar, der eine erledigte Arbeit als offen ausweist, ist schlimmer
+ * als keiner: Er erzeugt eine offene Frage, die niemand beantworten kann,
+ * weil die Antwort schon im Code steht.
+ *
+ * Zum Saldoabgleich (Nachtrag 22, Entscheidung 1): Eine Abweichung
+ * zwischen Bilanz-`A.V.` und GuV-Ergebnis **sperrt nicht**, sie wird
+ * gemeldet. `A.V.` ist nicht zwangsläufig das Jahresergebnis -
+ * Kapitalerhoehungen und Entnahmen verschieben den Saldo, ohne in der GuV
+ * zu erscheinen, und das Produkt modelliert solche Bewegungen nicht. Eine
+ * harte Sperre wuerde berechtigte Abschluesse blockieren.
  *
  * Die Bestandteile werden hier **ermittelt, nicht entgegengenommen** — siehe
  * `CreateJahresabschlussDto`.

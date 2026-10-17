@@ -26,8 +26,10 @@ import { FinalizeJahresabschlussDto } from '../dto/finalize-jahresabschluss.dto'
  * lieferte 404, und die Oberflaeche behandelte das als "leere Liste". Die
  * Anlage fehlte vollstaendig.
  *
- * Umfang: **Anlegen und Lesen.** `finalize` fehlt bewusst und haengt an der
- * offenen Entscheidung zum Bilanz-GuV-Saldoabgleich (Nachtrag 22).
+ * Umfang: **Anlegen, Lesen und Abschliessen.** `POST :id/finalize` ist
+ * seit Schritt 3 vorhanden (Nachtrag 30) - dieser Kommentar stand hier
+ * noch auf dem Stand von Schritt 1 und wies `finalize` als bewusst
+ * offen aus.
  */
 @Controller('jahresabschluss')
 @UseGuards(MandantGuard)

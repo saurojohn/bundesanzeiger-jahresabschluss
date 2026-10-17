@@ -3335,10 +3335,10 @@ rot**, darunter exakt der aus der CI.
 | Mandantenlisten-Reihenfolge | ✅ zugesichert (`MANDANTEN_SORTIERUNG`), 6 Abfragen |
 | Mandant-Picker WP-Seite | ✅ schreibt `localStorage`, 1 Playwright-Test |
 | Archivierte Mandanten | ✅ 9 Schreibpfade gesperrt (5 WP + 4 Signatur), Lesen offen |
-| Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge, 1 Backend- + 1 Playwright-Test |
-| Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht, 4 e2e |
+| Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge — **Nachtrag 36: war für Entities mit Jahresabschluss-Bezug defekt (blieb auf `UNSIGNIERT`) und ist behoben; das grüne Häkchen galt nur für Entities ohne Bezug** |
+| Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht — **Nachtrag 36: Records tragen genau EINE Achse (`jahresabschlussId` ODER `entityType`+`entityId`); beide werden jetzt gelesen** |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
-| Jahresabschluss-Aggregat | 🟡 **anlegen, lesen und abschließen** (Nachtrag 28/30: POST + GET, `POST :id/finalize` mit Vollständigkeitsprüfung). Offen: der Saldoabgleich A.V.↔GuV **warnt** statt zu sperren (Entscheidung 1); das UI muss den Reject jetzt korrekt als Fehlschlag zeigen (Nachtrag 30, behoben) |
+| Jahresabschluss-Aggregat | 🟡 **anlegen, lesen, abschließen und signieren** (Nachtrag 28/30/35: POST + GET, `POST :id/finalize`, `signAbschluss` mit `FINALIZED`-Sperre). Offen: Saldoabgleich A.V.↔GuV **warnt** statt zu sperren (Entscheidung 1); `SIGNED → SUBMITTED → PUBLISHED` haben keinen Schreibpfad (TODO-8.10); Entwurfs-PDF landet im 10-Jahres-WORM (TODO-8.9, vor dem Pilot zu entscheiden) |
 | Anhang-Platzhalter | ✅ `offenePlatzhalter` in der Detailantwort, 5 Unit + 1 e2e |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
@@ -3369,7 +3369,282 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
 | TODO-8.6 | Automatisierter monatlicher Restore-Test in CI | DevOps | Sprint 5+ |
 | TODO-8.7 | `assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code? (Nachtrag 34: über HTTP nicht erreichbar, der `MandantGuard` wirkt identisch zuerst) | Dev + Compliance | Sprint 5 |
-| TODO-8.8 | Audit-Trail „fire and forget" (~50 Stellen) bewerten: Fachschreibvorgang + Audit in eine Transaktion, plus Condition auf Alter des ältesten Eintrags (Nachtrag 31) | Dev + Compliance | Sprint 5 |
+| TODO-8.8 | Audit-Trail "fire and forget" (~50 Stellen) bewerten: Fachschreibvorgang + Audit in eine Transaktion, plus Condition auf Alter des ältesten Eintrags (Nachtrag 31) | Dev + Compliance | Sprint 5 |
+| TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
+| TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 36): Nach dem Signieren blieb „UNSIGNIERT" stehen — der Leser kannte nur eine von zwei Achsen
+
+**Direkte Folge von Nachtrag 35, und die Ursache ist dieselbe Achsenentscheidung.**
+
+#### Der Fund
+
+Beim Messen von Nachtrag 35 (eine Bilanz signieren, die zu einem
+Jahresabschluss gehört) fiel auf, dass die Statusanzeige danach
+`UNSIGNIERT` blieb:
+
+```
+POST /api/signatur/sign-bilanz   ->  HTTP 200
+   (signiertes PDF liegt mit 10-Jahres-Object-Lock in WORM)
+
+GET /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
+  status:           "UNSIGNIERT"
+  anzahlSignaturen: 0
+
+DB: { entityType: null, entityId: null,
+      jahresabschlussId: "317a2dd2-a738-4fe2-bf18-ea26012f6a58" }
+```
+
+#### Ursache
+
+`Signature` trägt laut Schema **genau eine von zwei Bezugsachsen**:
+
+```prisma
+// Ein Record traegt deshalb GENAU EINE von zwei Bezugsachsen:
+//   * Jahresabschluss-Signatur -> `jahresabschlussId`
+//   * Entitaeten-Signatur       -> `entityType` + `entityId`
+entityType             String?
+entityId               String? @db.Uuid
+jahresabschlussId      String?   @db.Uuid
+```
+
+`resolveJahresabschlussId` setzt konsequent die *andere* Achse auf `null`:
+
+```ts
+entityType: abschlussId ? null : entityType,
+entityId:    abschlussId ? null : entityId,
+```
+
+Gehört die signierte Bilanz zu einem Jahresabschluss, landet der Record auf
+der Abschluss-Achse. Der Leser aber fragte ausschließlich die
+Entitäten-Achse:
+
+```ts
+// SignatureRepository.findByEntity — VOR der Reparatur
+where: { entityType, entityId },
+```
+
+**Damit fand er genau die Datensätze nicht, die der Fix vom 2026-10-13
+gerade erst repariert hatte.** Damals wurde bei einer Bilanz-Signatur
+gar kein Record geschrieben (toter `signatureId`, Nachtrag vom 2026-10-13).
+Der Fix holte den Record zurück — und stellte ihn auf eine Achse, die
+niemand abfragt.
+
+**Betroffen sind alle Leser**, weil sie dieselbe Methode benutzen:
+`getSignaturStatus` (Status-Badge) und `listSignaturen` (Signaturliste).
+Damit war auch die **`ABWEICHEND`-Erkennung** blind — sie setzt auf
+`signaturen[0]` und hätte eine nachträgliche Datenänderung nie gemeldet.
+
+#### Behoben
+
+`findByEntity` berücksichtigt jetzt beide Achsen. Die Auflösung
+Abschluss → Entität ist dieselbe wie in `resolveJahresabschlussId`; für
+`entityType === 'Abschluss'` ist `entityId` bereits die Abschluss-ID.
+
+```
+GET /api/signatur/status?entityType=Bilanz&entityId=<bilanzId>
+  status:    "SIGNIERT"
+  anzahl:    1
+  signiertAm: 2026-10-17T21:16:46.069Z
+```
+
+#### Negativprobe
+
+Abfrage auf die Ein-Achsen-Form zurückgebaut, Server neu gestartet:
+
+```
+× Bilanz MIT Jahresabschluss-Bezug -> SIGNIERT
+    expected 'UNSIGNIERT' to be 'SIGNIERT'   Received: "UNSIGNIERT"
+× listSignaturen findet die gebundene Bilanz ebenfalls
+    expected +0 to be 1
+✓ Bilanz OHNE Jahresabschluss-Bezug -> SIGNIERT      ← bleibt grün
+✓ Record liegt auf der jahresabschlussId-Achse     ← bleibt grün
+```
+
+**Dass zwei Tests grün bleiben, ist Teil des Belegs.** Der Fall ohne
+Jahresabschluss war nie kaputt. Ein Test, der bei der Reparatur *alles*
+rot werden lässt, prüft nicht die Fehlerklasse, sondern den Testlauf.
+
+Der vierte Test hält ausdrücklich fest, dass der Record auf der
+Abschluss-Achse liegt (`entityType === null`). Ohne diese Voraussetzung
+wäre der zweite Test auch dann grün, wenn der Record auf der
+Entitäten-Achse läge — und würde nichts Besonderes prüfen.
+
+#### Nebenbefund: ein stiller Leerlauf im eigenen Test
+
+Beim Schreiben der Spec stand im `afterAll`:
+
+```ts
+await prisma.signature.deleteMany({ where: { entityType: 'Abschluss', entityId: id } });
+```
+
+Das ist dieselbe falsche Achse — die Abfrage passte auf **keine Zeile**
+und ließ alle Signatur-Datensätze liegen. TypeScript hat es nicht
+gemerkt, Prisma nicht, der Test blieb grün. Ein `deleteMany`, das nichts
+löscht, ist das harmlose Gesicht derselben Fehlerklasse wie die
+falsche Leseabfrage: Beide sehen erfolgreich aus und tun nichts.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 35): Ein Wirtschaftsprüfer konnte einen nie abgeschlossenen Jahresabschluss signieren
+
+**Der schwerwiegendste Fund dieser Prüfrunde.** Gefunden nicht durch Lesen,
+sondern dadurch, dass eine tote Strecke nach dem Aktivwerden scharf wurde.
+
+**Der Zusammenhang.** Nachtrag 27: Zu `signatur.signAbschluss()` und
+`pdf/abschluss/:id/generate` gab es keinen Jahresabschluss. Beides war
+vorhandener, aber unerreichbarer Code. Mit Schritt 1–3 wurde der
+Jahresabschluss angelegt — damit wurden diese beiden Pfade aktiv, und
+**beide hatten null Tests**. `grep -rn "sign-abschluss\|abschluss/:id/generate" e2e/`
+liefert bis heute nichts.
+
+#### Befund 1: qeS auf einem `DRAFT`-Abschluss — gemessen
+
+```
+$ POST /api/auth/login  (wp@kanzlei.de)
+$ GET  /api/jahresabschluss/<id>
+  status = DRAFT, abgeschlossenAm = null
+$ POST /api/signatur/sign-abschluss   (P12-Testzertifikat)
+HTTP 200
+  {"signatureId":"533ae411-1ca9-417e-a5a5-db649ced237c",
+   "signedPdfBase64":"JVBERi0xLjMK..."}
+```
+
+Eine qualifizierte elektronische Signatur bescheinigt die
+**Vollständigkeit** eines Dokuments (§ 126 BGB). Hier wurde sie auf einen
+Abschluss gesetzt, der nie abgeschlossen wurde — und weil das signierte PDF
+danach mit `COMPLIANCE`-Object-Lock für **10 Jahre** in WORM liegt
+(`retentionExpiresAt: 2036-10-14`), ist der Schaden nicht rücknehmbar.
+
+**Ursache.** `signInternal` prüft in `assertEntityExists` für den Fall
+`'Abschluss'` nur die Existenz:
+
+```ts
+const e = await this.prisma.jahresabschluss.findFirst({
+  where: { id: entityId, mandantId },
+  select: { id: true },        // ← kein status
+});
+```
+
+Auf den **Zustand** prüft an keiner Stelle etwas.
+
+**Behoben:** `signAbschluss` verlangt `FINALIZED`, sonst 409 mit dem
+Hinweis, zuerst „Abschluss prüfen und abschließen" auszuführen.
+
+**Warum die Sperre dort und nicht in `signInternal`:** Bilanz, GuV und
+Anhang werden auch im `DRAFT` signiert — dort bescheinigt die Signatur die
+*Sichtung*, nicht den Abschluss. Das ist eine andere Bedeutung und darf
+nicht mitverstreckt werden.
+
+#### Befund 2: `signiertAm` existierte, und niemand schrieb es
+
+`Jahresabschluss.signiertAm` ist eine Spalte im Schema. **Keine Zeile im
+gesamten Projekt schreibt sie.** Zustand nach der Signatur oben:
+
+```json
+{ "status": "DRAFT", "abgeschlossenAm": null,
+  "signiertAm": null,                          ← obwohl signiert
+  "wormObjectKey": "…/abschluss-signed/….pdf" } ← signiertes Objekt
+```
+
+Ein Datensatz, der ein signiertes WORM-Objekt führt und zugleich
+`signiertAm: null` meldet, widerspricht sich selbst.
+
+**Bemerkenswert ist die Asymmetrie.** Bei Bilanz/GuV/Anhang gibt es diese
+Spalte gar nicht — dort wird `signiertAm` aus dem jüngsten
+`Signature`-Datensatz **abgeleitet** (`signatur.service.ts:246`). Beim
+Jahresabschluss gibt es nur die Spalte und keine Ableitung.
+
+**Behoben:** Nach erfolgreicher Signatur werden `signiertAm` und
+`status: 'SIGNED'` geschrieben. Damit ist `DRAFT → FINALIZED → SIGNED`
+implementiert.
+
+**Bleibende Lücke, ausdrücklich nicht verschwiegen.** Das Schreiben von
+`signiertAm`/`status` ist eine **zweite, getrennte** Transaktion nach
+`signInternal`. Schlägt sie fehl, liegt das signierte WORM-Objekt und der
+Signature-Datensatz vor, während der Abschluss auf `FINALIZED` steht —
+also genau der selbstwidersprüchliche Zustand, den dieser Nachtrag
+beschreibt, nur über einen anderen Weg.
+
+Der Schaden ist begrenzt, aber nicht null: **Der eigentliche Nachweis
+liegt im Signature-Datensatz**, und der wird (seit dem Fix vom
+2026-10-11) zusammen mit dem Manifest atomar geschrieben. Betroffen wäre
+nur das denormalisierte Statusfeld.
+
+Sauber wäre, das Statusupdate in dieselbe Transaktion zu legen. Das
+geht nicht ohne Umbau von `signInternal`, weil der dortige Transaktions-
+umfang die Manifest-Erzeugung umfasst — das ist ein eigener Vorgang und
+gehört nicht in diese Runde. Bewiesen ist der Zustand **nicht**, nur der
+Code gelesen; eine Messung würde einen Fehler in der Update-Anweisung
+brauchen.
+
+#### Befund 3 (nicht behoben): `SIGNED → SUBMITTED → PUBLISHED` haben keinen Schreibpfad
+
+Das Schema sieht `SIGNED | SUBMITTED | PUBLISHED` vor, der TypeScript-Typ
+kennt sie, `de-DE.json` hat deutsche Beschriftungen („Signiert",
+„Eingereicht", „Veröffentlicht"), und die Oberfläche rendert sie. **Kein
+Code erreicht sie außer `SIGNED` nach der gerade ergänzten Signatur.**
+`banzBestellnummer` und `veroeffentlichtAm` sind ebenfalls unbeschrieben.
+
+Das ist kein Defekt, sondern eine **Lücke** — die Publikation zum
+Bundesanzeiger ist noch nicht gebaut (M4). Sie steht hier, damit die
+Beschriftungen nicht den Eindruck einer fertigen Kette erzeugen.
+
+#### Befund 4 (Fachfrage): Ein `DRAFT`-Abschluss legt ein 10-Jahres-Objekt an
+
+Gemessen, **bevor** die Signatur oben überhaupt stattfand:
+
+```
+$ GET  /api/jahresabschluss/<id>   →  status = DRAFT, abgeschlossenAm = null
+$ POST /api/pdf/abschluss/<id>/generate
+HTTP 200
+{ "wormObjectKey":"…/abschluss/2085/….pdf",
+  "retentionExpiresAt":"2036-10-14T20:11:01.973Z",   ← COMPLIANCE, 10 Jahre
+  "sizeBytes":6297 }
+```
+
+`generateAbschlussPdf` prüft ebenfalls **keinen Zustand** und legt das
+Ergebnis in denselben WORM-Bucket mit demselben Object-Lock ab wie ein
+veröffentlichtes Dokument. Ein Entwurf und ein Archivdokument sind am
+Objekt nicht unterscheidbar.
+
+**Hier wird bewusst nichts geändert.** Die Frage „darf ein Nutzer eine
+Vorschau des Entwurfs drucken?" ist eine Produktentscheidung, keine
+Fachregel, die ich erfinden darf. Sicher ist nur: eine **Vorschau** gehört
+nicht in ein zehn Jahre gesperrtes Beweis-Archiv. Zu entscheiden ist:
+
+| Variante | Bedeutung |
+|---|---|
+| a) Sperren | `generateAbschlussPdf` verlangt `FINALIZED`; Entwurfsdruck nur über einen anderen, nicht gesperrten Weg |
+| b) Unterscheiden | Entwurfs-PDF unter eigenem `entityType` und **ohne** Object-Lock; Archivdokument unverändert |
+| c) Beides | Entwurf erzeugen, aber sichtbar als „Entwurf — kein Nachweis" kennzeichnen |
+
+#### Nebenbefund: `finalize` lieferte 201 Created
+
+Beim Schreiben der Signatur-Spec fiel auf, dass `POST /jahresabschluss/:id/finalize`
+**201 Created** antwortet. Abschließen ist ein Übergang auf einem bereits
+vorhandenen Aggregat, keine Erstellung. Von 37 Aktions-Routen des Projekts
+hatten alle übrigen ein `@HttpCode(HttpStatus.OK)` — `bilanz/:id/validate`
+mit erklärendem Kommentar. Der Jahresabschluss-Controller war die einzige
+Ausnahme, **obwohl er nach demselben Muster geschrieben war**.
+
+**Negativprobe** (Sperre und Status-Update entfernt, neu gestartet):
+
+```
+× Signieren eines DRAFT-Abschlusses → 409
+    expected 200 to be 409
+× nach der verweigerten Signatur liegt KEIN signiertes WORM-Objekt
+    expected [ Array(1) ] to have a length of +0 but got 1
+× Signieren eines FINALIZED-Abschlusses → 200, Status wird SIGNED
+    expected 'FINALIZED' to be 'SIGNED'
+```
+
+Der zweite Test ist der wichtigste: Er prüft nicht den Statuscode,
+sondern das **Artefakt**. Eine Sperre, die *nach* dem WORM-Upload greift,
+lässt den ersten Test grün und hinterlässt trotzdem das irreversible
+Objekt.
 
 ---
 

@@ -42,17 +42,44 @@ export class AuditIntegrityService {
    * Serialisiert die Hash-Berechnung.
    *
    * Warum (Befund 2026-10-03): `record()` ruft `computeHashForEntry()`
-   * fire-and-forget auf. Drei Audit-Einträge innerhalb von 35 ms lesen
-   * dann GLEICHZEITIG denselben Vorgänger (`createdAt < current`) — zwei
-   * davon leiten denselben `prevHash` ab, und die Kette verzweigt. Im
-   * Betrieb lieferte `verifyIntegrity()` daraufhin `BROKEN` nach zwei
-   * Einträgen, mit zwei verschiedenen Hashes an derselben Position.
+   * fire-and-forget auf. Drei Audit-Einträge innerhalb von 35 ms lesen dann
+   * GLEICHZEITIG denselben Vorgänger (`createdAt < current`) — zwei davon
+   * leiten denselben `prevHash` ab, und die Kette verzweigt.
    *
-   * Statt zu rennen wird jede Berechnung hinten angereiht: der Vorgänger
-   * ist dann garantiert schon gehasht, wenn der Nachfolger ihn liest.
+   * BEFUND 2026-10-18 (Nachtrag 41): Die Serialisierung allein hat das
+   * Problem **nicht** gelöst. Sie serialisiert die *Aufrufe* — aber der
+   * Aufrufreihenfolge folgt nicht der `sequenz`-Reihenfolge. Bei 60
+   * gleichzeitigen Schreibvorgaengen kam mehrfach die höhere `sequenz`
+   * zuerst in der Warteschlange an:
    *
-   * Ein Fehler bricht die Kette nicht ab — der Eintrag bleibt ungehasht
-   * und `verifyIntegrity()` meldet für ihn `PARTIAL`.
+   *     seq= 7  prev=27f975cce6   ← Vorgänger (7) gehasht
+   *     seq= 8  prev=0000000000   ← GENESIS: (7) war noch nicht gehasht
+   *
+   * Eintrag 8 sucht den Vorgänger mit `sequenz < 8`, findet die Zeile 7 —
+   * aber deren `entryHash` ist zu diesem Zeitpunkt noch `null`, weil 7
+   * erst später in der Warteschlange stand. Ergebnis: Rückfall auf
+   * GENESIS, und die Kette verzweigt an dieser Stelle.
+   *
+   * **Die Warteschlange muss nicht in der richtigen Reihenfolge gefüttert
+   * werden — sie muss sich selbst sortieren.** Deshalb hasht
+   * `hashNaechstenOffenen()` nicht mehr „den Eintrag, für den ich gerufen
+   * wurde", sondern **immer den Eintrag mit der kleinsten `sequenz`, der
+   * noch keinen Hash hat**. Die Reihenfolge ist damit eine Eigenschaft der
+   * Datenbank und nicht des Aufrufers.
+   *
+   * ### Grenze dieser Lösung (bewusst nicht behoben)
+   *
+   * Die Serialisierung ist **prozesslokal** (`private chain`). Läuft die
+   * Anwendung in mehreren Instanzen (Docker/Hetzner, vorgesehen ab M4),
+   * hasht jede Instanz ihre eigene Warteschlange — die Reihenfolge ist dann
+   * wieder nicht garantiert.
+   *
+   * Der robuste Weg ist eine Datenbanksperre um das *Einfuegen und
+   * Hashen zusammen* (`pg_advisory_xact_lock(kanzleiId)`), nicht um die
+   * Berechnung allein. Das aendert die Transaktionsgrenze des
+   * Audit-Schreibpfads — die compliance-kritischste Stelle des Projekts —
+   * und ist eine eigene Entscheidung (Sperrgranularitaet, Durchsatz,
+   * Deadlocks). Hier dokumentiert statt umgesetzt.
    */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -62,16 +89,19 @@ export class AuditIntegrityService {
    * Legt einen Eintrag in die Hash-Berechnungs-Kette ein.
    *
    * Der Aufrufer bekommt die Auswertung nicht zurück — wie bisher
-   * fire-and-forget. Die Reihenfolge der Einträge bleibt die des
-   * Audit-Logs, nicht die des Aufrufs.
+   * fire-and-forget. `auditLogId` ist dabei nur noch ein Hinweis: was
+   * tatsaechlich gehasht wird, entscheidet die Datenbank
+   * (`hashNaechstenOffenen`).
    */
-  enqueue(auditLogId: string): void {
+  enqueue(_auditLogId: string): void {
+    // Der Parameter wird bewusst nicht mehr verwendet: welches Eintraege
+    // gehasht werden, entscheidet `hashNaechstenOffenen()` aus der
+    // Datenbank, nicht der Aufrufer. Er bleibt in der Signatur, damit die
+    // Aufrufstellen unveraendert bleiben koennen.
     this.chain = this.chain
-      .then(() => this.computeHashForEntry(auditLogId))
+      .then(() => this.hashNaechstenOffenen())
       .catch((err: unknown) => {
-        this.logger.warn(
-          `Hash-Berechnung für ${auditLogId} fehlgeschlagen: ${String(err)}`,
-        );
+        this.logger.warn(`Hash-Berechnung fehlgeschlagen: ${String(err)}`);
       });
   }
 
@@ -79,11 +109,45 @@ export class AuditIntegrityService {
    * Wie `enqueue`, gibt die Auswertung aber zurück — für Aufrufstellen,
    * die den Fehler zählen wollen.
    */
-  enqueueWithCounting(auditLogId: string): Promise<void> {
-    const next = this.chain.then(() => this.computeHashForEntry(auditLogId));
+  enqueueWithCounting(_auditLogId: string): Promise<void> {
+    const next = this.chain.then(() => this.hashNaechstenOffenen());
     // Der Fehler wird weitergereicht, die Kette darf aber nicht reißen.
     this.chain = next.catch(() => undefined);
     return next.then(() => undefined);
+  }
+
+  /**
+   * hasht den naechsten noch offenen Eintrag — **in Datenbankreihenfolge**.
+   *
+   * Der Aufrufer-Parameter dient nur noch als Startpunkt. Was gehasht wird,
+   * entscheidet die Abfrage: der Eintrag mit der kleinsten `sequenz`, dessen
+   * `entryHash` noch `null` ist. Dadurch kann ein spaeter eingetroffener
+   * Aufruf einen frueheren Eintrag nicht ueberholen.
+   *
+   * Die Schleife laeuft mehrfach durch, damit ein Burst nicht nur einen
+   * Eintrag auflöst: nach jedem Hash kann der naechste offen sein.
+   */
+  private async hashNaechstenOffenen(): Promise<void> {
+    // Ein Durchlauf hasht den naechsten noch offenen Eintrag. Die Schleife
+    // laeuft mehrfach, damit ein Burst nicht nur einen Eintrag aufloest.
+    const MAX_DURCHLAEUFE = 500;
+
+    for (let i = 0; i < MAX_DURCHLAEUFE; i++) {
+      // Gleiche Sortierung wie `verifyIntegrity` — hasht der Waechter in
+      // einer anderen Reihenfolge als die Pruefung liest, meldet sie
+      // BROKEN fuer eine intakte Kette.
+      const offen = await this.prisma.auditLog.findFirst({
+        where: { entryHash: null },
+        orderBy: [{ sequenz: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true },
+      });
+      if (!offen) return;
+      await this.computeHashForEntry(offen.id);
+    }
+
+    this.logger.warn(
+      `Hash-Kette nach ${MAX_DURCHLAEUFE} Durchlaeufen noch nicht geschlossen`,
+    );
   }
 
   /**

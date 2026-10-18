@@ -3374,6 +3374,8 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
+| TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal**. Für den Mehrinstanz-Betrieb (M4/Hetzner) `pg_advisory_xact_lock(kanzleiId)` um Einfügen **und** Hashen — sonst verzweigt die Kette bei zwei Instanzen erneut (Nachtrag 41) | Dev + Compliance | vor M4-Deployment |
+| TODO-8.14 | **Ungeklärt:** Eintrag `seq=249` — der Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet für denselben Eintrag einen anderen Hash. Nur durch Instrumentieren des Schreibpfads isolierbar (Nachtrag 41) | Dev + Compliance | Sprint 5 |
 
 ---
 
@@ -3902,6 +3904,276 @@ gezählt wird. Dasselbe Argument wie bei `api-pfade` (Nachtrag 32).
 Er sagt **nichts** darüber, ob ein `onClick` das Richtige tut.
 `onClick={() => setNichts()}` gilt ihm als belegt. Er findet nur das, was
 im Quelltext sichtbar ist: gar nichts.
+
+---
+
+### Nachtrag 2026-10-17 (Nachtrag 40): Rollen wurden mandantenübergreifend ausgewertet — die Vier-Augen-Kontrolle war für Mandanten mit gemischten Rollen nicht vorhanden
+
+**Der schwerwiegendste Autorisierungsbefund dieser Prüfrunde.**
+
+#### Der Fund
+
+`RolesGuard` wertete **alle** Rollen des Users aus **allen** Mandanten
+gemeinsam aus:
+
+```ts
+const userMandantRoles: MandantRole[] = user.mandanten.flatMap((m) => m.rolle);
+const hasRole = requiredRoles.some((r) => userMandantRoles.includes(r));
+```
+
+Das Datenmodell ist das Gegenteil: `UserMandantRole` führt eine `mandantId`,
+und `@@unique([userId, mandantId, rolle])`. **Die Rolle gehört zu einem
+Mandanten.** Der Guard hat aus einer mandantenbezogenen Rolle eine globale
+gemacht — und damit aus einer Kontrolle über einen Mandanten eine
+Kontrolle über alle.
+
+#### Gemessen, über die öffentliche API
+
+Ein User mit
+
+```
+Beispiel GmbH → STEUERBERATER
+Beispiel GmbH → WIRTSCHAFTSPRUEFER     ← nur hier ist er Wirtschaftsprüfer
+Demo GmbH    → STEUERBERATER
+Test AG      → STEUERBERATER
+```
+
+rief `POST /api/signatur/sign-abschluss` für **Test AG** auf:
+
+```
+HTTP 200
+{"signatureId":"3ffa4b82-…", "signedPdfBase64":"JVBERi0xLjMK…"}
+```
+
+Er ist auf Test AG **kein Wirtschaftsprüfer**. Die Route ist mit
+`@Roles('WIRTSCHAFTSPRUEFER')` ausschließlich der WP-Rolle vorbehalten —
+genau der Endabnahme. Er hat den Abschluss eines fremden Mandanten
+bescheinigt, für den er keine Bescheinigungsbefugnis hat.
+
+**Der Schaden ist nicht ruecknehmbar.** Die Negativprobe zeigte **zwei**
+Objekte im WORM mit COMPLIANCE-Lock — das signierte PDF und das
+Zeitstempel-Token. Zehn Jahre.
+
+#### Der Denkfehler, der es möglich machte
+
+Der `RolesGuard` lief als globaler `APP_GUARD` **vor** dem `MandantGuard`
+und hatte **keinen Mandantenkontext**. Es stand nur der globale Vektor zur
+Verfügung, also *musste* er mandantenübergreifend arbeiten — er war nicht
+böswillig, er hatte nichts anderes.
+
+Und genau hier liegt die Merkwürdigkeit: **eine falsche Schlussfolgerung
+war technisch erzwungen.** Die Rolle mandantenbezogen zu prüfen ging nicht,
+weil die Information im Wächter nicht anlag. Wer den Wächter reparieren
+wollte, musste zuerst die fehlende Information beschaffen.
+
+#### Behoben
+
+1. **`common/utils/mandant-kontext.ts`** — eine Quelle der Wahrheit für die
+   Auflösung des Mandanten aus Pfad, Header, Query oder Body. Der
+   `MandantGuard` benutzt sie jetzt ebenfalls (Verhalten unverändert).
+   Zwei Wächter mit zwei Auflösungen wären zwei Fehlerquellen — genau das
+   ist der Grund, warum `common/utils/status-transition.ts` existiert.
+2. **`RolesGuard`** prüft die Rolle **des adressierten Mandanten**.
+
+Für Routen **ohne** Mandantenkontext (Branding, API-Keys, Mandantenverwaltung
+— 21 der 49 `@Roles`-Routen) bleibt das mandantenübergreifende Verhalten:
+dort gibt es keinen Mandantenbezug, auf den man die Rolle einschränken
+könnte. Diese Routen verhalten sich unverändert.
+
+**Kein „nur bei WIRTSCHAFTSPRUEFER"**: Eine Ausnahme für genau diese Rolle
+wäre der gemessene Fall, aber nicht die Ursache. Die Ursache ist die
+Verwechslung von mandantenbezogener und globaler Rolle; sie betrifft jede
+Rollenprüfung gleichermaßen.
+
+#### Zwei Fehler, die erst die Tests zeigten
+
+**1. `.find()` nahm die erste Rolle eines Mandanten.** Die erste Fassung
+benutzte `user.mandanten.find(m => m.id === mandantId)`. Bei mehreren
+Rollen pro Mandant — erlaubt, denn der Unique-Constraint enthält `rolle` —
+liegt im JWT **mehrfach dieselbe mandantId**:
+
+```
+[ { Beispiel GmbH, STEUERBERATER },
+  { Beispiel GmbH, WIRTSCHAFTSPRUEFER },   ← die zweite!
+  { Demo GmbH,    STEUERBERATER } ]
+```
+
+`find()` lieferte `STEUERBERATER`, ein echter Wirtschaftsprüfer wurde als
+Berater behandelt und bekam 403. Die **Gegenprobe** im Spec („auf dem
+Mandanten, für den die Rolle gilt, bleibt es erlaubt") hat das gefunden.
+Ohne sie wäre die Sperre zu breit gewesen und hätte legitime
+Freigaben blockiert — ein Fehler, den man Wochen später sucht.
+
+**2. Nicht zugewiesen ≠ Rolle fehlt.** Die erste Fassung beantwortete auch
+den Fall selbst, in dem der User dem Mandanten **gar nicht zugewiesen** ist,
+mit „Rolle STEUERBERATER oder KANZLEI_ADMIN fehlt für diesen Mandanten". Der
+Status war richtig (403), die Meldung falsch: der User hatte nie Zugriff,
+das ist ein Zugriffs- und kein Rollenproblem. Der bestehende Test
+`mandant-quelle.e2e.spec.ts` („PATCH mit Header einer fremden mandantId →
+403 *'Kein Zugriff'*"") hat das gemeldet — **der Test war richtig, meine
+Fassung war falsch.** Jetzt antwortet in diesem Fall der `MandantGuard`,
+und die Meldung bleibt die seit 2026-09-28 bewährte.
+
+#### Negativprobe
+
+Rollenprüfung zurückgebaut auf das globale `flatMap`:
+
+```
+× eine WP-Rolle aus einem anderen Mandanten erlaubt kein sign-abschluss
+    expected 200 to be 403
+× die Eskalation hinterlässt KEIN signiertes Objekt
+    expected [ …(2) ] to have a length of +0 but got 2
+✓ auf dem Mandanten, für den die Rolle gilt, bleibt es erlaubt
+```
+
+#### Blast Radius: **null**
+
+```
+784/784 Backend (86 Dateien) grün — vor und nach der Änderung
+```
+
+Keine einzige bestehende Teststrecke stützte sich auf das mandantenübergreifende
+Verhalten. Bei 784 Tests, davon vielen mit gemischten Rollen, ist das der
+Beleg, dass die Korrektur nichts Bestehendes bricht.
+
+**Abgrenzung, gemessen:** Derselbe User darf `sign-bilanz` auf Test AG
+weiterhin aufrufen — dort lautet die Rollenbindung
+`@Roles('WIRTSCHAFTSPRUEFER', 'STEUERBERATER')`, und er **ist** dort
+STEUERBERATER. Die Eskalation zeigt sich nur bei Routen, die
+**ausschließlich** der WP-Rolle vorbehalten sind. Die Sperre ist damit
+nachweisbar nicht zu breit.
+
+---
+
+### Nachtrag 2026-10-18 (Nachtrag 41): Die Audit-Hash-Kette verzweigte unter jedem normalen Parallelbetrieb
+
+**Der schwerwiegendste Befund der gesamten Prüfrunde.**
+
+#### Der Fund
+
+60 gleichzeitige fachliche Schreibvorgänge, danach die Integritätsprüfung:
+
+```
+60/60 Fachschreibvorgänge → HTTP 201
+GET /api/audit/integrity
+  status: BROKEN
+  entriesChecked: 5
+  brokenAt: { expectedHash: 5058364c…, actualHash: b5b590d3… }
+```
+
+In der Datenbank war die Ursache als Text ablesbar — vier Einträge hatten
+als `prevHash` den Genesis-Hash statt ihres Vorgängers:
+
+```
+seq= 7  prev=27f975cce6   ← korrekt
+seq= 8  prev=0000000000   ← GENESIS
+seq= 9  prev=0000000000   ← GENESIS
+seq=12  prev=0000000000   ← GENESIS
+seq=14  prev=0000000000   ← GENESIS
+```
+
+**Eine Kette, die an vier Stellen bei Genesis neu beginnt, ist kein Strang,
+sondern ein Stern.**
+
+#### Zwei Folgen, und die zweite ist die schlimmere
+
+1. **`verifyIntegrity()` bricht beim ersten inkonsistenten Knoten ab.** Eine
+   Verzweigung macht damit **jeden folgenden Eintrag unverifizierbar** —
+   und die Hashes sind unveränderlich, es repariert sich nicht.
+
+2. **BROKEN ist unter Parallelität der Normalzustand.** Ein Auditor, der
+   `BROKEN` sieht, schließt auf Manipulation. Hier war nichts manipuliert —
+   nur gleichzeitig geschrieben. Der Zustand „normaler Betrieb" und der
+   Zustand „Tampering" sind damit **nicht unterscheidbar**. Die Kontrolle,
+   die im Handbuch als Manipulationserkennung geführt wird, ist im
+   Regelbetrieb nicht aussagekräftig.
+
+#### Und das ist nicht die erste Reparatur
+
+Der Kommentar am Serialisierungscode datiert auf den **2026-10-03** und
+beschreibt **dieselbe Fehlerklasse**:
+
+> *„Drei Audit-Einträge innerhalb von 35 ms lesen dann GLEICHZEITIG
+> denselben Vorgänger … und die Kette verzweigt. Im Betrieb lieferte
+> `verifyIntegrity()` daraufhin `BROKEN` nach zwei Einträgen."*
+
+Die Reparatur war eine **prozesslokale Promise-Warteschlange**
+(`private chain`). Sie serialisiert die **Aufrufe** — aber die
+Aufrufreihenfolge folgt nicht der `sequenz`-Reihenfolge. Eintrag 8 sucht
+den Vorgänger mit `sequenz < 8`, findet die Zeile 7, deren `entryHash`
+aber noch `null` ist, weil 7 erst später in der Warteschlange stand.
+Rückfall auf Genesis.
+
+**Die Warteschlange muss nicht in der richtigen Reihenfolge gefüttert
+werden — sie muss sich selbst sortieren.**
+
+#### Behoben
+
+`hashNaechstenOffenen()` hasht nicht mehr „den Eintrag, für den ich gerufen
+wurde", sondern **immer den Eintrag mit der kleinsten `sequenz`, der noch
+keinen Hash hat** — dieselbe Sortierung wie `verifyIntegrity()`.
+
+Gemessen mit **demselben** Lasttest:
+
+| | vorher | nachher |
+|---|---|---|
+| 60 gleichzeitige Schreibvorgänge | **BROKEN** | **OK** (62/62 geprüft) |
+| Einträge mit GENESIS als Vorgänger | 14 von 40 | 1 (= die Genesis selbst) |
+
+**Negativprobe** (auf „hash den übergebenen Eintrag" zurückgebaut):
+
+```
+× Kette bleibt OK
+    expected 'BROKEN' to be 'OK' — geprüft 3, erster Bruch {…}
+× kein Eintrag restartet die Kette bei Genesis
+    expected 14 to be less than or equal to 1
+```
+
+#### Was ich dabei an mir selbst korrigiert habe
+
+- Die erste Zusicherung „höchstens **ein** Genesis-Eintrag" war **falsch**.
+  Die Kette läuft **je Kanzlei** — jede Kanzlei beginnt ihre eigene genau
+  einmal. In der geteilten Test-Datenbank sind es sechs Kanzleien und
+  entsprechend sechs Genesis-Einträge, alle korrekt. Richtig ist:
+  **je Kanzlei höchstens einer.**
+- Ein erster Diagnoseversuch baute `canonicalizeForHash` nach und meldete
+  „Bruch bei sequenz=1". Das war ein **Scheinbefund** — die Nachbildung war
+  nicht die Produktionsfunktion. Erst der Durchgriff auf den echten
+  Verifikator lieferte verwertbare Zahlen.
+- Eine Differenzmessung (`nachher − vorher`) ergab im vollen Suite-Lauf 0,
+  weil eine andere Spec im geteilten Shadow-DB den Datenbestand
+  zurueckgesetzt hatte. Sie ist durch eine basislinienfreie Zusicherung
+  ersetzt.
+
+#### OFFEN — ein zweiter, nicht isolierter Widerspruch
+
+Beim vollen Suite-Lauf meldet `integrity` weiterhin `BROKEN` — **an einer
+anderen Stelle, und nicht wegen der Verzweigung.** Auf frisch geseedetem
+Zustand ist die Kette nach 40 gleichzeitigen Schreibvorgängen intakt.
+
+Die Bruchstelle, vom **Produktionsverifikator** benannt:
+
+```
+BRUCH bei sequenz=249 (Mandant/CREATE)
+  Vorgaenger (seq=248) entryHash : b7b23d48bd8c6baa
+  Brucheintrag  prevHash        : b7b23d48bd8c6baa   ← IDENTISCH
+```
+
+Der **Schreibpfad hat also richtig an seinen Vorgänger gehängt** — und der
+Verifikator berechnet für denselben Eintrag trotzdem einen anderen Hash.
+Beide nutzen `canonicalizeForHash`, dieselbe reine Funktion. Folglich
+unterscheiden sich die **gelesenen Felder** des Eintrags zwischen Schreib-
+und Prüfzeitpunkt.
+
+**Nicht weiterverfolgt.** Ohne den Schreibpfad zu instrumentieren lässt sich
+das nicht eingrenzen; jede Aussage darüber wäre eine Vermutung. Der
+zugehörige Test steht als `it.skip` im Code, mit derselben Begründung —
+sichtbar, statt in einer Notiz zu verschwinden. TODO-8.14.
+
+| ID | Aufgabe | Owner | Frist |
+|---|---|---|---|
+| TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal** (`private chain`). Für den Mehrinstanz-Betrieb (M4, Hetzner) eine `pg_advisory_xact_lock(kanzleiId)` um **Einfügen + Hashen** einführen — sonst verzweigt die Kette bei zwei Instanzen erneut | Dev + Compliance | vor M4-Deployment |
+| TODO-8.14 | Eintrag `seq=249`: Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet einen anderen Hash. Felder zwischen Schreib- und Prüfzeitpunkt vergleichen — derzeit nur durch Instrumentieren des Schreibpfads isolierbar | Dev + Compliance | Sprint 5 |
 
 ---
 

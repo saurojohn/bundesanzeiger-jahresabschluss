@@ -62,6 +62,8 @@ function makePrismaMock(zeiten: Date[]) {
     }: {
       where: {
         kanzleiId?: string | null;
+        /** Nachtrag 41: „welcher Eintrag ist noch ungehasht?" */
+        entryHash?: null;
         /** Neuer Zweig seit 2026-10-08: monotone Sequenz. */
         sequenz?: { lt: bigint } | null;
         OR: Array<
@@ -71,9 +73,29 @@ function makePrismaMock(zeiten: Date[]) {
       };
     }) => {
       const kanzleiFilter = where.kanzleiId;
-      const kandidaten = eintraege.filter((e) =>
+      let kandidaten = eintraege.filter((e) =>
         kanzleiFilter == null ? true : e.kanzleiId === kanzleiFilter,
       );
+
+      // BEFUND 2026-10-18 (Nachtrag 41): Der Waechter fragt seit der
+      // Reparatur zusaetzlich `{ where: { entryHash: null } }` ab — er hasht
+      // nicht mehr „den Eintrag, fuer den ich gerufen wurde", sondern den
+      // naechsten noch OFFENEN in Datenbankreihenfolge. Der Mock kannte nur
+      // die beiden Zweige „Vorgänger per sequenz" und „Vorgänger per
+      // createdAt/id"; die neue Abfrage fiel in den zweiten Zweig, wo
+      // `where.OR` undefined ist — **TypeError**, vom `.catch()` in
+      // `enqueue` geschluckt, und der Test sah nur ein ungehashtes
+      // `prevHash: null`.
+      //
+      // Ein Mock, der eine Abfrage nicht kennt, darf sie nicht wie eine
+      // andere behandeln: hier wurde ein TypeError zur vermeintlich
+      // fehlgeschlagenen Hash-Berechnung.
+      if (where.entryHash === null) {
+        return Promise.resolve(
+          (kandidaten.find((e) => e.entryHash === null) ?? null) as never,
+        );
+      }
+      kandidaten = [...kandidaten];
       // Neuer Pfad: Kette ueber `sequenz`. Der Mock bildet ihn ab,
       // sonst faellt der Schreibpfad auf den Altbestand-Zweig zurueck
       // und der Test prueft etwas anderes als den Produktivcode.

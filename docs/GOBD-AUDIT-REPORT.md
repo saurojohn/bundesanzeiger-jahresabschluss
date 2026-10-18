@@ -4333,6 +4333,64 @@ nur Robustheit, sondern die Voraussetzung dafür, dass die Aussage der Kette
 
 ---
 
+### Nachtrag 2026-10-18 (Nachtrag 44): Zwei Verdachtsstellen der Team-Inventur — gemessen und **entkräftet**
+
+Eine Bestandsaufnahme aller Routen hat zwei Stellen als Verdacht gemeldet,
+ausdrücklich **ohne Messung** („nur Quelltext, nicht gemessen"). Beide sind
+jetzt gemessen. Kein Befund.
+
+#### 1. `dns.controller.ts` — kein `@Roles`, kein `@RequireMandant` auf der Klasse
+
+Der Klassenkommentar sagt: *„Beide erfordern KANZLEI_ADMIN oder
+SYSTEM_ADMIN."* Die Klasse trägt weder `@UseGuards` noch `@Roles` noch
+`@RequireMandant` — und der globale `RolesGuard` lässt eine Route ohne
+`@Roles` durch. Die Autorisierung liegt also **ausschließlich** im Service
+(`assertKanzleiAdminAccess`).
+
+Gemessen:
+
+| Aufruf | Ergebnis |
+|---|---|
+| `POST /dns/:kanzleiId/start-verification` als **STEUERBERATER** | **403** „Nur KANZLEI_ADMIN dieser Kanzlei darf die Custom-Domain verifizieren" |
+| `POST /dns/:kanzleiId/verify` als **STEUERBERATER** | **403** (gleiche Meldung) |
+| dasselbe als **KANZLEI_ADMIN** der eigenen Kanzlei | 400 (Formatfehler — die Autorisierung ist passiert) |
+| dasselbe als KANZLEI_ADMIN gegen eine **fremde** Kanzlei | **403** „Kein Zugriff auf diese Kanzlei" |
+
+**Die Sperre greift, auch kanzleiübergreifend.** Der Verdacht war als
+Code-Beobachtung richtig und als Defekt falsch.
+
+Er bleibt aber als **Dokumentationslücke** stehen: Ein Kommentar, der eine
+Zusicherung ankündigt, die erst 60 Zeilen tiefer im Service steht, ist eine
+Wartungsfalle. Der nächste, der `assertKanzleiAdminAccess` auslagert oder
+einen neuen Endpunkt hinzufügt, merkt nicht, dass dort etwas fehlen muss.
+
+#### 2. `DELETE /konsolidierung/einheiten/:id` gegen § 147 AO
+
+Der Endpunkt löscht per HTTP, während der Service auf `COMPLETED` und
+`VALIDATED` sperrt — „ein Aufzeichnungsstand nach § 147 AO wird nicht
+entfernt". Die Route ist zudem auf `WIRTSCHAFTSPRUEFER, KANZLEI_ADMIN`
+beschränkt, und `konsolidierung.e2e.spec.ts` geht den Zustandswechsel bis
+`finalisieren` bereits durch.
+
+**Kein Befund, kein Testlücken-Beleg.** Hier war die Vermutung von Anfang an
+schwächer — der Service-Guard ist derselbe, der beim DNS-Fall gehalten hat,
+und die_route_ selbst trägt einen Rollen-Dekorator.
+
+#### Warum beides trotzdem dokumentiert wird
+
+Ein Audit-Bericht, der Verdachtsstellen **nicht** mit „geprüft,
+entkräftet" schließt, zwingt den nächsten Prüfer, dieselbe Untersuchung zu
+wiederholen. Die eigentliche offene Frage ist nur die eine, in
+Abschnitt 6 von Nachtrag 43: **Autorisierung, die ausschließlich im Service
+liegt, ist eine Einladung** — sie wird beim Refaktorieren stillschweigend
+vergessen, und es gibt keinen Wächter, der es merkt.
+
+| ID | Aufgabe | Owner | Frist |
+|---|---|---|---|
+| TODO-8.16 | `dns.controller.ts` verspricht im Kommentar eine Rollenbindung, die nur im Service existiert. Entweder `@Roles` an die Route heben oder den Kommentar auf die Wirklichkeit korrigieren („Autorisierung im Service, siehe `assertKanzleiAdminAccess`") — sonst wird sie beim Refaktorieren stillschweigend vergessen | Dev | Sprint 5 |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

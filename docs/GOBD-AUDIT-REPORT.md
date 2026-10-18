@@ -3374,7 +3374,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
-| TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal**. Für den Mehrinstanz-Betrieb (M4/Hetzner) `pg_advisory_xact_lock(kanzleiId)` um Einfügen **und** Hashen — sonst verzweigt die Kette bei zwei Instanzen erneut (Nachtrag 41) | Dev + Compliance | vor M4-Deployment |
+| TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | TODO-8.14 | **Ungeklärt, eingegrenzt (Nachtrag 43):** Der Eintrag `seq=249` wurde **einmal** gehasht, mit `mandantId="074e…"` und einem before/after-`newState`. In der Datenbank steht `mandantId = null` und ein **Mandant-Schnappschuss** als `newState`. Die Anwendung hat **genau eine** `auditLog.update`-Stelle (die Hash-Schreibung selbst). Die Zeile wurde also von außerhalb dieser Anwendung verändert — Beleg unten | Dev + Compliance | Sprint 5 |
 | TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Jahresabschluss — gemessen 2 Signaturen + 5 WORM-Objekte bei `status: DRAFT`. Entscheidung: zulässig (Modell braucht ein trennendes Feld) oder unzulässig (Sperre analog `sign-abschluss`) (Nachtrag 42) | Fachbereich + Compliance | **vor dem Pilot** |
 
@@ -4173,7 +4173,7 @@ sichtbar, statt in einer Notiz zu verschwinden. TODO-8.14.
 
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
-| TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal** (`private chain`). Für den Mehrinstanz-Betrieb (M4, Hetzner) eine `pg_advisory_xact_lock(kanzleiId)` um **Einfügen + Hashen** einführen — sonst verzweigt die Kette bei zwei Instanzen erneut | Dev + Compliance | vor M4-Deployment |
+| TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | TODO-8.14 | Eintrag `seq=249`: Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet einen anderen Hash. Felder zwischen Schreib- und Prüfzeitpunkt vergleichen — derzeit nur durch Instrumentieren des Schreibpfads isolierbar | Dev + Compliance | Sprint 5 |
 
 ---
@@ -4421,6 +4421,81 @@ vergessen, und es gibt keinen Wächter, der es merkt.
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
 | TODO-8.16 | `dns.controller.ts` verspricht im Kommentar eine Rollenbindung, die nur im Service existiert. Entweder `@Roles` an die Route heben oder den Kommentar auf die Wirklichkeit korrigieren („Autorisierung im Service, siehe `assertKanzleiAdminAccess`") — sonst wird sie beim Refaktorieren stillschweigend vergessen | Dev | Sprint 5 |
+
+---
+
+### Nachtrag 2026-10-18 (Nachtrag 45): Die vorgeschlagene Sperre ist **nicht belegt nötig** — gegenläufig gemessen und zurückgenommen
+
+Nachtrag 43 leitete aus der Beobachtung „die Zeile stand ungehasht in der
+Datenbank" die Empfehlung ab, `pg_advisory_xact_lock` um **Einfügen + Hashen**
+zu legen (TODO-8.13). Diese Empfehlung ist jetzt **gegenläufig gemessen** —
+und deshalb zurückgenommen.
+
+#### Die Messung
+
+Zwei echte Anwendungsinstanzen (`:3000` und `:3101`) auf **derselben**
+Datenbank, 60 fachliche Schreibvorgänge, abwechselnd auf beide verteilt:
+
+```
+Fachschreibvorgaenge: 60/60 {"201":60}
+Eintraege 63 (neu 60) · Status OK
+```
+
+**Ohne jede Sperre. Zwei Prozesse. OK.**
+
+Damit war auch die Gegenprobe wertlos: Der Zustand, für den die Sperre
+eingeführt werden sollte, **tritt unter den gemessenen Bedingungen nicht
+auf**.
+
+#### Warum die Selbstsortierung den Mehrinstanzfall bereits deckt
+
+`hashNaechstenOffenen()` (Nachtrag 41) hasht nicht „den Eintrag, für den
+ich gerufen wurde", sondern **immer den Eintrag mit der kleinsten
+`sequenz`, der noch keinen Hash hat**. Damit zwei Eigenschaften:
+
+1. **Die Reihenfolge kommt aus der Datenbank**, nicht aus dem Aufrufer.
+   Zwei Instanzen können sich nicht gegenseitig überholen, weil keine von
+   beiden eine eigene Reihenfolge mitbringt.
+2. **Die Berechnung ist idempotent.** Rechnen zwei Instanzen dieselbe
+   offene Zeile, kommen sie zum selben Ergebnis und schreiben denselben
+   Wert.
+
+Der prozesslokale `chain` serialisiert nur noch die Arbeit **innerhalb**
+einer Instanz — für die Korrektheit der Kette ist er nicht mehr tragend.
+
+#### Das Restrisiko, das bleibt
+
+Ein schmales Fenster ist denkbar: Instanz A hat die offene Zeile `50`
+gewählt und noch nicht geschrieben; Instanz B wählt in diesem Moment `51`
+(B sah `50` bereits als „fertig", weil A committed hatte — nur der Hash
+fehlte) und hängt `51` an `49`.
+
+**Nicht beobachtet, nur abgeleitet.** In vier Läufen mit zwei Instanzen trat
+es nicht auf. Eine Sperre würde es ausschließen — **um den Preis**, dass
+alle geprüften Schreibvorgänge einer Kanzlei serialisiert werden und die
+Transaktionsgrenze der compliance-kritischsten Stelle sich ändert.
+
+#### Warum zurückgenommen statt „vorsorglich eingebaut"
+
+Die Änderung war implementiert (`writeAndChain` mit
+`pg_advisory_xact_lock(hashtext(kanzleiId))`, Eintrag und Hash in einer
+Transaktion), typecheck- und lint-sauber — und ist **über `git checkout`
+zurückgenommen**.
+
+- **Kein Nachweis.** Die Gegenprobe hat nicht rot geschlagen. Eine Sperre
+  gegen einen Zustand einzuführen, den ich nicht herstellen konnte, wäre
+  Wunschdenken mit Datenbankkosten.
+- **Der Preis ist real.** Jede geprüfte Schreiboperation einer Kanzlei
+  serialisiert sich; die Transaktionsgrenze des Audit-Schreibpfads ändert
+  sich. Das ist eine Entscheidung, kein Fix.
+- **Nachtrag 41 hat den eigentlichen Fehler schon behoben.** Die Reparaturen
+  vom 2026-10-03 und vom 2026-10-18 griffen dasselbe Problem an zwei
+  Stellen; die zweite griff vollständig.
+
+**Merksatz für die eigene Arbeit:** Eine vorgeschlagene Härtung muss
+gegenläufig messbar sein. „Schützt vermutlich" ist keine Begründung, wenn
+die Messung sie weder bestätigt noch widerlegt — dann gehört sie als
+Risiko dokumentiert und **nicht** eingebaut.
 
 ---
 

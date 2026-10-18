@@ -4376,6 +4376,39 @@ beschränkt, und `konsolidierung.e2e.spec.ts` geht den Zustandswechsel bis
 schwächer — der Service-Guard ist derselbe, der beim DNS-Fall gehalten hat,
 und die_route_ selbst trägt einen Rollen-Dekorator.
 
+#### 3. `POST /subscription/:kanzleiId/mock-activate` — vergibt einen bezahlten Tarif
+
+Die Route hat **keinen `@Roles`-Dekorator** und keinen HTTP-Test; die
+Autorisierung liegt im Service (`assertKanzleiAdminAccess`). Die Inventur
+bewertete sie als „hoch — vergibt Premium im Produktivpfad".
+
+**Gemessen und geprüft:**
+
+| Bedingung | Verhalten |
+|---|---|
+| `BILLING_MOCK_ENABLED` nicht gesetzt | `404 „Nicht gefunden"` — **fail-closed** |
+| `BILLING_MOCK_ENABLED=false` | ebenfalls zu |
+| Provider ≠ `mock` | `400 „nur im Mock-Provider-Mode"` |
+| `mockSession` ohne `mock_`-Präfix | `400` |
+| Kein KANZLEI_ADMIN der Kanzlei | 403 (aus `assertKanzleiAdminAccess`) |
+
+Der Default ist `(get(...) ?? 'false')` — **fehlende Konfiguration bedeutet
+„zu"**, nicht „aus Versehen an".
+
+**Und hier musste ich mich selbst korrigieren:** Ich hatte im Verdacht, der
+Schalter stehe auf `true` in `.env.example` — dann würde jemand, der die
+Beispieldatei in die Produktion kopiert, den Mock-Zugang mitnehmen.
+**Falsch.** `BILLING_MOCK_ENABLED=true` steht ausschließlich in
+`.github/workflows/ci.yml` (2×) und in `run-local.sh`
+(`${BILLING_MOCK_ENABLED:-true}`, mit erklärendem Kommentar). **In
+`.env.example` kommt die Variable nicht vor.**
+
+Der Schalter ist zusätzlich durch `mock-activate-gate.spec.ts` abgesichert
+(„ohne `BILLING_MOCK_ENABLED` geht es nicht — auch nicht bei aktivem
+Mock-Provider"). Die Inventur hatte „kein HTTP-Test" bemerkt und daraus
+„Gate nur service-seitig getestet" geschlossen — das Service-Gate **ist**
+getestet, nur nicht über HTTP.
+
 #### Warum beides trotzdem dokumentiert wird
 
 Ein Audit-Bericht, der Verdachtsstellen **nicht** mit „geprüft,

@@ -3375,7 +3375,7 @@ rot**, darunter exakt der aus der CI.
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
 | TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal**. Für den Mehrinstanz-Betrieb (M4/Hetzner) `pg_advisory_xact_lock(kanzleiId)` um Einfügen **und** Hashen — sonst verzweigt die Kette bei zwei Instanzen erneut (Nachtrag 41) | Dev + Compliance | vor M4-Deployment |
-| TODO-8.14 | **Ungeklärt:** Eintrag `seq=249` — der Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet für denselben Eintrag einen anderen Hash. Nur durch Instrumentieren des Schreibpfads isolierbar (Nachtrag 41) | Dev + Compliance | Sprint 5 |
+| TODO-8.14 | **Ungeklärt, eingegrenzt (Nachtrag 43):** Der Eintrag `seq=249` wurde **einmal** gehasht, mit `mandantId="074e…"` und einem before/after-`newState`. In der Datenbank steht `mandantId = null` und ein **Mandant-Schnappschuss** als `newState`. Die Anwendung hat **genau eine** `auditLog.update`-Stelle (die Hash-Schreibung selbst). Die Zeile wurde also von außerhalb dieser Anwendung verändert — Beleg unten | Dev + Compliance | Sprint 5 |
 | TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Jahresabschluss — gemessen 2 Signaturen + 5 WORM-Objekte bei `status: DRAFT`. Entscheidung: zulässig (Modell braucht ein trennendes Feld) oder unzulässig (Sperre analog `sign-abschluss`) (Nachtrag 42) | Fachbereich + Compliance | **vor dem Pilot** |
 
 ---
@@ -4263,6 +4263,73 @@ Signaturen auf derselben Achse ist im Datenmodell nicht unterscheidbar von
 |---|---|---|---|
 | TODO-8.9 | **Entwurfs-PDF, vier Routen**: `pdf/{bilanz,guv,anhang,abschluss}/:id/generate` legen ohne Statusprüfung ein 10-Jahres-Objekt im Beweis-Archiv ab. Varianten a/b/c in Nachtrag 35 — gilt für alle vier, nicht nur den Jahresabschluss | Produkt + Compliance | **vor dem Pilot** |
 | TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Abschluss. Entscheidung: zulässig (dann braucht das Modell ein Feld, das „Aggregat signiert" von „Bestandteil geprüft" trennt) oder unzulässig (dann Sperre analog zu `sign-abschluss`) | Fachbereich + Compliance | **vor dem Pilot** |
+
+---
+
+### Nachtrag 2026-10-18 (Nachtrag 43): TODO-8.14 eingegrenzt — die Zeile wurde von **außerhalb** der Anwendung verändert
+
+Der in Nachtrag 41 offengelassene Widerspruch ist mit temporärer
+Instrumentierung des Schreibpfads **wesentlich eingrenzbar** geworden. Die
+Messung ist inzwischen vollständig zurückgebaut (`git diff` gegen `e3b2feb`
+ist leer).
+
+#### Beleg
+
+Der Verifikator benennt den Brucheintrag; der Schreibpfad hat seinen
+Inhalt protokolliert. Vergleich beider Seiten, Feld für Feld:
+
+| Feld | beim Schreiben protokolliert | in der Datenbank |
+|---|---|---|
+| `mandantId` | `"074e0e7a-ef1b-4e5a-8c02-52781fa02ab6"` | **`null`** |
+| `newState` | `{adresse, bilanzsummeVorjahr, firmenname, …}` | `{id, ustId, adresse, createdAt, …}` |
+| Schlüsselreihenfolge in `newState` | `adresse` zuerst | `id` zuerst |
+
+Dazu die Rekonstruktion, die den Ausschluss beweist:
+
+```
+H(prevHash + DB-Inhalt)  ==  expectedHash des Verifikators   ✔ identisch
+H(prevHash + DB-Inhalt)  !=  gespeicherter entryHash        ✘
+```
+
+Der Verifikator rechnet also **genau so, wie der Schreibpfad rechnet**,
+mit demselben `prevHash` — über denselben Inhalt, den die Datenbank jetzt
+zeigt. Der geschriebene Hash passt nur zu einem **anderen** Inhalt.
+
+#### Was daraus folgt
+
+- Der Eintrag wurde **genau einmal** gehasht (die dreifach protokollierten
+  IDs sind synthetische `00000000-0000-…`-Zeilen aus den Unit-Specs, die im
+  selben Prozess mit echtem PrismaClient laufen).
+- Im gesamten Projekt gibt es **eine einzige** Stelle, die eine
+  `auditLog`-Zeile aktualisiert: `audit-integrity.service.ts:256` — die
+  Hash-Schreibung selbst, die nur `entryHash` und `prevHash` setzt.
+- Der neue `newState` ist ein **Schnappschuss des Mandanten**
+  (`id`, `ustId`, `adresse`, `createdAt`), nicht der vom Audit-Service
+  geschriebene before/after-Block — und mit **anderer Schlüsselreihenfolge**,
+  also neu serialisiert.
+
+**Die Zeile wurde nach dem Hashen von etwas verändert, das nicht diese
+Anwendung ist.** Kandidaten, die ich **nicht** belegen kann:
+
+1. Ein Unit-Spec mit echtem `PrismaClient` im selben Prozess und dieselben
+   Datenbank — die drei synthetischen IDs zeigen, dass dort echte Zeilen
+   entstehen.
+2. Ein Backfill-/Migrationsskript gegen die Entwicklungsdatenbank.
+3. Ein zweiter Node-Prozess auf derselben Datenbank.
+
+Nichts davon ist im Repository belegt. **Ich behaupte deshalb nicht, was es
+war** — nur, wo der Unterschied liegt und dass er nicht aus dem
+Anwendungspfad stammt.
+
+#### Was das praktisch bedeutet
+
+Für sich genommen ist das ein **Testumgebungs-Phänomen**: Der
+Mehrinstanzfall ist TODO-8.13 und dort bereits beschrieben. Für den
+Produktivbetrieb heißt es aber: **Wenn zwei Prozesse auf dieselbe Kette
+schreiben, ist sie nicht mehr prüfbar** — und die Prüfung meldet BROKEN,
+was wie Manipulation aussieht. Die Sperre aus TODO-8.13 ist damit nicht
+nur Robustheit, sondern die Voraussetzung dafür, dass die Aussage der Kette
+überhaupt stimmt.
 
 ---
 

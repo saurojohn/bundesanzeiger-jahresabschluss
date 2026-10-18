@@ -275,11 +275,20 @@ test.describe('Speichern bestehender Datensätze', () => {
     // handleChange ruft window.location.reload() — auf das Neuladen warten.
     await page.waitForLoadState('load');
     await page.goto(`/${LOCALE}/${seite}`);
-    await page.waitForTimeout(2000);
-    if ((await bearbeiten.count()) > 0) return;
-    throw new Error(
-      `${seite}: nach dem Mandantenwechsel weiterhin keine Datensätze in der Liste`,
-    );
+    // BEFUND 2026-10-18: Hier stand `waitForTimeout(2000)` gefolgt von
+    // `if ((await bearbeiten.count()) > 0) return;`. Das ist eine
+    // **Wettkondition**: auf einem langsameren Lauf war die Liste nach zwei
+    // Sekunden noch nicht fertig, der Test warf und meldete einen
+    // Mandantenkontext-Fehler, den es nicht gab. Einmal so gesehen und
+    // trotzdem als Produktfehler eingeordnet — deshalb hier die Meldung
+    // ausgetauscht.
+    //
+    // Playwright wartet auf den Zustand, nicht auf die Uhr. Die Meldung
+    // bleibt, jetzt erreicht sie nur den Fall, fuer den sie gedacht ist.
+    await expect(
+      bearbeiten.first(),
+      `${seite}: nach dem Mandantenwechsel weiterhin keine Datensaetze in der Liste`,
+    ).toBeVisible({ timeout: 20_000 });
   }
 
   for (const [seite, bearbeiten, pfad, listePfad] of [

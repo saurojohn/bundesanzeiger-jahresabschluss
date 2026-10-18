@@ -8,6 +8,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { REQUIRE_MANDANT_KEY } from '../constants/auth.constants';
 import type { AuthUser } from '../types/auth-user.types';
+import { ermittleMandantId } from '../../../common/utils/mandant-kontext';
 
 /**
  * Mandant-Trennung-Guard.
@@ -46,24 +47,15 @@ export class MandantGuard implements CanActivate {
       throw new ForbiddenException('Nicht authentifiziert');
     }
 
-    // Reihenfolge = Präzedenz (bewusst header vor query vor body):
-    //   params  — mandantId im Pfad, am eindeutigsten
-    //   header  — expliziter Mandantenwechsel via x-mandant-id
-    //   query   — REST-ueblich (?mandantId=...); wird von den Listen-Endpunkten
-    //             (GET /bilanz, /guv, /anhang, ...) ausschliesslich so bedient
-    //   body    — POST/PATCH/Payload
+    // Die Aufloesung selbst liegt in `common/utils/mandant-kontext` —
+    // **eine Quelle der Wahrheit fuer beide Waechter**.
     //
-    // Bugfix 2026-09-28: `req.query` fehlte hier voellig. Die Listen-Endpunkte
-    // deklarieren `@Query('mandantId')`, der Guard las aber weder Query noch
-    // Query-Fallback — dadurch lieferte JEDE Mandanten-Liste fuer alle Rollen
-    // ausser SYSTEM_ADMIN ein 403 "mandantId erforderlich", egal was der
-    // Client sendete. Header bleibt bewusst VOR query, damit ein Client nicht
-    // per Query-Parameter einen per Header gesetzten Mandanten uebersteuern kann.
-    const mandantId =
-      req.params?.mandantId ??
-      (req.headers?.['x-mandant-id'] as string | undefined) ??
-      (typeof req.query?.mandantId === 'string' ? req.query.mandantId : undefined) ??
-      (typeof req.body?.mandantId === 'string' ? req.body.mandantId : undefined);
+    // BEFUND 2026-10-17 (Nachtrag 40): Bis eben hatte nur dieser Guard
+    // eine Aufloesung, der `RolesGuard` keine. Genau daraus wurde, dass die
+    // Rollenpruefung mandantenuebergreifend arbeiten konnte: ohne Mandanten-
+    // Kontext blieb ihr nur der globale Vektor `user.mandanten.flatMap(…)`.
+    // Zwei Waechter mit zwei Aufloesungen sind zwei Fehlerquellen.
+    const mandantId = ermittleMandantId(req);
 
     if (!mandantId) {
       throw new ForbiddenException('mandantId erforderlich');

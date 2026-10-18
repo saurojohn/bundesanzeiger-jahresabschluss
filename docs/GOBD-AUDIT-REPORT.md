@@ -3376,6 +3376,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
 | TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal**. Für den Mehrinstanz-Betrieb (M4/Hetzner) `pg_advisory_xact_lock(kanzleiId)` um Einfügen **und** Hashen — sonst verzweigt die Kette bei zwei Instanzen erneut (Nachtrag 41) | Dev + Compliance | vor M4-Deployment |
 | TODO-8.14 | **Ungeklärt:** Eintrag `seq=249` — der Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet für denselben Eintrag einen anderen Hash. Nur durch Instrumentieren des Schreibpfads isolierbar (Nachtrag 41) | Dev + Compliance | Sprint 5 |
+| TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Jahresabschluss — gemessen 2 Signaturen + 5 WORM-Objekte bei `status: DRAFT`. Entscheidung: zulässig (Modell braucht ein trennendes Feld) oder unzulässig (Sperre analog `sign-abschluss`) (Nachtrag 42) | Fachbereich + Compliance | **vor dem Pilot** |
 
 ---
 
@@ -4174,6 +4175,94 @@ sichtbar, statt in einer Notiz zu verschwinden. TODO-8.14.
 |---|---|---|---|
 | TODO-8.13 | `AuditIntegrityService` serialisiert **prozesslokal** (`private chain`). Für den Mehrinstanz-Betrieb (M4, Hetzner) eine `pg_advisory_xact_lock(kanzleiId)` um **Einfügen + Hashen** einführen — sonst verzweigt die Kette bei zwei Instanzen erneut | Dev + Compliance | vor M4-Deployment |
 | TODO-8.14 | Eintrag `seq=249`: Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet einen anderen Hash. Felder zwischen Schreib- und Prüfzeitpunkt vergleichen — derzeit nur durch Instrumentieren des Schreibpfads isolierbar | Dev + Compliance | Sprint 5 |
+
+---
+
+### Nachtrag 2026-10-18 (Nachtrag 42): Die Sperre aus Nachtrag 35 hat zwei Seiten Türen — und der Entwurfs-PDF-Fall gilt für **vier** Routen, nicht für eine
+
+Eine Team-Inventur aller Routen (`114 Routen, 38 ohne jeden Backend-Test,
+33 %`) hat drei Pfade benannt, die zur Klasse der bereits belegten Defekte
+gehören. Alle drei sind gemessen.
+
+#### Befund A: Der Entwurfs-PDF-Fall betrifft vier Routen
+
+Nachtrag 35 hat den Fall am Jahresabschluss dokumentiert und als
+Entscheidung an den Nutzer gegeben (TODO-8.9). Gemessen bestätigt, und
+zugleich **erweitert**:
+
+```
+POST /pdf/anhang/:id/generate   (Anhang steht auf DRAFT)
+  HTTP 200
+  retentionExpires: 2036-10-15
+```
+
+Im Quelltext geprüft: **keiner** der vier PDF-Generatoren prüft den
+Status — `generateBilanzPdf`, `generateGuVPdf`, `generateAnhangPdf`,
+`generateAbschlussPdf` laden die Entität und rendern. Jede von ihnen legt
+für einen `DRAFT`-Satz ein Objekt mit zehn Jahre Object-Lock ab.
+
+**Die Entscheidung in TODO-8.9 gilt also für vier Endpunkte, nicht für
+einen.** Das ändert ihre Dringlichkeit: es ist kein Einzelfall, sondern die
+Regel des PDF-Service.
+
+#### Befund B: Die `FINALIZED`-Sperre aus Nachtrag 35 ist umgehbar
+
+Nachtrag 35 hat `signAbschluss` auf `FINALIZED` festgelegt: eine qeS darf
+nur auf einen abgeschlossenen Jahresabschluss. Gemessen:
+
+```
+Jahresabschluss: status=DRAFT, abgeschlossenAm=null
+
+POST /signatur/sign-guv       (GuV gehört zu diesem Abschluss)     -> 200
+POST /signatur/sign-anhang    (Anhang gehört zu diesem Abschluss)  -> 200
+
+Jahresabschluss danach:
+  status=DRAFT   abgeschlossenAm=null   signiertAm=null
+
+Signatur-Records: 2
+  entityType=null entityId=null jahresabschlussId=<der Abschluss>   ← beide
+WORM-Objekte: 5, alle bis 2036
+```
+
+**Man muss den Jahresabschluss gar nicht signieren.** Man signiert seine
+Bestandteile. Beide Routen haben **keinerlei Statusprüfung**, und
+`resolveJahresabschlussId` hängt die Signatur an den Jahresabschluss.
+
+Ergebnis: eine Jahresabschluss, der **nie abgeschlossen wurde** und dennoch
+zwei Signaturen und fünf zehn Jahre gesperrte Objekte trägt — und deren
+eigener Datensatz `status: DRAFT` meldet. **Derselbe selbstwidersprüchliche
+Zustand wie bei `signiertAm: null` in Nachtrag 35**, nur über einen anderen
+Weg.
+
+**Die Sperre ist damit nicht falsch, aber unvollständig.** Sie schützt den
+einen Weg und lässt zwei offen.
+
+#### Warum das eine Entscheidung ist und keine Korrektur
+
+Zwei Lesarten, beide vertretbar — und die Codebasis zwingt zur Wahl:
+
+| | dafür | dagegen |
+|---|---|---|
+| **Komponenten-Signatur** | Eine Wirtschaftsprüferin prüft eine GuV lange vor dem Abschluss. Das zu verbieten zerstört den Arbeitsablauf. | Die Signatur wird auf der Abschluss-Achse abgelegt und erscheint damit in der Beweiskette des Jahresabschlusses. Ein nie abgeschlossener Abschluss sammelt so „Signaturen". |
+| **Entwurfs-PDF** | Eine Vorschau zu drucken ist ein berechtigter Bedarf. | Das Beweis-Archiv bekommt Entwürfe, die ein Auditor für einen Abschluss halten könnte — und die zehn Jahre nicht entfernbar sind. |
+
+**Nicht umgesetzt.** Beides zu „reparieren" hieße, eine Fachregel zu
+erfinden. Die Varianten für das PDF stehen in TODO-8.9 (a sperren /
+b unterscheiden / c kennzeichnen); für die Signatur ist neu zu entscheiden,
+ob eine Komponentensignatur am **nicht abgeschlossenen** Aggregat überhaupt
+zulässig ist.
+
+#### Was sich unabhängig davon messen lässt
+
+Unabhängig von beiden Entscheidungen ist **beobachtbar**: Die Oberfläche
+und die Antwort zeigen den Widerspruch nicht. `status: DRAFT` neben zwei
+Signaturen auf derselben Achse ist im Datenmodell nicht unterscheidbar von
+„korrekt signiert" — es gibt kein Feld, das „signiert" sagt.
+
+| ID | Aufgabe | Owner | Frist |
+|---|---|---|---|
+| TODO-8.9 | **Entwurfs-PDF, vier Routen**: `pdf/{bilanz,guv,anhang,abschluss}/:id/generate` legen ohne Statusprüfung ein 10-Jahres-Objekt im Beweis-Archiv ab. Varianten a/b/c in Nachtrag 35 — gilt für alle vier, nicht nur den Jahresabschluss | Produkt + Compliance | **vor dem Pilot** |
+| TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Abschluss. Entscheidung: zulässig (dann braucht das Modell ein Feld, das „Aggregat signiert" von „Bestandteil geprüft" trennt) oder unzulässig (dann Sperre analog zu `sign-abschluss`) | Fachbereich + Compliance | **vor dem Pilot** |
 
 ---
 

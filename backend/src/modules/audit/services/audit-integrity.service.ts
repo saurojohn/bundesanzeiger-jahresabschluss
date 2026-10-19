@@ -33,6 +33,22 @@ import { PrismaService } from '../../../prisma/prisma.service';
  * erkennt das und liefert "PARTIAL" als Status (Chain nur für neue
  * Einträge verifizierbar).
  */
+/**
+ * Fremdschluessel, die die Datenbank von sich aus auf `NULL` setzen kann,
+ * wenn das referenzierte Objekt geloescht wird (Prisma-Default `SetNull`
+ * bei optionalen Relationen). Sie sind **Referenzen**, kein Inhalt, und
+ * duerfen deshalb nicht in den Hash eingehen — sonst bricht die Kette beim
+ * Loeschen eines Mandanten dauerhaft.
+ *
+ * Siehe `canonicalizeForHash()` und Nachtrag 54.
+ */
+const AUDIT_REFERENZ_FELDER: ReadonlySet<string> = new Set([
+  'mandantId',
+  'userId',
+  'jahresabschlussId',
+  'kanzleiId',
+]);
+
 @Injectable()
 export class AuditIntegrityService {
   private readonly logger = new Logger(AuditIntegrityService.name);
@@ -415,6 +431,37 @@ export class AuditIntegrityService {
         // bestehende Hash ungültig — die Spalte kam nachträglich dazu
         // und ist für die Aussage des Eintrags ohne Bedeutung.
         if (key === 'sequenz') continue;
+        // BEFUND 2026-10-19 (Nachtrag 54): Die **Fremdschluessel** gehoeren
+        // nicht in den Hash.
+        //
+        // Prisma setzt bei optionalen Relationen `onDelete: SetNull` — und
+        // `AuditLog` verweist ueber `mandantId` auf `Mandant`. Wird ein
+        // Mandant geloescht, setzt die **Datenbank** `AuditLog.mandantId` auf
+        // NULL. Der gespeicherte Hash bleibt unveraendert — Hashes sind
+        // unveraenderlich —, und der Eintrag passt nicht mehr zu seinem
+        // eigenen Hash.
+        //
+        // Reproduktion ueber die oeffentliche API, vier Schritte:
+        //
+        //     (1) POST /api/mandant          -> Audit-Eintrag mit mandantId=<id>
+        //     (2) DELETE /api/mandant/<id>   -> 204
+        //     (3) AuditLog.mandantId ist jetzt NULL, entryHash unveraendert
+        //     (4) GET /api/audit/integrity   -> BROKEN
+        //
+        // Damit war **jedes Loeschen eines Mandanten** eine dauerhafte
+        // Beschaedigung der Audit-Kette seiner Kanzlei — und BROKEN sieht
+        // fuer einen Auditor wie Manipulation aus. Alles nach dem Bruch ist
+        // nicht mehr verifizierbar.
+        //
+        // Der Hash schuetzt den **Inhalt** eines Eintrags: die Aktion, die
+        // Entitaet, `previousState`/`newState`, IP, User-Agent, Zeitpunkt.
+        // Ein Fremdschluessel ist eine **Referenz** auf eine Entitaet, die
+        // auch verschwinden darf — und die Datenbank aendert sie von sich
+        // aus. Dass die Identitaet der Entitaet trotzdem geschuetzt bleibt,
+        // liegt am Audit-DTO: `toAuditDto()` legt die `id` (und beim
+        // Mandant auch die `kanzleiId`) in `newState`/`previousState` — also
+        // **im gehashten Inhalt**.
+        if (AUDIT_REFERENZ_FELDER.has(key)) continue;
         result[key] = this.canonicalizeForHash(source[key]);
       }
       return result;

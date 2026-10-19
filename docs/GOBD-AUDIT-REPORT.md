@@ -3376,6 +3376,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
 | TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | TODO-8.14 | **Ungeklärt, eingegrenzt (Nachtrag 43):** Der Eintrag `seq=249` wurde **einmal** gehasht, mit `mandantId="074e…"` und einem before/after-`newState`. In der Datenbank steht `mandantId = null` und ein **Mandant-Schnappschuss** als `newState`. Die Anwendung hat **genau eine** `auditLog.update`-Stelle (die Hash-Schreibung selbst). Die Zeile wurde also von außerhalb dieser Anwendung verändert — Beleg unten | Dev + Compliance | Sprint 5 |
+| ~~TODO-8.14~~ | ~~Zweiter Schreiber auf der Audit-Kette identifizieren~~ — **erledigt in Nachtrag 54**: es war die **Datenbank** (Prisma `SetNull` auf `AuditLog.mandantId` beim Löschen eines Mandanten), nicht ein fremder Prozess. Der Hash schützt jetzt den Inhalt, nicht die veränderbaren Fremdschlüssel | — | erledigt |
 | TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Jahresabschluss — gemessen 2 Signaturen + 5 WORM-Objekte bei `status: DRAFT`. Entscheidung: zulässig (Modell braucht ein trennendes Feld) oder unzulässig (Sperre analog `sign-abschluss`) (Nachtrag 42) | Fachbereich + Compliance | **vor dem Pilot** |
 
 ---
@@ -5129,6 +5130,102 @@ Alle ✅.
 
 **Die Liste ist damit abgearbeitet.** TODO-8.19 kann als erledigt gelten —
 außer den beiden Fachentscheidungen, die ausdrücklich nicht meine sind.
+
+---
+
+### Nachtrag 2026-10-19 (Nachtrag 54): Jedes Löschen eines Mandanten hat die Audit-Kette seiner Kanzlei **dauerhaft** zerstört
+
+**TODO-8.14 ist damit geschlossen — und die Ursache ist kein „fremder
+Schreiber", sondern die Datenbank selbst.**
+
+#### Die Reproduktion (vier Schritte, nur über die öffentliche API)
+
+```
+(1) POST   /api/mandant          -> 201, Audit-Eintrag mit mandantId=<id>
+                                      (der Hash deckt den Zeileninhalt ab)
+(2) DELETE /api/mandant/<id>      -> 204
+(3) AuditLog.mandantId ist jetzt NULL, entryHash unveraendert
+(4) GET    /api/audit/integrity   -> BROKEN
+```
+
+#### Die Ursache
+
+`AuditLog.mandantId` ist ein **Fremdschlüssel** auf `Mandant`. Prisma setzt
+bei optionalen Relationen `onDelete: SetNull` — **die Datenbank** setzt die
+Spalte auf NULL, wenn der Mandant gelöscht wird.
+
+Und `mandantId` war Teil des **gehashten Inhalts**. Der gespeicherte Hash
+passte damit nach dem Löschen nicht mehr zum Datensatz — und Hashes sind
+unveränderlich, es repariert sich nicht.
+
+#### Zwei Folgen, beide schwer
+
+1. **Die Kette bricht dauerhaft.** `verifyIntegrity()` bricht beim ersten
+   inkonsistenten Knoten ab — **jeder Eintrag danach ist nicht mehr
+   verifizierbar.** Und weil der Bruch von einer ganz normalen
+   Fachoperation stammt (Mandant löschen), sieht er für einen Auditor
+   **aus wie Manipulation**.
+
+2. **Das Löschen ist eine ganz normale Funktion.** `DELETE /api/mandant/:id`
+   existiert, ist freigegeben und wird von Tests benutzt. Das ist kein
+   Exotik-Fall, sondern Normalbetrieb.
+
+#### Und wie ich es fast nicht gefunden hätte
+
+Der Einzelfall war lange als „unbekannter zweiter Schreiber" im Konto
+(„die Zeile wurde von außerhalb der Anwendung verändert"). Diese
+Erklärung war **falsch** — sie entstand aus zwei Messfehlern:
+
+1. Mein Vergleichsskript hat **nur die Top-Level-Schlüssel** sortiert; die
+   Produktions-Kanonisierung sortiert **rekursiv**. Die gemeldete
+   Abweichung in `newState` war mein Skript, nicht die Datenbank.
+2. Ich hatte `sequenz` (BIGINT) mit `=== 249` verglichen — `BigInt !== Number`
+   — und deshalb „Eintrag nicht gefunden" gelesen, während er da war.
+
+Erst als ich **die Produktionsfunktion selbst** aufrief
+(`service.serializeForHashing()`, private, aber aufrufbar) statt sie
+nachzubauen, wurde das Bild klar.
+
+**Merksatz:** Wer eine Funktion zum Vergleich nachbaut, misst die
+Nachbildung. Der erste Unterschied, den man findet, ist fast immer der
+Unterschied zwischen der Nachbildung und dem Original.
+
+#### Behoben
+
+Der Hash schützt jetzt den **Inhalt** eines Eintrags — Aktion, Entität,
+`previousState`/`newState`, IP, User-Agent, Zeitpunkt — und **nicht** die
+**Referenzen**, die die Datenbank von sich aus ändert:
+
+```ts
+const AUDIT_REFERENZ_FELDER: ReadonlySet<string> = new Set([
+  'mandantId', 'userId', 'jahresabschlussId', 'kanzleiId',
+]);
+```
+
+**Dass die Identität der Entität trotzdem geschützt bleibt, liegt am
+Audit-DTO:** `toAuditDto()` schreibt die `id` (beim Mandant auch die
+`kanzleiId`) in `newState`/`previousState` — also **in den gehashten
+Inhalt**. Der Ausschluss der Referenz kostet also keine Information.
+
+**Und das Verhalten ist richtig:** Nach dem Löschen bleibt die
+Aufzeichnung „Mandant wurde angelegt" erhalten, nur ohne Verweis auf einen
+nicht mehr existierenden Mandanten. Genau das wollte die Datenbank mit
+`SetNull` erreichen — sie hat es nur auch den Hash kaputt gemacht.
+
+#### Negativprobe
+
+Ausschluss der Fremdschlüssel entfernt, Server neu gestartet:
+
+```
+× die Kette bleibt nach dem Löschen eines Mandanten intakt
+    nach dem Löschen eines Mandanten: BROKEN heisst, dass die Datenbank
+    den gehashten Inhalt veraendert hat — ...
+    expected 'BROKEN' to be 'OK'
+```
+
+Regressions-test: `audit-kette-mandant-loeschung.e2e.spec.ts` — legt einen
+Mandanten an, prüft die Kette, löscht ihn, prüft die Kette **und** dass der
+Audit-Eintrag mit `mandantId = null` erhalten bleibt.
 
 ---
 

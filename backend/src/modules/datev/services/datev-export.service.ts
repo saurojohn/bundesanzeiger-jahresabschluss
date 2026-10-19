@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -21,6 +20,7 @@ import type {
   GenerateSachkontenResponse,
 } from '../dto/datev-response.dto';
 import type { GenerateDatevDto, GenerateSachkontenDto } from '../dto/generate-datev.dto';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface DatevExportContext {
   ip?: string | null;
@@ -136,7 +136,7 @@ export class DatevExportService {
     const skrPlan: SkrPlan = args.skrPlan ?? 'SKR04';
     const sachkontenlaenge: 4 | 5 = args.sachkontenlaenge ?? 4;
 
-    this.assertMandantAccess(args.mandantId, user);
+    assertMandantAccess(args.mandantId, user);
 
     // 2. GuV laden.
     const guv = await this.guvRepository.findWithPositionen(args.guvId, args.mandantId);
@@ -416,7 +416,7 @@ export class DatevExportService {
   }): Promise<DatevMappingPreviewResponse> {
     const skrPlan: SkrPlan = args.skrPlan ?? 'SKR04';
 
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
 
     const guv = await this.guvRepository.findWithPositionen(args.guvId, args.mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
@@ -467,13 +467,6 @@ export class DatevExportService {
   // Private helpers
   // ===========================================================================
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   private writeHeader(
     writer: DatevCsvWriter,

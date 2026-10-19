@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -34,6 +33,7 @@ import {
 import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export type GuVSummaryWithWorm = GuVWithoutPositionen & {
   wormObjectKey: string | null;
@@ -75,7 +75,7 @@ export class GuVService {
     user: AuthUser,
     context: GuVServiceContext,
   ): Promise<CreateGuVResponse> {
-    this.assertMandantAccess(dto.mandantId, user);
+    assertMandantAccess(dto.mandantId, user);
     await this.assertMandantBearbeitbar(dto.mandantId, 'GuV anlegen');
 
     // Berechne das Jahresergebnis aus den Positionen.
@@ -164,7 +164,7 @@ export class GuVService {
     | PaginatedResult<GuVSummaryWithWorm>
     | LegacyPaginatedResult<GuVSummaryWithWorm>
   > {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
 
     if (pagination?.page !== undefined && pagination?.cursor === undefined) {
       return this.findAllLegacy({
@@ -199,7 +199,7 @@ export class GuVService {
     cursor?: string;
     pageSize?: number;
   }): Promise<PaginatedResult<GuVSummaryWithWorm>> {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
     const pageSize = Math.min(args.pageSize ?? 20, 100);
     const [items, total] = await Promise.all([
       this.guvRepository.findByMandantPaginated({
@@ -231,7 +231,7 @@ export class GuVService {
     page: number;
     pageSize?: number;
   }): Promise<LegacyPaginatedResult<GuVSummaryWithWorm>> {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
     const pageSize = Math.min(args.pageSize ?? 20, 100);
     const offset = (args.page - 1) * pageSize;
     const [items, total] = await Promise.all([
@@ -246,7 +246,7 @@ export class GuVService {
   }
 
   async findOne(id: string, mandantId: string, user: AuthUser): Promise<GuVEntity> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const guv = await this.guvRepository.findWithPositionen(id, mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
     return guv;
@@ -259,7 +259,7 @@ export class GuVService {
     user: AuthUser,
     context: GuVServiceContext,
   ): Promise<GuVEntity> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'GuV ändern');
 
     const previous = await this.guvRepository.findWithPositionen(id, mandantId);
@@ -340,7 +340,7 @@ export class GuVService {
     mandantId: string,
     user: AuthUser,
   ): Promise<GuVValidierungDto> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const guv = await this.guvRepository.findWithPositionen(id, mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
     return this.computeValidation(guv);
@@ -352,7 +352,7 @@ export class GuVService {
     user: AuthUser,
     context: GuVServiceContext,
   ): Promise<void> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'GuV löschen');
 
     const existing = await this.guvRepository.findById(id, mandantId);
@@ -387,13 +387,6 @@ export class GuVService {
   // Private helpers
   // ===========================================================================
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   /**
    * Baut ein temporäres GuV-Objekt für die Validierung (ohne DB-Roundtrip).

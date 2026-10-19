@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -28,6 +27,7 @@ import { UpdateAnhangDto } from '../dto/update-anhang.dto';
 import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 /**
  * Listenansicht: alle Skalarfelder, die Anzahl der Abschnitte (`_count`) und
@@ -68,7 +68,7 @@ export class AnhangService {
     user: AuthUser,
     context: AnhangServiceContext,
   ): Promise<AnhangEntity> {
-    this.assertMandantAccess(dto.mandantId, user);
+    assertMandantAccess(dto.mandantId, user);
     await this.assertMandantBearbeitbar(dto.mandantId, 'Anhang anlegen');
 
     let anhang: AnhangEntity;
@@ -144,7 +144,7 @@ export class AnhangService {
     | PaginatedResult<AnhangSummaryWithWorm>
     | LegacyPaginatedResult<AnhangSummaryWithWorm>
   > {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
 
     if (pagination?.page !== undefined && pagination?.cursor === undefined) {
       return this.findAllLegacy({
@@ -179,7 +179,7 @@ export class AnhangService {
     cursor?: string;
     pageSize?: number;
   }): Promise<PaginatedResult<AnhangSummaryWithWorm>> {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
     const pageSize = Math.min(args.pageSize ?? 20, 100);
     const [items, total] = await Promise.all([
       this.anhangRepository.findByMandantPaginated({
@@ -211,7 +211,7 @@ export class AnhangService {
     page: number;
     pageSize?: number;
   }): Promise<LegacyPaginatedResult<AnhangSummaryWithWorm>> {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
     const pageSize = Math.min(args.pageSize ?? 20, 100);
     const offset = (args.page - 1) * pageSize;
     const [items, total] = await Promise.all([
@@ -230,7 +230,7 @@ export class AnhangService {
     mandantId: string,
     user: AuthUser,
   ): Promise<AnhangEntity & { offenePlatzhalter: string[] }> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const anhang = await this.anhangRepository.findWithAbschnitte(id, mandantId);
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
     // BEFUND 2026-10-17: Ein aus der Vorlage angelegter Anhang speichert
@@ -247,7 +247,7 @@ export class AnhangService {
     user: AuthUser,
     context: AnhangServiceContext,
   ): Promise<AnhangEntity> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'Anhang ändern');
 
     const previous = await this.anhangRepository.findWithAbschnitte(id, mandantId);
@@ -291,7 +291,7 @@ export class AnhangService {
     user: AuthUser,
     context: AnhangServiceContext,
   ): Promise<void> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'Anhang löschen');
 
     const existing = await this.anhangRepository.findById(id, mandantId);
@@ -321,13 +321,6 @@ export class AnhangService {
   // Private helpers
   // ===========================================================================
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   /**
    * Der Mandant darf nicht archiviert sein.

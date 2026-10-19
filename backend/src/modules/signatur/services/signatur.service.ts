@@ -2,7 +2,6 @@ import type { Prisma } from '@prisma/client';
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -45,6 +44,7 @@ import { P12Service } from './p12.service';
 import type { LegalValidity } from '../interfaces/signature.types';
 import { TsaClientService } from './tsa-client.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 /**
  * Request-Context für Signatur-Endpoints.
@@ -231,7 +231,7 @@ export class SignaturService {
     mandantId: string,
     user: AuthUser,
   ): Promise<SignaturStatusDto> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertEntityExists(entityType, entityId, mandantId);
 
     const signaturen = await this.signatureRepository.findByEntity(
@@ -321,7 +321,7 @@ export class SignaturService {
     mandantId: string,
     user: AuthUser,
   ): Promise<SignaturEintragDto[]> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertEntityExists(entityType, entityId, mandantId);
 
     const eintraege = await this.signatureRepository.findByEntity(
@@ -745,7 +745,7 @@ export class SignaturService {
     const signingTime = new Date();
 
     // 1) Mandant-Trennung
-    this.assertMandantAccess(args.mandantId, user);
+    assertMandantAccess(args.mandantId, user);
 
     // 2) P12-Parsing
     const p12Buffer = Buffer.from(args.p12Base64, 'base64');
@@ -1013,13 +1013,6 @@ export class SignaturService {
   // Private helpers
   // ===========================================================================
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   /**
    * Archiv-Guard fuer das Signieren (§ 147 AO, Entscheidung 2026-10-14).

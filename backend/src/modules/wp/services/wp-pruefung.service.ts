@@ -17,6 +17,7 @@ import type {
 import { WPRepository } from '../wp.repository';
 import { IdwPruefungService } from './idw-pruefung.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface WPPruefungServiceContext {
   ip?: string | null;
@@ -79,7 +80,7 @@ export class WPPruefungService {
     if (!mandantId) {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'WP-Prüfung starten');
 
     if (args.guvId) {
@@ -250,7 +251,7 @@ export class WPPruefungService {
     if (!mandantId) {
       throw new NotFoundException('Mandant nicht auflösbar');
     }
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'WP-Prüfung abschließen');
 
     const [results, notizen] = await Promise.all([
@@ -290,7 +291,7 @@ export class WPPruefungService {
     if (!mandantId) {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     return this.wpRepository.findPruefungsAbschluesseByBilanz(bilanzId);
   }
 
@@ -310,13 +311,6 @@ export class WPPruefungService {
     }
   }
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessible = new Set(user.mandanten.map((m) => m.id));
-    if (!accessible.has(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   private formatMarkdownReport(
     pruefung: WPPruefungsAbschlussEntity,

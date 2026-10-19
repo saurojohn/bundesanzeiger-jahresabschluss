@@ -1,6 +1,5 @@
 import {
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -20,6 +19,7 @@ import { GuVService } from '../../guv/services/guv.service';
 import { AnhangService } from '../../anhang/services/anhang.service';
 import { WormObjectRepository } from '../../storage/repositories/worm-object.repository';
 import type { AuthUser } from '../../auth/types/auth-user.types';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 /**
  * Jahresabschluss — das Aggregat nach § 314 HGB.
@@ -74,7 +74,7 @@ export class AbschlussService {
     user: AuthUser,
     context: { ip?: string | null; userAgent?: string | null },
   ) {
-    this.assertMandantAccess(dto.mandantId, user);
+    assertMandantAccess(dto.mandantId, user);
 
     const mandant = await this.prisma.mandant.findUnique({
       where: { id: dto.mandantId },
@@ -172,7 +172,7 @@ export class AbschlussService {
    * nicht aus einem freien Parameter.
    */
   async findAll(mandantId: string, user: AuthUser) {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const eintraege = await this.prisma.jahresabschluss.findMany({
       where: { mandantId },
       orderBy: [{ geschaeftsjahr: 'desc' }],
@@ -182,7 +182,7 @@ export class AbschlussService {
   }
 
   async findOne(id: string, mandantId: string, user: AuthUser) {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const abschluss = await this.prisma.jahresabschluss.findFirst({
       where: { id, mandantId },
       include: { bilanz: true, guv: true, anhang: true },
@@ -220,7 +220,7 @@ export class AbschlussService {
     user: AuthUser,
     context: { ip?: string | null; userAgent?: string | null },
   ): Promise<FinalizeErgebnisDto> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
 
     const abschluss = await this.prisma.jahresabschluss.findFirst({
       where: { id, mandantId },
@@ -456,20 +456,4 @@ export class AbschlussService {
     };
   }
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    // BEFUND 2026-10-17: stand hier `BadRequestException` (400). Neun
-    // Geschwisterservices (bilanz, guv, anhang, pdf, datev, datev-import,
-    // ebilanz, wp-pruefung, idw-pruefung, wp-notiz) werfen fuer **denselben
-    // Sachverhalt** `ForbiddenException` (403). Der neue Service war die
-    // einzige Abweichung.
-    //
-    // Der Unterschied ist nicht kosmetisch: 400 sagt dem Client "deine
-    // Anfrage ist fehlerhaft" (Formularfehler, Eingabe korrigieren), 403
-    // sagt "du darfst das nicht" (Rollen-/Zugriffsproblem). Ein Client, der
-    // 400 bekommt, versucht typischerweise erneut — mit derselben Wirkung.
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const zugreifbar = (user.mandanten ?? []).some((m) => m.id === mandantId);
-    if (zugreifbar) return;
-    throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-  }
 }

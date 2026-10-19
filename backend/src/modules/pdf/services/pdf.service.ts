@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -29,6 +28,7 @@ import type {
   PdfGenerationRequest,
   PdfGenerationResponse,
 } from '../interfaces/pdf-document.interface';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface PdfServiceContext {
   ip?: string | null;
@@ -76,7 +76,7 @@ export class PdfService {
     user: AuthUser,
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const bilanz = await this.bilanzRepository.findWithPositionen(bilanzId, mandantId);
     if (!bilanz) throw new NotFoundException('Bilanz nicht gefunden');
 
@@ -127,7 +127,7 @@ export class PdfService {
     user: AuthUser,
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const guv = await this.guvRepository.findWithPositionen(guvId, mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
     // BEFUND 2026-10-11: Das Vollstaendigkeits-Gate war nur fuer die Bilanz
@@ -183,7 +183,7 @@ export class PdfService {
     user: AuthUser,
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const anhang = await this.anhangRepository.findWithAbschnitte(anhangId, mandantId);
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
     // BEFUND 2026-10-11: wie beim GuV — ein Anhang ohne Abschnitte erzeugte
@@ -235,7 +235,7 @@ export class PdfService {
     user: AuthUser,
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
 
     // Repository-Zugriff via Prisma direkt — dieser Pfad ist eng
     // an die zentrale `Jahresabschluss`-Entity gekoppelt (kein
@@ -326,7 +326,7 @@ export class PdfService {
     contentType: string;
     filename: string;
   }> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
 
     // Existenz der Entity (mandant-gefiltert) prüfen
     await this.assertEntityExists(entityType, entityId, mandantId);
@@ -762,14 +762,4 @@ export class PdfService {
     }
   }
 
-  /**
-   * Erzwingt Mandant-Trennung. SYSTEM_ADMIN umgeht die Prüfung.
-   */
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 }

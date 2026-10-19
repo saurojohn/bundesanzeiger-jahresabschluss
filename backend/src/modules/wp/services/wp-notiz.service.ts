@@ -14,6 +14,7 @@ import { WP_NOTIZ_ACK_STATUS, type WPNotizStatus } from '../constants/wp-status.
 import type { WPNotizEntity } from '../wp.repository';
 import { WPRepository } from '../wp.repository';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface WPNotizServiceContext {
   ip?: string | null;
@@ -106,7 +107,7 @@ export class WPNotizService {
     if (!mandantId) {
       throw new NotFoundException('Referenzierte Bilanz/GuV/Position nicht gefunden');
     }
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'WP-Notiz anlegen');
 
     const notiz = await this.wpRepository.createNotiz({
@@ -159,7 +160,7 @@ export class WPNotizService {
     if (!mandantId) {
       throw new NotFoundException('Mandant für WP-Notiz nicht auflösbar');
     }
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'WP-Notiz-Status ändern');
 
     // 4-Augen-Prinzip: Self-Acknowledgement ist verboten.
@@ -219,7 +220,7 @@ export class WPNotizService {
       if (!mandantId) {
         throw new NotFoundException('Bilanz nicht gefunden');
       }
-      this.assertMandantAccess(mandantId, user);
+      assertMandantAccess(mandantId, user);
     }
 
     if (args.guvId) {
@@ -227,7 +228,7 @@ export class WPNotizService {
       if (!mandantId) {
         throw new NotFoundException('GuV nicht gefunden');
       }
-      this.assertMandantAccess(mandantId, user);
+      assertMandantAccess(mandantId, user);
     }
 
     // Modern: Cursor-Pagination
@@ -279,13 +280,6 @@ export class WPNotizService {
     }
   }
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessible = new Set(user.mandanten.map((m) => m.id));
-    if (!accessible.has(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   private async resolveMandantIdForNotiz(
     notiz: WPNotizEntity,

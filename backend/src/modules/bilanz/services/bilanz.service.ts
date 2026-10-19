@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -33,6 +32,7 @@ import { saldoStimmt } from '../../../common/utils/saldo';
 import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 /**
  * Listenansicht: Skalarfelder, Salden-Summen (aktivaSumme/passivaSumme) und
@@ -90,7 +90,7 @@ export class BilanzService {
     user: AuthUser,
     context: BilanzServiceContext,
   ): Promise<CreateBilanzResponse> {
-    this.assertMandantAccess(dto.mandantId, user);
+    assertMandantAccess(dto.mandantId, user);
     await this.assertMandantBearbeitbar(dto.mandantId, 'Bilanz anlegen');
 
     // Eindeutigkeit (mandantId, geschaeftsjahr) — Repository wirft
@@ -179,7 +179,7 @@ export class BilanzService {
     | PaginatedResult<BilanzSummaryWithWorm>
     | LegacyPaginatedResult<BilanzSummaryWithWorm>
   > {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
 
     // Legacy Offset-Modus: explizites `page` ohne `cursor`
     if (pagination?.page !== undefined && pagination?.cursor === undefined) {
@@ -220,7 +220,7 @@ export class BilanzService {
     cursor?: string;
     pageSize?: number;
   }): Promise<PaginatedResult<BilanzSummaryWithWorm>> {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
     const pageSize = Math.min(args.pageSize ?? 20, 100);
     const [items, total] = await Promise.all([
       this.bilanzRepository.findByMandantPaginated({
@@ -252,7 +252,7 @@ export class BilanzService {
     page: number;
     pageSize?: number;
   }): Promise<LegacyPaginatedResult<BilanzSummaryWithWorm>> {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
     const pageSize = Math.min(args.pageSize ?? 20, 100);
     const offset = (args.page - 1) * pageSize;
     const [items, total] = await Promise.all([
@@ -274,7 +274,7 @@ export class BilanzService {
     mandantId: string,
     user: AuthUser,
   ): Promise<BilanzEntity> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const bilanz = await this.bilanzRepository.findWithPositionen(id, mandantId);
     if (!bilanz) {
       throw new NotFoundException('Bilanz nicht gefunden');
@@ -295,7 +295,7 @@ export class BilanzService {
     user: AuthUser,
     context: BilanzServiceContext,
   ): Promise<BilanzEntity> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'Bilanz ändern');
 
     const previous = await this.bilanzRepository.findWithPositionen(id, mandantId);
@@ -355,7 +355,7 @@ export class BilanzService {
     mandantId: string,
     user: AuthUser,
   ): Promise<BilanzValidierungDto> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     const bilanz = await this.bilanzRepository.findWithPositionen(id, mandantId);
     if (!bilanz) {
       throw new NotFoundException('Bilanz nicht gefunden');
@@ -372,7 +372,7 @@ export class BilanzService {
     user: AuthUser,
     context: BilanzServiceContext,
   ): Promise<void> {
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'Bilanz löschen');
 
     const existing = await this.bilanzRepository.findById(id, mandantId);
@@ -404,16 +404,6 @@ export class BilanzService {
   // Private helpers
   // ===========================================================================
 
-  /**
-   * Erzwingt Mandant-Trennung. SYSTEM_ADMIN umgeht die Prüfung.
-   */
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   /**
    * Berechnet Saldo + Pflichtfeld-Check für eine Bilanz.

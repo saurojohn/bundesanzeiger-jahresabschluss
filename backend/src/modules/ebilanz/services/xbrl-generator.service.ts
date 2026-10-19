@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -35,6 +34,7 @@ import {
   UNIT_REF_EUR,
 } from '../mappings/hgb-kt-v6.types';
 import { saldoStimmt, SALDO_TOLERANZ_CENTS } from '../../../common/utils/saldo';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface XbrlGeneratorContext {
   ip?: string | null;
@@ -130,7 +130,7 @@ export class XbrlGeneratorService {
     user: AuthUser,
     context: XbrlGeneratorContext,
   ): Promise<GenerateEbilanzResponse> {
-    this.assertMandantAccess(args.mandantId, user);
+    assertMandantAccess(args.mandantId, user);
 
     // 2. Bilanz / GuV / Anhang / Mandant laden.
     const bilanz = await this.bilanzRepository.findWithPositionen(
@@ -313,7 +313,7 @@ export class XbrlGeneratorService {
     mandantId: string;
     user: AuthUser;
   }) {
-    this.assertMandantAccess(args.mandantId, args.user);
+    assertMandantAccess(args.mandantId, args.user);
 
     const bilanz = await this.bilanzRepository.findWithPositionen(
       args.bilanzId,
@@ -367,13 +367,6 @@ export class XbrlGeneratorService {
   // Private helpers
   // ===========================================================================
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   private mapBilanzPositionen(positionen: Array<{
     seite: string;

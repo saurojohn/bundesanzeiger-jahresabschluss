@@ -2606,7 +2606,7 @@ Architekturfrage — siehe TODO unten.
 
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
-| TODO-8.7 | Entscheiden: `assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code? Empfehlung: behalten, aber als „nur ohne Guard wirksam" kennzeichnen und einen Test schreiben, der den Service **direkt** (ohne HTTP) prüft | Dev + Compliance | Sprint 5 |
+| ~~TODO-8.7~~ | ~~`assertMandantAccess` — Tiefenschutz oder toter Code?~~ — **erledigt in Nachtrag 58**: die Empfehlung wurde umgesetzt und die Frage beantwortet: es war **zwoelfmal derselbe Code** (12 Kopien in 12 Services), also *ungenutzter Tiefenschutz* — eine Schranke, die im Betrieb nie wirkt und beim Refaktorieren stillschweigend verschwindet. Jetzt **eine** Implementierung (`common/utils/mandant-zugriff.ts`) und ein Test, der den Service **direkt** (ohne HTTP) prueft — genau wie hier empfohlen | — | erledigt |
 
 ---
 
@@ -3368,7 +3368,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.4 | Schema-Migration für Audit-Hash-Chain ausführen | DevOps | nach Pilot-Phase-2-Ende |
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
 | TODO-8.6 | Automatisierter monatlicher Restore-Test in CI | DevOps | Sprint 5+ |
-| TODO-8.7 | `assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code? (Nachtrag 34: über HTTP nicht erreichbar, der `MandantGuard` wirkt identisch zuerst) | Dev + Compliance | Sprint 5 |
+| ~~TODO-8.7~~ | ~~`assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code?~~ — **erledigt in Nachtrag 58**: es war **weder** Tiefenschutz **noch** toter Code, sondern **zwoelfmal derselbe Code** (12 Kopien in 12 Services). Die Antwort auf die gestellte Frage ist damit eine dritte: *ungenutzter Tiefenschutz*. Jetzt gibt es **eine** Implementierung (`common/utils/mandant-zugriff.ts`), und ein Test beweist, dass sie greift, wenn der Guard umgangen wird | — | erledigt |
 | ~~TODO-8.8~~ | ~~Audit-Trail "fire and forget" (51 Stellen)~~ — **erledigt in Nachtrag 56**: gemessen über die öffentliche API fehlte der Audit-Eintrag in **80 %** der Fälle, wenn die Antwort beim Client war; weitere 15 % hatten noch keinen Hash. Behoben: alle 51 Aufrufstellen warten jetzt, die Hash-Kette wartet auf den eigenen Eintrag, und `/health/ready` meldet das Alter des ältesten ungehashten Eintrags. Die in Nachtrag 31 vorgeschlagene **Transaktion** (Fachvorgang + Audit atomar) bleibt als Restidee dokumentiert — sie widerspricht der Reihenfolge der Hash-Kette | — | erledigt |
 | TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
@@ -5623,6 +5623,113 @@ Oberflaeche, die es gab, und die Oberflaeche war falsch.
 Zurueckgebaut: die Regel wieder in die Aufrufstellen (`canSign` bedingungslos
 setzen, `useSignaturBerechtigung` umgehen) — der Knopf erscheint wieder fuer
 jeden, und die Tests schlagen um.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 58): Die Mandantentrennung war **zwoelfmal derselbe Code** — und damit weder Tiefenschutz noch toter Code
+
+#### Die Frage, die offen war
+
+TODO-8.7: *„`assertMandantAccess` in 10 Services — Tiefenschutz oder toter
+Code?"* Die Antwort in Nachtrag 34: **über HTTP nicht erreichbar**, weil der
+`MandantGuard` identisch zuerst wirft.
+
+Die Frage hatte zwei Antworten im Sinn — *behalten* (Tiefenschutz) oder
+*entfernen* (toter Code). Es gibt eine dritte, und die ist die unbequemste:
+
+#### Die dritte Antwort: ungenutzter Tiefenschutz
+
+Gemessen: die Pruefung stand in **zwoelf Services**, jeweils als private
+Methode, jeweils mit derselben Logik und derselben Fehlermeldung:
+
+```ts
+private assertMandantAccess(mandantId: string, user: AuthUser): void {
+  if (user.globalRole === 'SYSTEM_ADMIN') return;
+  const accessibleMandantIds = user.mandanten.map((m) => m.id);
+  if (!accessibleMandantIds.includes(mandantId)) {
+    throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
+  }
+}
+```
+
+(`mandant.service.ts` ist die **dreizehnte** und eine **andere**: dort darf
+ein KANZLEI_ADMIN auch auf einen Mandanten derselben Kanzlei zugreifen, und
+das wird ueber die Datenbank geprueft. Sie bleibt dort, weil sie etwas
+anderes beantwortet.)
+
+Damit ist die Frage beantwortet:
+
+- **Kein Tiefenschutz**, weil er ueber HTTP nie wirkt — der Guard kommt
+  immer zuerst.
+- **Kein toter Code**, weil er *koennte* — intern, bei einem Job, bei einem
+  kuenftigen Aufruf ohne Guard.
+- **Ungenutzter Tiefenschutz** — eine Schranke, die in jedem normalen
+  Betriebszustand nie angeruehrt wird.
+
+**Und genau das ist das Gefaehrliche daran.** Ein Tiefenschutz, von dem
+niemand weiss, dass er existiert, wird beim Refaktorieren entfernt — und
+dann ist die Mandantentrennung weg, ohne dass jemand etwas getan haette.
+Nachtrag 34 hat das nicht bemerkt, weil die Frage auf „wirkt er?" lautete
+und die Antwort „nein, nur nicht ueber HTTP" lautete. Die Frage nach der
+**Form** war die richtige.
+
+#### Dass es zwoelf Kopien waren, war der eigentliche Befund
+
+Die Kopien waren nicht gleich — und genau das ist der Beweis, dass sich die
+Kopien auseinanderentwickelt haben. In `abschluss.service.ts` stand:
+
+```ts
+// BEFUND 2026-10-17: stand hier `BadRequestException` (400). Neun
+// Geschwisterservices ... werfen fuer **denselben Sachverhalt**
+// `ForbiddenException` (403). Der neue Service war die einzige Abweichung.
+```
+
+Der neue Service war also die **dreizehnte** Abweichung — und niemand hatte
+gemerkt, dass es ein Dutzend Kopien gibt, deren Abweichungen niemand
+vergleicht. Der Unterschied ist nicht kosmetisch: 400 sagt dem Client
+„deine Anfrage ist fehlerhaft" (Formularfehler, Eingabe korrigieren), 403
+sagt „du darfst das nicht" (Zugriffsproblem). Ein Client, der 400 bekommt,
+versucht typischerweise erneut — mit derselben Wirkung.
+
+#### Die Behebung: eine Kopie, und ein Beweis, dass sie wirkt
+
+Neu: `backend/src/common/utils/mandant-zugriff.ts`. Die zwoelf privaten
+Methoden sind entfernt, die Aufrufe gehen an die gemeinsame Funktion. Die
+Fehlermeldung ist damit an **einer** Stelle definiert — und kann nicht mehr
+auseinanderlaufen.
+
+Der zweite Teil ist der wichtigere: **der Tiefenschutz wurde benutzt, nicht
+nur behauptet.**
+
+`e2e/mandant-tiefenschutz.e2e.spec.ts` ruft den Service **direkt** auf —
+ohne HTTP, ohne Guard — und prueft:
+
+1. ein fremder Mandant wird mit **403** abgewiesen (der Service wirkt);
+2. **Gegenprobe:** der eigene Mandant wird **nicht** abgewiesen.
+
+Die Gegenprobe ist kein Formalismus. Eine Pruefung, die alles abweist, waere
+genauso nutzlos wie eine, die nichts abweist — und waere schwerer zu
+entdecken. Der Test beweist, dass die Sperre **unterscheidet**.
+
+Dazu ein Unit-Test der Funktion selbst (`mandant-zugriff.spec.ts`) mit
+fuenf Faellen, einschliesslich des in Nachtrag 40 gefundenen Details: **alle**
+Rollen desselben Mandanten zaehlen, nicht nur die erste.
+
+#### Die Negativprobe
+
+Die Pruefung zur Nicht-Funktion gemacht (`return;` statt `throw`):
+
+```
+x Mandantentrennung im Service (ohne HTTP-Guard) > weist den Zugriff auf
+  einen fremden Mandanten ab
+x assertMandantAccess > weist einen fremden Mandanten mit 403 ab
+x assertMandantAccess > weist einen Mandanten ab, zu dem der User gar keine
+  Rolle hat
+✓ Mandantentrennung im Service > laesst den Zugriff auf den eigenen Mandanten zu
+```
+
+Drei Tests rot, **die Gegenprobe gruen** — sie schlaegt genau dann nicht
+an, wenn die Sperre ehrlich arbeitet.
 
 ---
 

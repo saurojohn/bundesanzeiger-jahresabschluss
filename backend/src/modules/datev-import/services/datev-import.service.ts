@@ -29,7 +29,6 @@
  */
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -64,6 +63,7 @@ import type {
   ImportResultDto,
 } from '../dto/datev-import-response.dto';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface DatevImportContext {
   ip?: string | null;
@@ -134,7 +134,7 @@ export class DatevImportService {
     dto: PreviewDatevImportDto,
     user: AuthUser,
   ): Promise<ImportPreviewDto> {
-    this.assertMandantAccess(dto.mandantId, user);
+    assertMandantAccess(dto.mandantId, user);
     await this.assertMandantNichtArchiviert(dto.mandantId);
 
     const parsed = this.parseCsv(dto.csvBase64);
@@ -176,7 +176,7 @@ export class DatevImportService {
     user: AuthUser,
     context: DatevImportContext,
   ): Promise<ImportResultDto> {
-    this.assertMandantAccess(dto.mandantId, user);
+    assertMandantAccess(dto.mandantId, user);
     await this.assertMandantNichtArchiviert(dto.mandantId);
 
     const parsed = this.parseCsv(dto.csvBase64);
@@ -635,14 +635,4 @@ export class DatevImportService {
     return Math.round(ergebnis * 100) / 100;
   }
 
-  /**
-   * Erzwingt Mandant-Trennung. SYSTEM_ADMIN umgeht die Prüfung.
-   */
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessibleMandantIds = user.mandanten.map((m) => m.id);
-    if (!accessibleMandantIds.includes(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 }

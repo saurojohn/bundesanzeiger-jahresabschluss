@@ -20,6 +20,7 @@ import type {
 } from '../wp.repository';
 import { WPRepository } from '../wp.repository';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
 export interface IdwPruefungServiceContext {
   ip?: string | null;
@@ -75,7 +76,7 @@ export class IdwPruefungService {
     if (!bilanzMandantId) {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
-    this.assertMandantAccess(bilanzMandantId, user);
+    assertMandantAccess(bilanzMandantId, user);
     await this.assertMandantBearbeitbar(bilanzMandantId, 'Plausibilitätsregeln ausführen');
 
     let guvMandantId: string | null = null;
@@ -135,7 +136,7 @@ export class IdwPruefungService {
     if (!mandantId) {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
-    this.assertMandantAccess(mandantId, user);
+    assertMandantAccess(mandantId, user);
     return this.wpRepository.findPruefungsResultsByBilanz(bilanzId);
   }
 
@@ -276,13 +277,6 @@ export class IdwPruefungService {
     }
   }
 
-  private assertMandantAccess(mandantId: string, user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const accessible = new Set(user.mandanten.map((m) => m.id));
-    if (!accessible.has(mandantId)) {
-      throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
-    }
-  }
 
   private summarizeStatus(
     results: BilanzPruefungsResultEntity[],

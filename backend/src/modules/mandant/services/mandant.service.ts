@@ -76,7 +76,7 @@ export class MandantService {
       },
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: mandant.kanzleiId,
       mandantId: mandant.id,
@@ -258,7 +258,7 @@ export class MandantService {
       },
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: updated.kanzleiId,
       mandantId: updated.id,
@@ -387,7 +387,7 @@ export class MandantService {
     // Mandantbezug steckt stattdessen in `entityId`; `kanzleiId` haelt die
     // Kanzleizugehoerigkeit, damit der Eintrag mandant-gefiltert auffindbar
     // bleibt.
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: before.kanzleiId,
       mandantId: null,
@@ -439,7 +439,7 @@ export class MandantService {
       data: { archiviertAt: now, archiviertVonId: user.id },
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: updated.kanzleiId,
       mandantId: updated.id,
@@ -480,7 +480,7 @@ export class MandantService {
       data: { archiviertAt: null, archiviertVonId: null },
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: updated.kanzleiId,
       mandantId: updated.id,

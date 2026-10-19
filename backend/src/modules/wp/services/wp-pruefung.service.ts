@@ -105,7 +105,7 @@ export class WPPruefungService {
       { ip: context.ip ?? null, userAgent: context.userAgent ?? null },
     );
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'CREATE',
@@ -201,7 +201,7 @@ export class WPPruefungService {
       await this.wpRepository.setBilanzStatus(existing.bilanzId, 'APPROVED', user.id);
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'UPDATE',

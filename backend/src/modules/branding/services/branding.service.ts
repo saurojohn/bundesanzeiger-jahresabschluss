@@ -200,7 +200,7 @@ export class BrandingService {
     await this.cache.invalidate(`branding:${kanzleiId}`);
 
     // Audit-Trail
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'UPDATE',
@@ -290,7 +290,7 @@ export class BrandingService {
     await this.cache.invalidate(`branding:${kanzleiId}`);
 
     // Audit
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'UPDATE',
@@ -335,7 +335,7 @@ export class BrandingService {
     // Cache invalidieren (async via CacheManager)
     await this.cache.invalidate(`branding:${kanzleiId}`);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'DELETE',
@@ -387,7 +387,7 @@ export class BrandingService {
     const contentType = this.detectContentType(kanzlei.logoWormKey);
 
     // READ-Audit (für Logo-Download)
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'READ',

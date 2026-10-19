@@ -43,7 +43,7 @@ export class BillingWebhookService {
       event.providerSubscriptionId,
     );
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: null, // Webhook hat keinen User-Kontext
       kanzleiId: event.kanzleiId,
       action: 'UPDATE',

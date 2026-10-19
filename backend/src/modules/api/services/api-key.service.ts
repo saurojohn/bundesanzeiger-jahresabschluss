@@ -160,7 +160,7 @@ export class ApiKeyService {
     });
 
     // Audit
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: args.kanzleiId,
       action: 'CREATE',
@@ -236,7 +236,7 @@ export class ApiKeyService {
 
     await this.repository.revokeApiKey(apiKeyId, user.id);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: key.kanzleiId,
       action: 'DELETE',

@@ -102,31 +102,26 @@ export class AuditIntegrityService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Legt einen Eintrag in die Hash-Berechnungs-Kette ein.
+   * Legt einen Eintrag in die Hash-Berechnungs-Kette ein und gibt die
+   * Auswertung zurück.
    *
-   * Der Aufrufer bekommt die Auswertung nicht zurück — wie bisher
-   * fire-and-forget. `auditLogId` ist dabei nur noch ein Hinweis: was
-   * tatsaechlich gehasht wird, entscheidet die Datenbank
-   * (`hashNaechstenOffenen`).
+   * Der Aufrufer wartet, bis **dieser** Eintrag einen Hash hat.
+   *
+   * BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Es gab vorher zwei Wege —
+   * `enqueue()` (fire-and-forget, ohne Rückgabe) und
+   * `enqueueWithCounting()` (Promise). `enqueue()` war die Variante, die
+   * den Auslieferungszeitpunkt vom Nachweis entkoppelte, und genau sie war
+   * die Ursache dafür, dass in 80 % der Fälle **ohne** Audit-Eintrag
+   * quittiert wurde.
+   *
+   * **Die Variante ohne Wartung ist entfernt.** Es gibt jetzt nur noch
+   * einen Weg in die Kette, und dieser wartet. Damit ist der Fehler nicht
+   * mehr "korrigiert", sondern **strukturell ausgeschlossen** — wer die
+   * Kette benutzt, kann die Quittierung nicht mehr von der Nachweisführung
+   * entkoppeln.
    */
-  enqueue(_auditLogId: string): void {
-    // Der Parameter wird bewusst nicht mehr verwendet: welches Eintraege
-    // gehasht werden, entscheidet `hashNaechstenOffenen()` aus der
-    // Datenbank, nicht der Aufrufer. Er bleibt in der Signatur, damit die
-    // Aufrufstellen unveraendert bleiben koennen.
-    this.chain = this.chain
-      .then(() => this.hashNaechstenOffenen())
-      .catch((err: unknown) => {
-        this.logger.warn(`Hash-Berechnung fehlgeschlagen: ${String(err)}`);
-      });
-  }
-
-  /**
-   * Wie `enqueue`, gibt die Auswertung aber zurück — für Aufrufstellen,
-   * die den Fehler zählen wollen.
-   */
-  enqueueWithCounting(_auditLogId: string): Promise<void> {
-    const next = this.chain.then(() => this.hashNaechstenOffenen());
+  enqueueWithCounting(auditLogId: string): Promise<void> {
+    const next = this.chain.then(() => this.hashNaechstenOffenen(auditLogId));
     // Der Fehler wird weitergereicht, die Kette darf aber nicht reißen.
     this.chain = next.catch(() => undefined);
     return next.then(() => undefined);
@@ -141,9 +136,10 @@ export class AuditIntegrityService {
    * Aufruf einen frueheren Eintrag nicht ueberholen.
    *
    * Die Schleife laeuft mehrfach durch, damit ein Burst nicht nur einen
-   * Eintrag auflöst: nach jedem Hash kann der naechste offen sein.
+   * Eintrag aufloest: nach jedem Hash kann der naechste offen sein. Sie
+   * endet aber, sobald **der aufrufende Eintrag** gehasht ist (Nachtrag 56).
    */
-  private async hashNaechstenOffenen(): Promise<void> {
+  private async hashNaechstenOffenen(bisId?: string): Promise<void> {
     // Ein Durchlauf hasht den naechsten noch offenen Eintrag. Die Schleife
     // laeuft mehrfach, damit ein Burst nicht nur einen Eintrag aufloest.
     const MAX_DURCHLAEUFE = 500;
@@ -159,11 +155,51 @@ export class AuditIntegrityService {
       });
       if (!offen) return;
       await this.computeHashForEntry(offen.id);
+      // BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Der Durchlauf endet
+      // hier, sobald **der aufrufende Eintrag** einen Hash hat.
+      //
+      // Vorher drainte der Durchlauf die komplette Warteschlange: er endete
+      // erst, wenn gar nichts mehr offen war. Der Aufrufer wartete damit
+      // auf Arbeit, die ihm nicht gehoerte — und, schlimmer, er wusste
+      // nicht, ob sein eigener Eintrag gehasht ist.
+      //
+      // Die Kettenintegritaet bleibt unberuehrt: gehasht wird weiterhin
+      // in `sequenz`-Reihenfolge, und der Vorgaenger eines Eintrags hat
+      // immer eine kleinere `sequenz` — er ist also gehasht, bevor der
+      // Nachfolger drankommt.
+      if (bisId && offen.id === bisId) return;
     }
 
     this.logger.warn(
       `Hash-Kette nach ${MAX_DURCHLAEUFE} Durchlaeufen noch nicht geschlossen`,
     );
+  }
+
+  /**
+   * Alter des aeltesten Eintrags, der noch keinen Hash hat.
+   *
+   * BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Das ist die **Condition auf
+   * Alter des aeltesten Eintrags**, die in Nachtrag 31 als Massnahme
+   * vorgeschlagen wurde. Normalerweise liegt der Wert bei ein paar
+   * Millisekunden — der Hash wird unmittelbar nach dem Schreiben berechnet.
+   * Ein Alter von mehreren Minuten bedeutet: die Kette steht. Entweder ist
+   * der Prozess mitten in der Berechnung gestorben, oder die Warteschlange
+   * ist verklemmt.
+   *
+   * Ohne diese Groesse gibt es keinen Unterschied zwischen "die Kette
+   * arbeitet gerade" und "die Kette ist tot" — beide sehen aus wie ein
+   * einzelner ungehashter Eintrag.
+   *
+   * @returns Alter in Millisekunden, oder `null` wenn alles gehasht ist.
+   */
+  async getOldestUnhashedAgeMs(): Promise<number | null> {
+    const aeltester = await this.prisma.auditLog.findFirst({
+      where: { entryHash: null },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { createdAt: true },
+    });
+    if (!aeltester) return null;
+    return Date.now() - aeltester.createdAt.getTime();
   }
 
   /**

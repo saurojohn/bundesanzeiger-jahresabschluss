@@ -184,7 +184,7 @@ describe('AuditIntegrityService — Race-Condition', () => {
     // beiden späteren sehen den Vorgänger ohne Hash und fallen auf Genesis
     // zurück. Mit Serialisierung hängt jeder an den tatsächlichen Vorgänger.
     for (let i = 0; i < 3; i += 1) {
-      service.enqueue(eintraege[i]!.id);
+      void service.enqueueWithCounting(eintraege[i]!.id).catch(() => undefined);
     }
     await service.drain();
 
@@ -204,11 +204,11 @@ describe('AuditIntegrityService — Race-Condition', () => {
       auditLog: { findFirst: { mockImplementationOnce?: unknown } };
     };
     // Ein Aufruf schlägt fehl — die weiteren müssen trotzdem laufen.
-    service.enqueue(eintraege[0]!.id);
+    void service.enqueueWithCounting(eintraege[0]!.id).catch(() => undefined);
     (service as unknown as { chain: Promise<unknown> }).chain = Promise.reject(
       new Error('absichtlich'),
     );
-    service.enqueue(eintraege[1]!.id);
+    void service.enqueueWithCounting(eintraege[1]!.id).catch(() => undefined);
     await expect(service.drain()).resolves.toBeUndefined();
     void vorher;
   });

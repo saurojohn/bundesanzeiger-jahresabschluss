@@ -344,7 +344,7 @@ export class PdfService {
     const buffer = await this.storageService.downloadFromWorm(manifest.objectKey);
 
     // Audit: READ auf das WormObject.
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'READ',
@@ -487,7 +487,7 @@ export class PdfService {
     });
 
     // AuditLog: GENERATE_PDF-Äquivalent (via 'CREATE' auf WormObject).
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: request.mandantId,
       jahresabschlussId: abschluss?.id ?? null,

@@ -96,7 +96,7 @@ export class WebhookService {
       createdBy: user.id ? { connect: { id: user.id } } : undefined,
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: args.kanzleiId,
       action: 'CREATE',
@@ -145,7 +145,7 @@ export class WebhookService {
 
     await this.repository.deleteSubscription(id, kanzleiId);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'DELETE',
@@ -418,7 +418,7 @@ export class WebhookService {
         new Date(),
       );
 
-      void this.auditService.record({
+      await this.auditService.record({
         userId: null,
         kanzleiId: sub.kanzleiId,
         action: 'CREATE',
@@ -452,7 +452,7 @@ export class WebhookService {
         new Date(),
       );
 
-      void this.auditService.record({
+      await this.auditService.record({
         userId: null,
         kanzleiId: sub.kanzleiId,
         action: 'UPDATE',

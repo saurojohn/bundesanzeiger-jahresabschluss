@@ -197,7 +197,16 @@ export class AuditService {
       // Über `enqueue()` serialisiert, nicht direkt aufgerufen: parallele
       // Aufrufe lesen sonst denselben Vorgänger und die Kette verzweigt
       // (Befund 2026-10-03, `verifyIntegrity()` meldete BROKEN).
-      void this.integrityService
+      //
+      // BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Das `void` ist
+      // entfernt. Vorher kehrte der Aufrufer zurück, **bevor** der Hash
+      // gesetzt war — der Eintrag lag dann fuer ein paar Millisekunden
+      // ungehasht in der Datenbank, und `verifyIntegrity()` meldete in
+      // diesem Fenster PARTIAL. Ein Audit-Trail, der sich selbst als
+      // "noch nicht vollstaendig" meldet, obwohl gerade geschrieben wurde,
+      // ist fuer einen Auditor nicht von einem echten Schaden zu
+      // unterscheiden.
+      await this.integrityService
         .enqueueWithCounting(createdAuditLogId)
         .catch((err) => {
           this.failedWrites += 1;
@@ -256,10 +265,32 @@ export class AuditService {
       void this.cache.invalidate(`audit-count:mandant:${params.mandantId}`);
     }
 
-    // Hash-Chain (M4 Sprint 5) — fire-and-forget, Fehler werden intern
-    // geloggt. Audit-Write-Pfad bleibt schnell.
+    // Hash-Chain (M4 Sprint 5).
+    //
+    // BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Auch hier war der Hash
+    // fire-and-forget. Gemessen ueber die oeffentliche API, 20 Mandanten-
+    // Anlagen in Folge:
+    //
+    //     Audit-Eintrag fehlt beim Eintreffen der Antwort : 80 %
+    //     Audit-Eintrag vorhanden, aber noch ungehasht     : 15 %
+    //     vollstaendig (Eintrag + Hash)                   :  5 %
+    //
+    // Der Eintrag wurde also **nach** der Antwort geschrieben. Wer
+    // unmittelbar nach einer Aktion in das Audit-Trail schaut, sah nichts
+    // — und ein Prozessabbruch in diesem Fenster verliert den Eintrag
+    // endgueltig: die Aktion ist quittiert, der Nachweis fehlt.
+    //
+    // `enqueueWithCounting()` wartet, bis **dieser** Eintrag einen Hash
+    // hat. Der Aufrufer wartet damit nicht auf fremde Arbeit.
     if (createdAuditLogId) {
-      this.integrityService.enqueue(createdAuditLogId);
+      await this.integrityService
+        .enqueueWithCounting(createdAuditLogId)
+        .catch((err) => {
+          this.failedWrites += 1;
+          this.logger.warn(
+            `Hash-Chain-Berechnung fehlgeschlagen (${createdAuditLogId}): ${(err as Error).message}`,
+          );
+        });
     }
   }
 

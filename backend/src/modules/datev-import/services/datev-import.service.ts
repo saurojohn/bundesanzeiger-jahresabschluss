@@ -307,7 +307,7 @@ export class DatevImportService {
     const guvId = ids.guvId;
 
     // 6. Audit-Trail
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: mandant.kanzleiId ?? null,
       mandantId: dto.mandantId,

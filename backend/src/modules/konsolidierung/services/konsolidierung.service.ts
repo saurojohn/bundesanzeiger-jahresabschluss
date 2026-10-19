@@ -155,7 +155,7 @@ export class KonsolidierungService {
         throw new Error('Konsolidierungs-Einheit konnte nicht geladen werden');
       }
 
-      void this.auditService.record({
+      await this.auditService.record({
         userId: user.id,
         kanzleiId: einheit.kanzleiId,
         mandantId: dto.mutterMandantId,
@@ -280,7 +280,7 @@ export class KonsolidierungService {
       throw new Error('Konsolidierungs-Einheit konnte nicht geladen werden');
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: einheit.kanzleiId,
       mandantId: einheit.mutterMandantId,
@@ -603,7 +603,7 @@ export class KonsolidierungService {
     // ohne ihre Gehaeuse entstehen.
     const salden = await this.calculateKonzernSalden(einheitId, user);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: einheit.kanzleiId,
       mandantId: einheit.mutterMandantId,
@@ -668,7 +668,7 @@ export class KonsolidierungService {
       );
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: einheit.kanzleiId,
       mandantId: einheit.mutterMandantId,
@@ -791,7 +791,7 @@ export class KonsolidierungService {
       },
     );
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: einheit.kanzleiId,
       mandantId: einheit.mutterMandantId,

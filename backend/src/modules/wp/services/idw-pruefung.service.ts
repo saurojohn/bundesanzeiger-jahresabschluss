@@ -105,7 +105,7 @@ export class IdwPruefungService {
       results.push(result);
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: bilanzMandantId,
       action: 'READ',

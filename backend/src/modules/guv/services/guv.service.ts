@@ -132,7 +132,7 @@ export class GuVService {
       );
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: dto.mandantId,
       action: 'CREATE',
@@ -320,7 +320,7 @@ export class GuVService {
       })),
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'UPDATE',
@@ -366,7 +366,7 @@ export class GuVService {
     const before = await this.guvRepository.findWithPositionen(id, mandantId);
     await this.guvRepository.deleteByMandant(id, mandantId);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'DELETE',

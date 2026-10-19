@@ -300,7 +300,7 @@ export class DatevExportService {
       false,
     );
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: mandant.kanzleiId ?? null,
       mandantId: args.mandantId,

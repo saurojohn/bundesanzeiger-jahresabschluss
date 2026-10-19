@@ -94,7 +94,7 @@ export class AnhangService {
       throw err;
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: dto.mandantId,
       action: 'CREATE',
@@ -270,7 +270,7 @@ export class AnhangService {
       abschnitte: dto.abschnitte,
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'UPDATE',
@@ -305,7 +305,7 @@ export class AnhangService {
     const before = await this.anhangRepository.findWithAbschnitte(id, mandantId);
     await this.anhangRepository.deleteByMandant(id, mandantId);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'DELETE',

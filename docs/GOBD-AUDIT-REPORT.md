@@ -3369,7 +3369,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
 | TODO-8.6 | Automatisierter monatlicher Restore-Test in CI | DevOps | Sprint 5+ |
 | TODO-8.7 | `assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code? (Nachtrag 34: über HTTP nicht erreichbar, der `MandantGuard` wirkt identisch zuerst) | Dev + Compliance | Sprint 5 |
-| TODO-8.8 | Audit-Trail "fire and forget" (~50 Stellen) bewerten: Fachschreibvorgang + Audit in eine Transaktion, plus Condition auf Alter des ältesten Eintrags (Nachtrag 31) | Dev + Compliance | Sprint 5 |
+| ~~TODO-8.8~~ | ~~Audit-Trail "fire and forget" (51 Stellen)~~ — **erledigt in Nachtrag 56**: gemessen über die öffentliche API fehlte der Audit-Eintrag in **80 %** der Fälle, wenn die Antwort beim Client war; weitere 15 % hatten noch keinen Hash. Behoben: alle 51 Aufrufstellen warten jetzt, die Hash-Kette wartet auf den eigenen Eintrag, und `/health/ready` meldet das Alter des ältesten ungehashten Eintrags. Die in Nachtrag 31 vorgeschlagene **Transaktion** (Fachvorgang + Audit atomar) bleibt als Restidee dokumentiert — sie widerspricht der Reihenfolge der Hash-Kette | — | erledigt |
 | TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
@@ -5305,6 +5305,203 @@ v13, dessen API kein `authenticator` mehr kennt. Das Backend nutzt v12. Der
 Test haette mit v13 **falsch** gerechnet — und der Test waere rot
 gewesen, ohne dass jemand den Grund gesehen haette. Beide Pakete sind jetzt
 auf `^12.0.1` gepinnt.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 56): In vier von fünf Fällen wurde quittiert, **bevor** der Nachweis existierte
+
+#### Der Befund
+
+TODO-8.8 stand seit Nachtrag 31 offen: *„Audit-Trail fire and forget
+(~50 Stellen)".* Die Vermutung war bisher, dass das ein Performance-Thema
+sei. Es ist ein **Nachvollziehbarkeits**-Thema, und es ist gemessen.
+
+Gemessen über die öffentliche API: 20 Mandanten-Anlagen in Folge. Unmittelbar
+nach dem Eintreffen der `201`-Antwort in der Datenbank nachgesehen:
+
+| Zustand beim Eintreffen der Antwort | Anteil |
+|---|---|
+| Audit-Eintrag **fehlt vollständig** | **80 %** |
+| Eintrag vorhanden, aber **noch ungehasht** | 15 % |
+| vollständig (Eintrag **und** Hash) | 5 % |
+
+Die Verzögerung selbst ist klein — gemessen: Eintrag **+1 bis +2 ms** nach der
+Antwort, Hash **+4 bis +5 ms**. Aber diese paar Millisekunden sind genau das
+Fenster, in dem die Anwendung abstürzen kann, und sie sind groß genug, dass
+der Anwender das Audit-Trail **bei jedem Blick** leers sieht.
+
+Die Konsequenz: **Eine quittierte Aktion war in vier von fünf Fällen nicht
+nachvollziehbar.** Für § 146 AO ist das keine Performance-Frage, sondern eine
+Lücke in der Nachvollziehbarkeit.
+
+#### Die Ursache: ein `void` an 51 Stellen
+
+```
+void this.auditService.record({ ... });
+```
+
+Der `void`-Operator verwirft das Promise. Die Methode läuft weiter, der
+Aufrufer wartet nicht. Und `record()` selbst schrieb die Hash-Kette wiederum
+fire-and-forget (`enqueue()` ohne `await`).
+
+Gemessen: **51 Aufrufstellen in 20 Dateien**, dazu der `AuditInterceptor`
+(dort über `recordStrict()` awaited — die einzige Stelle, die es richtig
+tat). Der Aufbau war an vielen Stellen korrekt dokumentiert („fire and
+forget, damit der Audit-Pfad schnell bleibt") — der Kommentar beschrieb
+also einen Zustand, den niemand mehr hinterfragt hat.
+
+#### Die Behebung in drei Teilen
+
+**1. Alle 51 Aufrufstellen warten jetzt.**
+
+`void this.auditService.record({` → `await this.auditService.record({`.
+
+Das ist der eigentliche Fix, und er ist mechanisch — aber er ist nicht
+folgenlos: der Audit-Eintrag steht jetzt in der Datenbank, **bevor** die
+Antwort den Server verlässt. Ein Prozessabbruch nach der Quittung kann den
+Eintrag nicht mehr verlieren.
+
+**2. Die Hash-Kette wartet auf den *eigenen* Eintrag.**
+
+`record()` wartete bisher nicht auf den Hash. Damit konnte der Aufrufer
+nicht wissen, ob sein Eintrag gehasht ist — er hätte auf „die Warteschlange
+ist leer" warten müssen.
+
+`hashNaechstenOffenen()` nahm jetzt die ID des aufrufenden Eintrags und
+beendet den Durchlauf, sobald **dieser** Eintrag einen Hash hat:
+
+```ts
+if (bisId && offen.id === bisId) return;
+```
+
+Die Kettenintegrität bleibt unberührt: gehasht wird weiterhin in
+`sequenz`-Reihenfolge, und der Vorgänger eines Eintrags hat immer eine
+kleinere `sequenz` — er ist also gehasht, **bevor** der Nachfolger drankommt.
+Ohne diese Eigenschaft wäre der Vorgänger noch ungehasht und der Hash
+fiele auf Genesis zurück — genau der Fehler aus Nachtrag 41.
+
+**3. Ein Wächter erkennt eine stehengebliebene Kette.**
+
+Das ist die in Nachtrag 31 vorgeschlagene *„Condition auf Alter des ältesten
+Eintrags"*. `/health/ready` weist jetzt zusätzlich aus:
+
+```
+auditOldestUnhashedAgeMs: number | null
+```
+
+`null` heißt: die Kette ist vollständig. Normalerweise liegt der Wert bei
+ein paar Millisekunden. Übersteigt er die Schwelle (`AUDIT_CHAIN_STALL_MS`,
+Vorgabe 60 s), gilt der Dienst als `degraded`.
+
+Ohne diese Größe gibt es keinen Unterschied zwischen „die Kette arbeitet
+gerade" und „die Kette ist tot" — beide sehen aus wie ein einzelner
+ungehashter Eintrag.
+
+#### Die Negativprobe: **deterministisch**, nicht geraten
+
+Ein Test der Form „ist der Eintrag *irgendwann* da?" wäre ein Wettlauf: ohne
+den Fix wäre er zu etwa 80 % rot, mit dem Fix immer grün. Als Regressionsschutz
+brauchbar, als Nachweis schwach — und ein Test, der nur *manchmal* rot wird,
+wird irgendwann als „flaky" abgetan und stillschweigend entschärft.
+
+Gemessen wird deshalb die **Reihenfolge**, nicht das Zeitfenster: der
+Audit-Write wird in einer Sperre angehalten, und geprüft wird, ob die
+Fachmethode **darauf wartet**. Das ist eine Eigenschaft des Codes, keine
+Frage des Timings.
+
+```
+e2e/audit-quittierung.e2e.spec.ts
+```
+
+**Mit dem Fix zurückgebaut** (`await` → `void` in `mandant.service.ts`):
+
+```
+× kehrt nicht zurueck, bevor der Audit-Eintrag geschrieben ist
+  → die Fachmethode ist zurueckgekehrt, obwohl der Audit-Eintrag noch fehlt.
+    Die Aktion wird quittiert, bevor sie nachvollziehbar ist — fuer die
+    Nachvollziehbarkeit nach § 146 AO ist das ein Loch, kein Timing-Problem.
+    expected true to be false
+```
+
+```
+× der Audit-Eintrag existiert ueber die oeffentliche API, sobald die Antwort da ist
+  → der Audit-Eintrag hat keinen Hash — die Hash-Kette laeuft der
+    Quittierung hinterher
+```
+
+Rot aus dem **richtigen** Grund: nicht „Datenbank kaputt", nicht „Timeout",
+sondern die Zusicherung, die den geprüften Code erreicht. (Zur Erinnerung aus
+Nachtrag 54: der Test ruft die echte `MandantService.create()` auf — ersetzt
+wird nur der Audit-Schritt, und nur durch eine Sperre, die an der Reihenfolge
+nichts ändert.)
+
+Zweiter Teil des Tests, schwarz-box über die laufende Instanz: nach der
+`201`-Antwort muss der Eintrag **und** sein Hash in der Datenbank stehen.
+
+#### Was ausdrücklich **nicht** behoben wurde
+
+Nachtrag 31 schlug vor: *„Fachschreibvorgang + Audit in eine Transaktion."*
+Das ist die **ideale** Lösung — Fachvorgang und Nachweis würden atomar
+committen, und ein Abbruch zwischen beiden wäre unmöglich.
+
+Sie ist hier **nicht** umgesetzt, und der Grund ist kein Aufwand:
+
+Die Hash-Kette braucht eine **Totalordnung aus der Datenbank** (`sequenz`).
+Würde der Audit-Eintrag in derselben Transaktion wie der Fachvorgang
+geschrieben, müsste sein Hash *vor* dem Commit bekannt sein — der Vorgänger
+müsste also bereits gehasht sein. Das ist bei parallelen Schreibvorgängen
+nicht der Fall, und genau daran ist Nachtrag 41 gescheitert: der Vorgänger
+war noch ungehasht, der Hash fiel auf Genesis zurück, die Kette verzweigte.
+
+Die Transaktionslösung verlangt also eine andere Kettentechnik (Hash im
+selben Lauf wie der Insert, mit Datenbanksperre) — das ist die
+`pg_advisory_xact_lock`-Frage aus TODO-8.13 und eine eigene Entscheidung.
+
+**Der hier geschlossene Teil ist der, der messbar war:** die Quittierung
+erfolgt nicht mehr vor dem Nachweis. Der Rest ist als Restidee dokumentiert,
+nicht als Erledigung.
+
+#### Ein zweiter Fund im selben Lauf: das Lockfile
+
+Beim Push von Nachtrag 55 schlug der Frontend-Job der CI **fehl**, noch
+bevor irgendetwas getestet wurde:
+
+```
+npm error `npm ci` can only install packages when your package.json and
+npm error package-lock.json or npm-shrinkwrap.json are in sync.
+npm error Missing: @swc/helpers@0.5.23 from lock file
+```
+
+**Ursache:** `npm install --save-dev otplib@^12.0.1` (Nachtrag 55) hat mit
+dem **lokalen npm 11.9.0** den verschachtelten Lockfile-Eintrag
+`next-intl/node_modules/@swc/helpers@0.5.23` **entfernt**. Dieser Eintrag
+existierte genau deshalb, weil `next-intl/node_modules/@swc/core` die
+Peer-Abhängigkeit `@swc/helpers >= 0.5.17` hat — die gehoiste Version
+0.5.15 erfüllt sie nicht.
+
+Lokal fiel das **nicht auf**: `npm ci --dry-run` meldete „up to date", weil
+das lokale `node_modules` den Zustand schon hatte. Die CI installiert
+sauber aus dem Lockfile — und dort ist der Peer unerfüllt.
+
+Die CI benutzt node 22 → **npm 10**; lokal lief **npm 11**. Die beiden
+Major-Versionen lösen die optionale Peer-Abhängigkeit unterschiedlich.
+
+**Behoben:** Das Lockfile wurde mit `npm@10` regeneriert (der Major-Version,
+die die CI benutzt). Der Diff sind **genau die 11 Zeilen**, die das
+`npm install` gelöscht hatte.
+
+**Gegenprobe** (Clean-Room, nur `package.json` + `package-lock.json`, `npm@10 ci`):
+
+| Lockfile | Ergebnis |
+|---|---|
+| das gepuschte (kaputt) | `npm error Missing: @swc/helpers@0.5.23 from lock file` — **exakt der CI-Fehler** |
+| das regenerierte | `npm ci` **Exit 0** |
+
+**Die Lehre für die Pipeline:** Ein Lockfile wird von der npm-Version
+geschrieben, die der Entwickler benutzt — und von der CI gelesen, die eine
+andere benutzt. Die beiden muessen **dieselbe Major-Version** haben, sonst
+schreibt der Entwickler ein Lockfile, das die CI nicht installieren kann.
+Das ist im Repo als Pflicht festgehalten (siehe `AGENTS.md` § 3.7).
 
 ---
 

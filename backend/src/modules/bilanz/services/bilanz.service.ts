@@ -144,7 +144,7 @@ export class BilanzService {
       );
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: dto.mandantId,
       action: 'CREATE',
@@ -330,7 +330,7 @@ export class BilanzService {
       },
     );
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'UPDATE',
@@ -388,7 +388,7 @@ export class BilanzService {
     const before = await this.bilanzRepository.findWithPositionen(id, mandantId);
     await this.bilanzRepository.deleteByMandant(id, mandantId);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'DELETE',

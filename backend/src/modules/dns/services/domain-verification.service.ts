@@ -126,7 +126,7 @@ export class DomainVerificationService {
       brandingUpdatedById: user.id,
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'UPDATE',
@@ -217,7 +217,7 @@ export class DomainVerificationService {
       brandingUpdatedById: user.id,
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'UPDATE',

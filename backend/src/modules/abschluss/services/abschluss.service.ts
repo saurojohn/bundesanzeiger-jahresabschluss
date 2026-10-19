@@ -142,7 +142,7 @@ export class AbschlussService {
       throw err;
     }
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: dto.mandantId,
       action: 'CREATE',
@@ -354,7 +354,7 @@ export class AbschlussService {
       },
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'UPDATE',

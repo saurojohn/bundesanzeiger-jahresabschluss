@@ -250,7 +250,7 @@ export class XbrlGeneratorService {
     // 6. Audit-Log.
     const erloeseSumme = this.sumErloese(guvMappings);
     const aufwandSumme = this.sumAufwand(guvMappings);
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId: args.mandantId,
       action: 'EXPORT',

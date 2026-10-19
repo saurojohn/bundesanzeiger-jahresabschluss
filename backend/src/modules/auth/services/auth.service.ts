@@ -90,7 +90,7 @@ export class AuthService {
 
     const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordOk) {
-      void this.auditService.record({
+      await this.auditService.record({
         userId: user.id,
         kanzleiId: user.kanzleiId,
         action: 'LOGIN',
@@ -132,7 +132,7 @@ export class AuthService {
       data: { lastLoginAt: new Date(), lastLoginIp: context.ip ?? null },
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId: user.kanzleiId,
       action: 'LOGIN',
@@ -207,7 +207,7 @@ export class AuthService {
       mandanten: mandantenForToken,
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: session.userId,
       kanzleiId: session.user.kanzleiId,
       action: 'LOGIN',
@@ -273,7 +273,7 @@ export class AuthService {
         data: { revokedAt: new Date() },
       });
     }
-    void this.auditService.record({
+    await this.auditService.record({
       userId,
       action: 'LOGOUT',
       entityType: 'User',

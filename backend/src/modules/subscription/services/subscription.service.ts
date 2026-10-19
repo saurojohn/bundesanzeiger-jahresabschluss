@@ -106,7 +106,7 @@ export class SubscriptionService {
       });
 
     // Audit-Trail (Subscription-Checkout gestartet)
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'CREATE',
@@ -185,7 +185,7 @@ export class SubscriptionService {
 
     await this.applyTierChange(kanzleiId, tier, 'ACTIVE', 'mock', mockSession);
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'UPDATE',
@@ -243,7 +243,7 @@ export class SubscriptionService {
     const effectiveAt = (kanzlei as unknown as { subscriptionPeriodEnd?: Date | null })
       .subscriptionPeriodEnd ?? new Date();
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       kanzleiId,
       action: 'UPDATE',

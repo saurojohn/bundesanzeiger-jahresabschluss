@@ -118,7 +118,7 @@ export class WPNotizService {
       notizText: args.notizText,
     });
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'CREATE',
@@ -175,7 +175,7 @@ export class WPNotizService {
       user.id,
     );
 
-    void this.auditService.record({
+    await this.auditService.record({
       userId: user.id,
       mandantId,
       action: 'UPDATE',

@@ -2,6 +2,7 @@ import { Controller, Get, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../modules/audit/services/audit.service';
+import { AuditIntegrityService } from '../modules/audit/services/audit-integrity.service';
 import { Public } from '../modules/auth/decorators/public.decorator';
 
 /**
@@ -22,9 +23,25 @@ export class HealthController {
   private readonly logger = new Logger(HealthController.name);
   private readonly startupTime = Date.now();
 
+  /**
+   * Ab wie vielen Millisekunden gilt die Hash-Kette als **stehen**?
+   *
+   * BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Normalerweise ist der
+   * aelteste ungehashte Eintrag ein paar Millisekunden alt — der Hash wird
+   * unmittelbar nach dem Schreiben gesetzt. Ein Alter ueber dieser Schwelle
+   * bedeutet: die Kette arbeitet nicht mehr.
+   *
+   * Der Wert ist bewusst grosszuegig (60 s): die Kette muss auch dann noch
+   * als gesund gelten, wenn der Datenbank kurzzeitig laenger braucht.
+   */
+  private readonly chainStallMs = Number(
+    process.env.AUDIT_CHAIN_STALL_MS ?? '60000',
+  );
+
   constructor(
     private readonly prismaService: PrismaService,
     private readonly auditService: AuditService,
+    private readonly integrityService: AuditIntegrityService,
   ) {}
 
   /**
@@ -73,6 +90,14 @@ export class HealthController {
      * > 0 heisst: die Nachvollziehbarkeit (§ 146 AO) hat eine Luecke.
      */
     auditWriteFailures: number;
+    /**
+     * Alter des aeltesten Audit-Eintrags, der noch keinen Hash hat.
+     *
+     * BEFUND 2026-10-19 (Nachtrag 56, TODO-8.8): Das ist die **Condition
+     * auf Alter des aeltesten Eintrags**, die in Nachtrag 31 als Massnahme
+     * vorgeschlagen wurde. `null` heisst: die Kette ist vollstaendig.
+     */
+    auditOldestUnhashedAgeMs: number | null;
     uptime: number;
     timestamp: string;
   }> {
@@ -83,15 +108,32 @@ export class HealthController {
     // rechtsverbindliche Vorgaenge — das ist ein Betriebs-, kein Kosmetik-
     // zustand und muss im Health-Check sichtbar sein.
     const auditFailures = this.auditService.getFailedWrites();
-    const healthy = allUp && auditFailures === 0;
+
+    // Steht die Hash-Kette? Ein Eintrag, der seit Minuten ungehasht ist,
+    // bedeutet: die Kette ist stehengeblieben. Ohne diese Groesse ist ein
+    // stehengebliebener Audit-Trail von einem Eintrag zu unterscheiden, der
+    // gerade geschrieben wurde — beide sehen gleich aus.
+    const oldestUnhashedAge = await this.integrityService.getOldestUnhashedAgeMs();
+    const chainStalled =
+      oldestUnhashedAge !== null && oldestUnhashedAge > this.chainStallMs;
+
+    const healthy = allUp && auditFailures === 0 && !chainStalled;
+
+    if (chainStalled) {
+      this.logger.error(
+        `Audit-Hash-Kette steht: aeltester ungehashter Eintrag ist ${oldestUnhashedAge} ms alt ` +
+          `(Schwelle ${this.chainStallMs} ms).`,
+      );
+    }
 
     return {
       status: healthy ? 'ok' : 'degraded',
       checks: {
         ...dbHealth,
-        ...(auditFailures > 0 ? { audit: 'degraded' as const } : {}),
+        ...(auditFailures > 0 || chainStalled ? { audit: 'degraded' as const } : {}),
       },
       auditWriteFailures: auditFailures,
+      auditOldestUnhashedAgeMs: oldestUnhashedAge,
       uptime: Math.floor((Date.now() - this.startupTime) / 1000),
       timestamp: new Date().toISOString(),
     };

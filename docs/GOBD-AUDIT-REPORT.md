@@ -4421,6 +4421,7 @@ vergessen, und es gibt keinen Wächter, der es merkt.
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
 | TODO-8.16 | `dns.controller.ts` verspricht im Kommentar eine Rollenbindung, die nur im Service existiert. Entweder `@Roles` an die Route heben oder den Kommentar auf die Wirklichkeit korrigieren („Autorisierung im Service, siehe `assertKanzleiAdminAccess`") — sonst wird sie beim Refaktorieren stillschweigend vergessen | Dev | Sprint 5 |
+| TODO-8.18 | **Nachtrag 46 behoben.** Vor dem Pilot den Zahlungsweg einmal **echt** durchspielen: Checkout → Stripe sendet Webhook → Tarifwechsel sichtbar. Der Mock-Provider liefert für `handleWebhook()` immer `null`, der Pilotbetrieb prüft den Weg also nicht | Produkt + Dev | **vor dem ersten bezahlten Mandanten** |
 
 ---
 
@@ -4496,6 +4497,102 @@ zurückgenommen**.
 gegenläufig messbar sein. „Schützt vermutlich" ist keine Begründung, wenn
 die Messung sie weder bestätigt noch widerlegt — dann gehört sie als
 Risiko dokumentiert und **nicht** eingebaut.
+
+---
+
+### Nachtrag 2026-10-19 (Nachtrag 46): Stripe konnte nie ein Webhook zustellen — und die Reparat��� hätte eine Tür geöffnet
+
+**Der schwerwiegendste Betriebsdefekt der Prüfrunde.** Gefunden, weil eine
+Route aus der Bestandsaufnahme ungetestet war und deshalb **nie einen
+Aufruf gesehen hat**.
+
+#### Befund 1: Der Endpunkt war unerreichbar
+
+Der Controller-Kommentar sagt:
+
+> *„Endpoint ist `@Public()` (keine Auth) — Webhooks werden via
+> Signatur authentifiziert."*
+
+**Der Dekorator `@Public()` stand nirgends.** `JwtAuthGuard` läuft als
+globaler `APP_GUARD`, also wurde jeder Aufruf abgewiesen, **bevor** der
+Controller erreicht wurde. Gemessen, vier Formen:
+
+```
+POST /api/subscription/webhook  (mit Signatur)              -> 401
+POST /api/subscription/webhook  (ohne Signatur)             -> 401
+POST /api/subscription/webhook  (Roh-Body, gefälschte Sig.) -> 401
+POST /api/subscription/webhook  (Signatur-Header mit v0)    -> 401
+```
+
+**Folge: Stripe konnte nie ein Webhook zustellen.** Checkout-Abschluss,
+Tarifwechsel und Kündigung hätten die Entitlements nie aktualisiert. Der
+komplette Zahlungslebenszyklus — im Pilot möglicherweise unbemerkt, weil
+dort der Mock-Provider läuft und Webhooks ohnehin nicht ankämen.
+
+`rawBody` ist demgegenüber **korrekt** konfiguriert (`main.ts` registriert
+einen `raw`-Parser vor dem JSON-Parser). Nur die Dekorator-Zeile fehlte.
+
+#### Befund 2: Die Reparatur hätte eine Tür geöffnet
+
+`@Public()` macht die Signaturprüfung zur **einzigen**
+Authentifizierung. Und:
+
+```ts
+const webhookSecret = this.configService.get<string>('STRIPE_WEBHOOK_SECRET') ?? '';
+```
+
+**Der leere String ist ein benutzbarer HMAC-Schlüssel.** Mit ihm kann
+jemand die Signatur selbst berechnen und eine vollständig gefälschte
+Nutzlast mit gültiger Signatur schicken — woraufhin `applyTierChange()`
+einen beliebigen Tarif auf beliebige Kanzleien setzt.
+
+Das Projekt behandelt jeden anderen Schalter genau anders:
+
+| Schalter | Default |
+|---|---|
+| `BILLING_MOCK_ENABLED` | `?? 'false'` — fehlend = **zu** |
+| `SIGNATURE_ALLOW_SELF_SIGNED` | `?? 'false'` |
+| `STRIPE_WEBHOOK_SECRET` | `?? ''` — fehlend = **offen** |
+
+**Die beiden Befunde sind eine Einheit.** Befund 1 zu beheben, ohne
+Befund 2 zu beheben, wäre der klassische Fall „die Reparatur macht den
+Fehler erst ausnutzbar".
+
+#### Behoben
+
+1. `@Public()` auf dem Controller.
+2. `STRIPE_WEBHOOK_SECRET` leer → **Fehler**, mit Begründung im Text:
+   ohne konfiguriertes Secret nimmt die Anwendung jeden an, weil sonst
+   jeder einen gültigen HMAC berechnen könnte.
+
+#### Negativprobe
+
+`@Public()` wieder entfernt, Server neu gestartet:
+
+```
+× der Endpunkt antwortet überhaupt — kein 401 vom globalen Guard mehr
+✓ eine gefälschte Signatur löst keinen Tarif aus
+✓ STRIPE_WEBHOOK_SECRET wird fail-closed behandelt
+```
+
+Genau **ein** Test rot, und zwar an der Stelle, an der der Defekt sitzt.
+Die beiden anderen bleiben grün — sie prüfen etwas anderes.
+
+#### Warum das so lange unbemerkt blieb
+
+Drei Gründe, die zusammenkommen:
+
+1. **Kein Test ruft die Route auf** (38 von 114 Routen sind so).
+2. **Im Pilotbetrieb kommen keine echten Webhooks an** — der Mock-Provider
+   liefert für `handleWebhook()` immer `null`. Ein Nutzer, der im Pilot
+   „Abo kündigen" ausprobiert, sieht nicht, ob der Weg funktioniert.
+3. **Der Kommentar behauptet das Gegenteil** und_lenkt jeden Leser davon
+   ab, nachzusehen.
+
+Das ist dieselbe Fehlerklasse wie bei den anderen Befunden dieser Runde:
+**eine Route, die es lange gab, nie aktiviert wurde und für die es keinen
+Test gab.** Nur dass sie hier nicht still kaputt war, sondern gar nicht
+erreichbar.
 
 ---
 

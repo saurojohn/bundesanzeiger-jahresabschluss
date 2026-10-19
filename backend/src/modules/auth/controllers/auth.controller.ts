@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -142,8 +143,46 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async totpEnable(
     @CurrentUser() user: AuthUser,
-    @Body() body: TotpEnableRequestDto & { secret: string },
+    // BEFUND 2026-10-19 (Nachtrag 48): Der Typ war
+    // `TotpEnableRequestDto & { secret: string }`. **Ein Kreuzungstyp ist zur
+    // Laufzeit `Object`** — Nests `design:paramtypes` kann den DTO nicht
+    // mehr erkennen, und der globale `ValidationPipe` validiert gegen einen
+    // untypisierten Body **gar nichts**.
+    //
+    // Gemessen: ein Aufruf ohne `password` (im DTO Pflichtfeld) lief in
+    // `bcrypt.compare(undefined, hash)` und endete mit **HTTP 500** statt
+    // 400. Damit war diese Route die **einzige im Projekt ohne
+    // Eingabevalidierung** — `secret` und `code`同样 ungeprueft.
+    //
+    // Der Kreuzungstyp war ueberfluessig: `TotpEnableRequestDto` enthaelt
+    // `secret` und `code` bereits. Der Typ wird hier nur noch auf den DTO
+    // zurueckgesetzt — damit haengt die Validierung wieder an der Route.
+    @Body() body: TotpEnableRequestDto,
   ): Promise<{ success: true }> {
+    // BEFUND 2026-10-19 (Nachtrag 48): Erneute Authentifizierung.
+    // Das Deaktivieren verlangt Passwort + Code, das Aktivieren bisher
+    // nur ein gueltiges JWT. Wer nur ein JWT hat, konnte so das MFA des
+    // Opfers mit dem eigenen Secret uebernehmen und das Opfer dauerhaft
+    // aussperren. Siehe die Messung im Kommentar der DTO.
+    // Defensive: `bcrypt.compare(undefined, hash)` wirft und endet als
+    // HTTP 500. Die Validierung deckt das ab — aber ein 500 auf einem
+    // Auth-Pfad ist eine schlechte Fehlermeldung, wenn sich das DTO
+    // einmal aendert.
+    if (!body.password) {
+      throw new BadRequestException('password erforderlich');
+    }
+    const dbUser = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { passwordHash: true },
+    });
+    if (!dbUser) throw new UnauthorizedException('User nicht gefunden');
+    const passwordOk = await bcrypt.compare(body.password, dbUser.passwordHash);
+    if (!passwordOk) {
+      throw new UnauthorizedException(
+        'Passwort falsch — MFA kann nur mit erneuter Authentifizierung aktiviert werden.',
+      );
+    }
+
     const encrypted = this.totpService.enableTotp(body.secret, body.code);
     await this.prisma.user.update({
       where: { id: user.id },

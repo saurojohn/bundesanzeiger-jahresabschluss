@@ -4757,6 +4757,70 @@ Eingabevalidierung dieser Route abgeschaltet hat.
 
 ---
 
+### Nachtrag 2026-10-19 (Nachtrag 49): API-Key-Maskierung und Tenant-Isolation der Public API — beide halten
+
+Die zwei letzten Routen aus der Bestandsaufnahme, die ein **Datenleck**
+hätten zeigen können. Beide gemessen, beide in Ordnung.
+
+#### 1. `GET /api/api-keys` — gibt die Liste das Klartext-Secret aus?
+
+Antwort der Liste (gekürzt, **vollständig**):
+
+```json
+[{"id":"f500c68f-…","kanzleiId":"f35fe5a6-…","name":"Maskierungsprobe",
+  "keyId":"ak_SP8QMJ-P6UFCFBPd","scopes":["mandant:read"],"rateLimit":1000,
+  "expiresAt":null,"isActive":true,"lastUsedAt":null,
+  "createdAt":"2026-10-19T18:29:00.160Z","revokedAt":null}]
+```
+
+**Es gibt kein Secret-Feld.** Der Wert `keyId` ist der *öffentliche*
+Bezeichner (Format `ak_` + 16 base64url-Zeichen) — er steht auch im
+Antwort-Text des `POST` und ist für sich genommen wertlos, weil der
+Auth-Header `ak_<keyId>.<secret>` verlangt. Das `<secret>` wird **nur
+einmalig** beim Anlegen zurückgegeben und danach nur als SHA-256
+gespeichert.
+
+Geprüft wurde ausdrücklich, ob der **echte** Plaintext aus der
+Antwort des `POST` in der Liste wieder auftaucht: **nein**.
+
+#### 2. `GET /api/v1/mandanten/:id` — Tenant-Isolation der Public API
+
+Mit einem API-Key der Kanzlei 1, aufgerufen auf einen Mandanten der
+Kanzlei 2:
+
+```
+GET /api/v1/mandanten/<Mandant der Kanzlei 2>
+  HTTP 404  {"message":"Mandant nicht gefunden"}
+
+GET /api/v1/mandanten        (eigene Kanzlei)
+  HTTP 200
+```
+
+**404 statt 403** ist hier richtig: 403 „du darfst nicht" hätte
+bestätigt, dass der Mandant existiert. Der Mandant einer fremden
+Kanzlei ist für den Key schlicht nicht vorhanden.
+
+**Kein Befund, keine Änderung.**
+
+#### Was das über die Bestandsaufnahme sagt
+
+Die Liste hat 38 Routen ohne Backend-Test als „ungeprüft" markiert. Von
+den bislang gemessenen sind:
+
+| | |
+|---|---|
+| echte Befunde | 3 (Stripe-Webhook, MFA-Aktivierung, Kreuzungstyp-Validierung) |
+| Verdachtsstellen, entkräftet | 7 |
+| davon mit bleibender Dokumentationslücke | 1 (DNS, TODO-8.16) |
+
+**Die Trefferquote der „ungeprüft"-Einstufung ist also deutlich höher als
+bei einer Stichprobe**, und die Richtung „welche Route hat keine
+Abdeckung" hat die teuersten Fundstellen geliefert. Die Liste ist damit
+kein Selbstzweck, sondern die Arbeitsanweisung für die Restrunde
+(TODO-8.19).
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

@@ -4894,6 +4894,54 @@ Der Unterschied zwischen Nachtrag 46 (echter Defekt) und Nachtrag 50
 
 ---
 
+### Nachtrag 2026-10-19 (Nachtrag 51): Scope-Zuordnung der Public API — in **beiden** Richtungen geprüft
+
+Die v1-Routen der Public API waren laut Bestandsaufnahme ungetestet; der
+Agent hatte sie mit „Scope nie durch einen Test belegt" markiert. Geprüft
+wurde die Zuordnung **in beiden Richtungen** — eine Sperre, die zu breit
+ist, fällt sonst genauso wenig auf wie eine, die fehlt.
+
+**Richtung 1 — fehlender Scope muss sperren.** Key mit **ausschließlich**
+`mandant:read`:
+
+```
+GET    /api/v1/mandanten                       -> 200  ✅ (Scope vorhanden)
+GET    /api/v1/mandanten/<M>                   -> 200  ✅
+GET    /api/v1/mandanten/<M>/bilanzen          -> 403  ✅
+GET    /api/v1/mandanten/<M>/guv               -> 403  ✅
+GET    /api/v1/mandanten/<M>/anhang            -> 403  ✅
+GET    /api/v1/mandanten/<M>/jahresabschluesse -> 403  ✅
+GET    /api/v1/mandanten/<M>/banz-submissions  -> 403  ✅
+POST   /api/v1/banz-submissions                -> 403  ✅
+```
+
+**Richtung 2 — vorhandener Scope muss durchlassen.** Key mit allen sechs
+Scopes: **alle acht Routen 200**. Der `POST` endet danach mit 400 aus der
+Body-Validierung (`mandantId`, `geschaeftsjahr`) — die Scope-Prüfung ist
+also **vor** der Eingabeprüfung durchgelaufen, und die 501 „nicht
+implementiert" liegt dahinter.
+
+**Kein Befund, keine Änderung.**
+
+#### Nebenbefund: `POST /api/v1/banz-submissions` ist ehrlich
+
+Die Route gibt 501 „NICHT IMPLEMENTIERT" zurück und **erklärt im
+OpenAPI-Text, warum**: `BanzSubmission` verlangt Pflichtfelder, die ein
+Public-API-Aufruf nicht liefern kann (`jahresabschlussId`, `rawPayload`,
+`payloadHash`).
+
+Das ist die **richtige** Antwort und ein Gegenbild zum Befund aus
+Nachtrag 46: dort wurde eine Kennung (`id: "placeholder-<timestamp>"`)
+zurückgegeben, die es in der Datenbank nie gab. Ein Client, der sie
+speicherte, verwies auf einen Datensatz, den es nie gab. Hier wird
+**nichts** erzeugt und **keine** ID vergeben.
+
+**Merksatz für eigene Arbeit:** Ein 501 mit Begründung ist ein
+korrekter Umgang mit einer Lücke. Ein 202 mit erfundener ID ist es
+nicht — auch nicht, wenn der Endpoint „in Arbeit" ist.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

@@ -4424,6 +4424,7 @@ vergessen, und es gibt keinen Wächter, der es merkt.
 | TODO-8.18 | **Nachtrag 46 behoben.** Vor dem Pilot den Zahlungsweg einmal **echt** durchspielen: Checkout → Stripe sendet Webhook → Tarifwechsel sichtbar. Der Mock-Provider liefert für `handleWebhook()` immer `null`, der Pilotbetrieb prüft den Weg also nicht | Produkt + Dev | **vor dem ersten bezahlten Mandanten** |
 | ~~TODO-8.18~~ | ~~Zahlungsweg vor dem ersten bezahlten Mandanten echt durchspielen~~ — **erledigt in Nachtrag 52**: `backend/scripts/verify-billing-webhook.sh` startet das Backend im Stripe-Modus und nimmt den Zahlungsweg ab (korrekt signiert → Tarif wechselt; gefälscht → nichts). Einmal vor dem ersten bezahlten Mandanten laufen lassen | — | **vor dem ersten bezahlten Mandanten** ausführen |
 | TODO-8.19 | **Nachtrag 48 behoben.** `GET /api/api-keys` (Secret-Maskierung) und die übrigen 33 ungetesteten Routen nach und nach durchgehen — das Muster „nie aktiviert, nie getestet" hat heute vier echte Befunde geliefert (Nachtrag 35, 36, 46, 48) | Dev | laufend |
+| ~~TODO-8.19~~ | ~~Die restlichen ungetesteten Routen abarbeiten~~ — **erledigt in Nachtrag 53**: alle 38 gemessen, 3 echte Befunde (Nachtrag 46, 48, 52), 13 Verdachtsstellen entkräftet | — | erledigt |
 | TODO-8.20 | **Es gibt keine Oberfläche für die MFA-Aktivierung.** `grep -rn totp frontend/src` findet nur die Verwendung im Login. `/auth/totp/setup` und `/auth/totp/enable` sind reine API-Funktionen — ein Nutzer, der MFA aktivieren will, muss die Route von Hand aufrufen (Nachtrag 48) | Dev + UX | vor dem Pilot |
 
 ---
@@ -5059,6 +5060,75 @@ alle **durch eine fehlerhafte Messung** entstanden sind:
 Befund ausgesehen. Rettend war jedes Mal, dass ich den **Zwischenschritt
 mit ausgegeben** habe — der 403, die 0 Einträge, der 401. Ein Endresultat
 ohne den Weg dorthin ist eine Behauptung.
+
+---
+
+### Nachtrag 2026-10-19 (Nachtrag 53): Die letzten Routen der Bestandsaufnahme — alle halten
+
+Die Bestandsaufnahme hatte 38 Routen ohne Backend-Test markiert. Nach
+Nachtrag 46 (Stripe-Webhook), 48 (MFA) und 52 (Stripe-Installation) sind
+die **inhaltlich interessanten** davon durchgemessen. Der Rest, zuletzt:
+
+#### `GET /api/ebilanz/preview/:bilanzId/:guvId/:anhangId` — drei IDs, ein Mandant
+
+Die Route nimmt **drei** Objekte entgegen. Was passiert, wenn sie aus
+verschiedenen Mandanten stammen?
+
+```
+alle drei aus Mandant A                    -> 200, echte Daten
+Mischung: Bilanz aus A, GuV+Anhang aus B  -> 404 "GuV nicht gefunden"
+alle drei aus B, im Kontext von A          -> 404 "Bilanz nicht gefunden"
+```
+
+**Kein Byte aus B in der Antwort** (geprüft). Die Mandanten-Konsistenz
+über drei Objekte hinweg wird erzwungen. ✅
+
+#### `POST /api/konsolidierung/einheiten` — Mandant einer fremden Kanzlei als Tochter
+
+```
+Konsolidierungseinheit mit mutterMandantId=A,
+tochterMandantIds=[Mandant aus Kanzlei 2]
+  -> 403 "Kein Zugriff auf Mandant … (Mandant-Trennung)"
+```
+
+✅ — ein Konzern lässt sich nicht über Kanzlei-Grenzen hinweg zusammenbauen.
+
+#### `DELETE` — der destruktivste Einzelpfad
+
+| Fall | Ergebnis |
+|---|---|
+| `DELETE /anhang/:id` auf einen Mandanten einer **fremden Kanzlei** | **403**, das Objekt lebt |
+| derselbe Aufruf durch den Admin **dieser** fremden Kanzlei | 204, gelöscht |
+| `DELETE /api-keys/:id` | 204 — und der Key ist **widerrufen**, nicht gelöscht (`revokedAt` gesetzt) |
+| `DELETE /webhook-subscriptions/:id` | 204, entfernt |
+
+Beim API-Key wird die **Kanzlei des Keys** geprüft (`assertKanzleiAdminAccess(key.kanzleiId, user)`), nicht der Aufrufkontext — richtig, denn der Schlüssel gehört der Kanzlei, die ihn ausgestellt hat.
+
+#### Und die restlichen Lese-Routen
+
+```
+GET /api/branding/:kanzleiId              -> 200 (Farben, logoUrl)
+GET /api/branding/:kanzleiId/logo/blob    -> 204 (kein Logo hinterlegt)
+GET /api/subscription/:kanzleiId/portal   -> 200 {"url":"/api/subscription?mock_portal=1"}
+GET /api/wp/bilanz/:id/regeln             -> 200 []
+GET /api/wp/bilanz/:id/pruefungen         -> 200 []
+```
+
+Alle ✅.
+
+#### Stand der Bestandsaufnahme
+
+| | |
+|---|---|
+| Routen ohne Backend-Test | 38 |
+| **davon echte Befunde** | 3 (Stripe-Webhook, MFA-Aktivierung, Kreuzungstyp) |
+| **davon Verdachtsstellen, entkräftet** | 13 |
+| **davon echte Befunde mit Beleg, aber ohne Code-Änderung** | 2 (Saldoabgleich, Signatur-Bypass) |
+| **davon bewusste Lücken, dokumentiert** | 1 (Entwurfs-PDF, TODO-8.9) |
+| offen für eine Fachentscheidung | 2 (TODO-8.9, TODO-8.15) |
+
+**Die Liste ist damit abgearbeitet.** TODO-8.19 kann als erledigt gelten —
+außer den beiden Fachentscheidungen, die ausdrücklich nicht meine sind.
 
 ---
 

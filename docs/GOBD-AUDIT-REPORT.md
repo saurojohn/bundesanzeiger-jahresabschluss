@@ -4821,6 +4821,79 @@ kein Selbstzweck, sondern die Arbeitsanweisung für die Restrunde
 
 ---
 
+### Nachtrag 2026-10-19 (Nachtrag 50): Vier Routen gemessen — drei halten, und ein **Fehlalarm**, der mich fast einen Defekt melden ließ
+
+#### (1) `GET /api/jahresabschluss/:id` — Mandantentrennung
+
+```
+im Kontext des EIGENEN Mandanten   -> 200
+im Kontext eines FREMDEN Mandanten  -> 404 "Jahresabschluss nicht gefunden"
+```
+
+404 statt 403: die Existenz wird nicht verraten. ✅
+
+#### (2) `GET /api/pdf/{guv,anhang}/:id/download` — dieselbe Trennung
+
+```
+GET /api/pdf/guv/<GuV eines fremden Mandanten>       -> 404 "GuV nicht gefunden"
+GET /api/pdf/anhang/<Anhang eines fremden Mandanten> -> 404 "Anhang nicht gefunden"
+```
+
+✅
+
+#### (3) `GET /health/ready` — Blue-Green-Gate
+
+```json
+{"status":"ok","checks":{"primary":"up","replica":"disabled"},
+ "auditWriteFailures":0,"uptime":7918,"timestamp":"…"}
+```
+
+`replica: "disabled"` ist korrekt, wenn kein Replica konfiguriert ist. ✅
+
+#### (4) `GET /api/subscription/tiers` — der Fehlalarm
+
+Der Controller-Kommentar nannte die Route eine **„Pricing-Page (öffentlich)"**.
+Mein erster Aufruf **ohne Token** lieferte 401 — und ich war bereits
+davon überzeugt, hier sei derselbe Defekt wie beim Billing-Webhook
+(Nachtrag 46).
+
+**Der Browser widerlegte mich.** `SubscriptionView` ruft die Route **mit
+Token** auf, und ein Playwright-Test zeigte: die Tarife werden geladen und
+angezeigt. **Es ist kein Defekt.** Die Route liegt unter
+`/einstellungen/subscription` — in den angemeldeten Einstellungen. Dass sie
+ein JWT verlangt, ist **richtig**; eine anonym zugängliche Preisseite
+gehört auf eine Marketing-Seite, nicht in die Mandanten-Einstellungen.
+
+**Was ich daraus gemacht habe:** nur den **Kommentar** richtiggestellt. Die
+Route zu öffnen, ohne Notwendigkeit, wäre eine Verschlechterung gewesen —
+und hätte eine Behauptung in Code gegossen statt sie zu prüfen.
+
+Und der Test, den ich dafür geschrieben habe, bleibt: er sichert jetzt ab,
+dass die Tarife **tatsächlich erscheinen**. Der bestehende
+`subscription.spec.ts` prüft Checkout und Kündigen-Button — **die Tarife
+selbst prüfte er nicht**.
+
+#### Die Lehre — und sie ist die wichtigste dieser Runde
+
+Ich stand vor der Wahl: „401 ohne Token" als **Befund** melden oder als
+**Fehlalarm** erkennen. Der Unterschied war ein einziger Test in der
+echten Anwendung.
+
+Ein reiner HTTP-Aufruf **ohne den Kontext, in dem die Route benutzt
+wird**, beweist nichts. Beim Billing-Webhook war der 401 echt, weil die
+Route von Stripe **ohne** Token aufgerufen wird. Bei den Tarifen war er
+ein Artefakt meines Messaufrufs.
+
+**Merksatz:** Bevor man aus einem 401 einen Defekt macht, muss man
+**nachweisen, dass der Aufrufer ohne Token kommt**. Bei einem Webhook
+(Stripe, Bank, Behörde) ist das gegeben — bei einer Seite in den
+Einstellungen ist es die Ausnahme, und die Ausnahme muss man belegen.
+
+Der Unterschied zwischen Nachtrag 46 (echter Defekt) und Nachtrag 50
+(Fehlalarm) ist **eine Zeile im Test**: `accessToken: token`.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

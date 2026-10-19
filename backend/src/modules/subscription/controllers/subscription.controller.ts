@@ -29,7 +29,22 @@ import type { SubscriptionTier } from '../constants/subscription-tier.constants'
  * Subscription-Controller (M4 Sprint 3).
  *
  * Endpoints:
- *   - GET    /api/subscription/tiers                       — Pricing-Page (öffentlich)
+ *   - GET    /api/subscription/tiers                       — Tarife fuer die
+ *     Einstellungsseite (mit JWT; **nicht** anonym — die Seite liegt unter
+ *     /einstellungen/subscription)
+ *
+ *     BEFUND 2026-10-19 (Nachtrag 50): Hier stand „(öffentlich)". Das war
+ *     irrefuehrend — die Route hat **kein** `@Public()` und laeuft hinter dem
+ *     globalen `JwtAuthGuard`. Gemessen: ohne Token -> 401.
+ *
+ *     Das ist **kein Defekt**: `SubscriptionView` ruft die Route mit Token
+ *     auf, die Seite liegt in den angemeldeten Einstellungen, und die
+ *     Tarife werden angezeigt (mit einem Playwright-Test abgesichert).
+ *     Der Kommentar behauptete etwas Falsches — und bei einem Route-Vergleich
+ *     wie in Nachtrag 46 (Billing-Webhook) faellt so ein Kommentar sofort
+ *     als Verdacht auf. Er wird hier richtiggestellt, statt die Route
+ *     grundlos oeffentlich zu machen: eine oeffentliche Preisseite gehoert
+ *     auf eine Marketing-Seite, nicht in die Mandanten-Einstellungen.
  *   - GET    /api/subscription/:kanzleiId                  — Aktuelle Subscription
  *   - POST   /api/subscription/:kanzleiId/checkout         — Stripe-Checkout starten
  *   - POST   /api/subscription/:kanzleiId/mock-activate    — Mock-Direkt-Aktivierung (Dev)

@@ -4,18 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId, setActiveMandantId as persistActiveMandantId } from '@/lib/api';
 
-type SessionUser = {
-  id: string;
-  email: string;
-  vorname: string;
-  nachname: string;
-  globalRole: 'USER' | 'SYSTEM_ADMIN';
-  mandanten: Array<{
-    id: string;
-    firmenname: string;
-    rolle: 'GF' | 'STEUERBERATER' | 'WIRTSCHAFTSPRUEFER' | 'KANZLEI_ADMIN';
-  }>;
-};
+import type { SessionUser } from '@/lib/session';
 
 type Mandant = { id: string; firmenname: string };
 

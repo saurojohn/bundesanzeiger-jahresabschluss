@@ -313,7 +313,6 @@ export function GuvListView() {
                       entityType="guv"
                       entityId={g.id}
                       guvId={g.id}
-                      canSign
                     />
                   </td>
                   <td className="px-4 py-3 text-right">

@@ -236,4 +236,26 @@ export function setActiveMandantId(id: string | null): void {
   } else {
     localStorage.removeItem('activeMandantId');
   }
+  // BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): Der aktive Mandant stand
+  // nur in `localStorage` — und wer ihn brauchte, musste ihn **raten**:
+  // ein `useEffect`, der `localStorage` liest, sieht den Wert erst, wenn
+  // ihn jemand geschrieben hat.
+  //
+  // Das war ein Wettrennen: der `MandantSwitcher` schrieb den Mandanten in
+  // seinem eigenen Effect, die abhaengigen Komponenten lasen ihn in
+  // theirs. Wer zuerst kam, gewann — und der Signier-Knopf blieb bei
+  // manchen Nutzern unsichtbar, obwohl die Rolle vorhanden war.
+  //
+  // Das Ereignis macht den Wechsel **beobachtbar**: wer den Mandanten
+  // schreibt, meldet es; wer ihn braucht, hoert zu.
+  window.dispatchEvent(new CustomEvent(MANDANT_GEAENDERT, { detail: { id } }));
 }
+
+/**
+ * Ereignis: der aktive Mandant hat sich geaendert.
+ *
+ * `localStorage` loest beim Schreiben **kein** `storage`-Event im selben
+ * Tab aus (das passiert nur in anderen Tabs). Deshalb ein eigenes
+ * Ereignis.
+ */
+export const MANDANT_GEAENDERT = 'mandant-aktualisiert';

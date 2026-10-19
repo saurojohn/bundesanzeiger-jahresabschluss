@@ -23,9 +23,18 @@ import { expect, test, type Page } from '@playwright/test';
  * darstellt, ist gefaehrlicher als keiner.
  */
 
-async function anmelden(page: Page) {
+/**
+ * BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): Das Login ist jetzt
+ * parameterisiert. Die Signatur des **Jahresabschlusses** ist die
+ * Endabnahme und ausschliesslich dem Wirtschaftspruefer vorbehalten
+ * (`@Roles('WIRTSCHAFTSPRUEFER')` an `POST /api/signatur/sign-abschluss`).
+ * Der Test, der den Signier-Knopf prueft, muss deshalb als
+ * Wirtschaftspruefer angemeldet sein — als STEUERBERATER sieht er den
+ * Knopf nicht mehr, und genau das ist der Gegenbeweis.
+ */
+async function anmelden(page: Page, email = 'steuerberater@kanzlei.de') {
   await page.goto('http://localhost:3001/de-DE/login');
-  await page.getByLabel(/e-?mail/i).fill('steuerberater@kanzlei.de');
+  await page.getByLabel(/e-?mail/i).fill(email);
   await page.getByLabel(/passwort/i).fill('Demo123!');
   await page.getByRole('button', { name: /anmelden/i }).click();
   await page.waitForURL('**/de-DE/dashboard', { timeout: 30_000 });
@@ -64,9 +73,36 @@ async function saetzeAnlegen(
       h['x-mandant-id'] = m.id;
       localStorage.setItem('activeMandantId', m.id);
 
+      // BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): `POST /api/bilanz` ist
+      // auf STEUERBERATER und KANZLEI_ADMIN beschraenkt — ein
+      // Wirtschaftspruefer darf **nicht** anlegen, er darf pruefen und
+      // signieren.
+      //
+      // Der Test "der Signier-Knopf ist belegt" laeuft aber als
+      // Wirtschaftspruefer (die Endabnahme ist seine Sache). Die Saetze
+      // entstehen deshalb mit einem **eigenen** Berater-Token, waehrend die
+      // Browser-Sitzung die des Wirtschaftspruefers bleibt.
+      //
+      // Der erste Versuch lief komplett als Wirtschaftspruefer und scheiterte
+      // an der Fixture: "Bilanz 403". Das war kein Testfehler, sondern die
+      // Rollenbindung — sie gehoert in die Fixture, nicht in den Test.
+      const beraterLogin = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'steuerberater@kanzlei.de',
+          password: 'Demo123!',
+        }),
+      });
+      if (beraterLogin.status !== 200) {
+        return { ok: false as const, grund: `Berater-Login ${beraterLogin.status}` };
+      }
+      const beraterToken = (await beraterLogin.json()) as { accessToken: string };
+      const bh = { ...h, Authorization: `Bearer ${beraterToken.accessToken}` };
+
       const bilanz = await fetch(`/api/bilanz?mandantId=${m.id}`, {
         method: 'POST',
-        headers: h,
+        headers: bh,
         body: JSON.stringify({
           mandantId: m.id,
           geschaeftsjahr: j,
@@ -94,7 +130,7 @@ async function saetzeAnlegen(
 
       const guv = await fetch(`/api/guv?mandantId=${m.id}`, {
         method: 'POST',
-        headers: h,
+        headers: bh,
         body: JSON.stringify({
           mandantId: m.id,
           geschaeftsjahr: j,
@@ -114,7 +150,7 @@ async function saetzeAnlegen(
 
       const anhang = await fetch(`/api/anhang?mandantId=${m.id}`, {
         method: 'POST',
-        headers: h,
+        headers: bh,
         body: JSON.stringify({
           mandantId: m.id,
           geschaeftsjahr: j,
@@ -143,7 +179,7 @@ async function saetzeAnlegen(
       ] as const) {
         const r = await fetch(`${url}/${id}?mandantId=${m.id}`, {
           method: 'PATCH',
-          headers: h,
+          headers: bh,
           body: JSON.stringify({ status: 'VALIDATED' }),
         });
         if (r.status !== 200) {
@@ -272,7 +308,9 @@ test('ein nicht vollstaendiger Abschluss wird als Fehlschlag gezeigt', async ({
 
 test('der Signier-Knopf ist belegt und öffnet den P12-Dialog', async ({ page }) => {
   test.setTimeout(90_000);
-  await anmelden(page);
+  // **Wirtschaftspruefer**: die Signatur des Jahresabschlusses ist die
+  // Endabnahme und steht nur diesem offen (Nachtrag 57).
+  await anmelden(page, 'wp@kanzlei.de');
 
   const jahr = 2081;
   await saetzeAnlegen(page, jahr, true);
@@ -317,6 +355,36 @@ test('der Signier-Knopf ist belegt und öffnet den P12-Dialog', async ({ page })
     page.locator('div.fixed input[type="file"]').first(),
     'der Dialog muss eine P12-Datei entgegennehmen',
   ).toBeAttached();
+});
+
+test('ein STEUERBERATER sieht den Signier-Knopf des Jahresabschlusses nicht', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await anmelden(page);
+
+  // Abschluss auf FINALIZED bringen: der Knopf ist **nicht** wegen des
+  // Status unsichtbar, sondern wegen der Rolle. Ohne FINALIZED waere der
+  // Test nicht aussagekraeftig — der Knopf waere auch fuer einen
+  // Wirtschaftspruefer weg.
+  const jahr = 2083;
+  await saetzeAnlegen(page, jahr, true);
+  await abschlussAnlegen(page, jahr);
+
+  const zeile = page.locator('tr', { hasText: String(jahr) }).first();
+  await zeile.getByRole('button', { name: /abschlie/i }).click();
+  await expect(zeile, 'der Status muss auf FINALIZED stehen').toContainText(
+    'Finalisiert',
+    { timeout: 20_000 },
+  );
+
+  await expect(
+    zeile.getByTestId('jahresabschluss-signieren'),
+    'ein STEUERBERATER darf den Jahresabschluss nicht signieren ' +
+      '(sign-abschluss: nur WIRTSCHAFTSPRUEFER) — der Knopf darf nicht ' +
+      'erscheinen, sonst laeuft der Anwender nach P12-Upload und Passwort ' +
+      'in einen 403',
+  ).toHaveCount(0);
 });
 
 test('bei DRAFT ist der Signier-Knopf nicht sichtbar', async ({ page }) => {

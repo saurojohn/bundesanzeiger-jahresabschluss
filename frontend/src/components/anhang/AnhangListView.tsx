@@ -223,7 +223,6 @@ export function AnhangListView() {
                 entityType="anhang"
                 entityId={a.id}
                 anhangId={a.id}
-                canSign
               />
               <button
                 type="button"

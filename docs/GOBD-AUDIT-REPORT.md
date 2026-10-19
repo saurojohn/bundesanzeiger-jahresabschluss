@@ -3373,7 +3373,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
-| TODO-8.12 | Der Signier-Knopf ist an 5 Stellen **ohne Rollenprüfung** sichtbar; `POST /signatur/*` ist auf `WIRTSCHAFTSPRUEFER` beschränkt. Ein STEUERBERATER trägt P12 hoch, gibt das Passwort ein und erhält 403. `GET /api/auth/me` liefert die Rolle — die Auswertung fehlt (Nachtrag 38) | Dev + UX | Sprint 5 |
+| ~~TODO-8.12~~ | ~~Der Signier-Knopf war an 5 Stellen ohne Rollenprüfung sichtbar~~ — **erledigt in Nachtrag 57**: die Sichtbarkeit hängt jetzt an **einer** Stelle (`lib/session.ts`) und bildet den `RolesGuard` mandantenbezogen ab. Die TODO-Formulierung war dabei ungenau: `sign-bilanz/guv/anhang` erlauben **auch** `STEUERBERATER`, nur `sign-abschluss` ist WP-only — gemessen am Controller, nicht angenommen | — | erledigt |
 | TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | TODO-8.14 | **Ungeklärt, eingegrenzt (Nachtrag 43):** Der Eintrag `seq=249` wurde **einmal** gehasht, mit `mandantId="074e…"` und einem before/after-`newState`. In der Datenbank steht `mandantId = null` und ein **Mandant-Schnappschuss** als `newState`. Die Anwendung hat **genau eine** `auditLog.update`-Stelle (die Hash-Schreibung selbst). Die Zeile wurde also von außerhalb dieser Anwendung verändert — Beleg unten | Dev + Compliance | Sprint 5 |
 | ~~TODO-8.14~~ | ~~Zweiter Schreiber auf der Audit-Kette identifizieren~~ — **erledigt in Nachtrag 54**: es war die **Datenbank** (Prisma `SetNull` auf `AuditLog.mandantId` beim Löschen eines Mandanten), nicht ein fremder Prozess. Der Hash schützt jetzt den Inhalt, nicht die veränderbaren Fremdschlüssel | — | erledigt |
@@ -5502,6 +5502,127 @@ geschrieben, die der Entwickler benutzt — und von der CI gelesen, die eine
 andere benutzt. Die beiden muessen **dieselbe Major-Version** haben, sonst
 schreibt der Entwickler ein Lockfile, das die CI nicht installieren kann.
 Das ist im Repo als Pflicht festgehalten (siehe `AGENTS.md` § 3.7).
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 57): Der Signier-Knopf war fuer jeden sichtbar — und die Regel stand an fuenf Stellen
+
+#### Der Befund
+
+TODO-8.12: *„Der Signier-Knopf ist an 5 Stellen ohne Rollenpruefung sichtbar.
+Ein STEUERBERATER traegt P12 hoch, gibt das Passwort ein und erhaelt 403."*
+
+**Die Formulierung war ungenau — und genau das waere beim Beheben teuer
+geworden.** Gemessen an den Dekoratoren des Controllers:
+
+| Route | `@Roles(...)` |
+|---|---|
+| `sign-bilanz` | WIRTSCHAFTSPRUEFER, STEUERBERATER |
+| `sign-guv` | WIRTSCHAFTSPRUEFER, STEUERBERATER |
+| `sign-anhang` | WIRTSCHAFTSPRUEFER, STEUERBERATER |
+| `sign-abschluss` | WIRTSCHAFTSPRUEFER **nur** |
+| `inspect-p12` | WIRTSCHAFTSPRUEFER, STEUERBERATER |
+
+Ein STEUERBERATER darf also **Bestandteile** signieren — der 403 traf nur
+den **Jahresabschluss** (und jeden, der gar keine Signaturrolle hat, etwa
+den KANZLEI_ADMIN). Wer die TODO-Formulierung fuer eine Sperre genommen
+haette, haette den Beratern eine erlaubte Faehigkeit weggenommen.
+
+#### Die Ursache: die Regel stand am Aufrufer
+
+```tsx
+<ExportActions ... canSign />     // 4 Aufrufstellen
+```
+
+`canSign` war ein **Prop** — eine Eigenschaft des Aufrufers. Das ist die
+falsche Seite: die Regel wurde an vier Stellen (plus dem Jahresabschluss-
+Knopf) festgeschrieben, und sie war an **allen** falsch. `canSign` stand
+bedingungslos auf `true`.
+
+#### Die Behebung: eine Stelle, mandantenbezogen
+
+Neu: `frontend/src/lib/session.ts`. Die Regel steht jetzt dort und nirgends
+sonst:
+
+```ts
+export const SIGNATUR_ROLLEN = ['WIRTSCHAFTSPRUEFER', 'STEUERBERATER'];
+export const SIGNATUR_ABSCHLUSS_ROLLEN = ['WIRTSCHAFTSPRUEFER'];
+```
+
+`ExportActions` ermittelt die Berechtigung **selbst** — das `canSign`-Prop
+ist entfallen. Damit kann eine Aufrufstelle die Regel nicht mehr umgehen,
+weil es nichts mehr zu setzen gibt.
+
+**Mandantenbezogen**, genau wie der `RolesGuard` (Nachtrag 40): eine Rolle
+aus einem anderen Mandanten berechtigt nicht. Die Oberflaeche bildet drei
+Feinheiten des Guards ab:
+
+1. **Alle** Rollen des Mandanten zaehlen, nicht die erste (ein User kann auf
+   demselben Mandanten mehrere Rollen haben).
+2. Eine Rolle aus einem anderen Mandanten berechtigt nicht.
+3. `SYSTEM_ADMIN` darf alles.
+
+Der `SessionUser`-Typ stand dabei an zwei Stellen kopiert (`AppHeader.tsx`,
+`WPView.tsx`) — jetzt gibt es eine Quelle.
+
+#### Der zweite Fund: ein Wettrennen zwischen zwei Effects
+
+Der erste Lauf der neuen Tests schlug **fehl** — und zwar in den positiven
+Faellen: der Knopf war fuer den Wirtschaftspruefer **nicht** sichtbar.
+
+Ursache: der aktive Mandant stand nur in `localStorage`, und wer ihn
+brauchte, musste ihn **raten**:
+
+- der `MandantSwitcher` **schrieb** ihn in seinem eigenen Effect,
+- die abhaengigen Komponenten **lasen** ihn in ihrem eigenen Effect.
+
+Wer zuerst kam, gewann. Bei manchen Nutzern blieb der Knopf unsichtbar,
+obwohl die Rolle vorhanden war — der Test schlug genau an dieser Stelle
+fehl. Und der KANZLEI_ADMIN-Test war **gruen aus dem falschen Grund**: der
+Knopf fehlte, weil der Mandant nicht aufgeloest war, nicht weil die Rolle
+fehlte. Ein gruener Test aus dem falschen Grund ist schlimmer als ein
+roter: er sieht aus wie ein Beweis und ist keiner.
+
+**Behoben, zweistufig:**
+
+1. **Eine Berechnung statt zwei.** `aktiverMandantId(user)` in
+   `lib/session.ts` macht genau das, was der `MandantSwitcher` macht:
+   gespeicherter Wert, wenn er dem User gehoert — sonst der erste Mandant
+   des Users. Beide benutzen jetzt dieselbe Funktion.
+2. **Ein Ereignis statt Hoffnung.** `localStorage` loest beim Schreiben
+   **kein** `storage`-Event im selben Tab aus (nur in anderen Tabs).
+   Deshalb ein eigenes Ereignis `MANDANT_GEAENDERT`: wer den Mandanten
+   schreibt, meldet es; wer ihn braucht, hoert zu. `MandantSwitcher`
+   schreibt deshalb ueber `setActiveMandantId()` statt direkt in
+   `localStorage`.
+
+#### Die Tests
+
+`frontend/e2e/signatur-berechtigung.spec.ts` (neu) und ein Fall in
+`jahresabschluss.spec.ts`:
+
+| Nutzer | Erwartung | Warum |
+|---|---|---|
+| STEUERBERATER | GuV-Knopf **sichtbar** | `sign-guv` erlaubt STEUERBERATER |
+| KANZLEI_ADMIN | **kein** Knopf | keine Signaturrolle |
+| WIRTSCHAFTSPRUEFER | Knopf **sichtbar** | `sign-guv` erlaubt WP |
+| STEUERBERATER | Jahresabschluss-Knopf **nicht** sichtbar | `sign-abschluss`: nur WP |
+
+**Ein bestehender Test musste angepasst werden:** `jahresabschluss.spec.ts`
+loggte sich als STEUERBERATER ein und erwartete, dass der
+Jahresabschluss-Knopf sichtbar ist — also genau den Knopf, der mit 403
+endet. Der Test prueft jetzt als Wirtschaftspruefer (der Fall, in dem der
+Knopf **da sein darf**), und ein neuer Fall belegt das Gegenteil.
+
+Das ist der eigentliche Wert des Befunds: Der Test hat den Fehler
+**festgeschrieben**. Er war nicht falsch formuliert — er beschrieb die
+Oberflaeche, die es gab, und die Oberflaeche war falsch.
+
+#### Die Negativprobe
+
+Zurueckgebaut: die Regel wieder in die Aufrufstellen (`canSign` bedingungslos
+setzen, `useSignaturBerechtigung` umgehen) — der Knopf erscheint wieder fuer
+jeden, und die Tests schlagen um.
 
 ---
 

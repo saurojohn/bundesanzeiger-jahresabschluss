@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { P12UploadDialog } from '@/components/signatur/P12UploadDialog';
+import { useSignaturBerechtigung } from '@/lib/session';
 
 type JahresabschlussSummary = {
   id: string;
@@ -35,6 +36,19 @@ export function JahresabschlussView() {
   const [jahr, setJahr] = useState(2025);
   /** Abschluss, dessen Signatur-Dialog offen ist (null = keiner). */
   const [signierZiel, setSignierZiel] = useState<string | null>(null);
+
+  // BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): Die Signatur des
+  // **Jahresabschlusses** ist die Endabnahme — sie ist ausschliesslich dem
+  // Wirtschaftspruefer vorbehalten (`@Roles('WIRTSCHAFTSPRUEFER')` an
+  // `POST /api/signatur/sign-abschluss`).
+  //
+  // Der Knopf war trotzdem fuer jeden sichtbar. Ein STEUERBERATER hat ihn
+  // gedrueckt, den P12 hochgeladen, das Passwort eingegeben — und **403**
+  // bekommen. Nach der ganzen Arbeit.
+  //
+  // Die Regel ist mandantenbezogen: wer auf einem anderen Mandanten
+  // Wirtschaftspruefer ist, ist es auf diesem nicht.
+  const darfAbschlussSignieren = useSignaturBerechtigung('abschluss');
 
   useEffect(() => {
     void loadList();
@@ -274,7 +288,7 @@ export function JahresabschlussView() {
                           Signatur ausschließlich in diesem Zustand zu
                           (Nachtrag 35) — bei `DRAFT` und bei `SIGNED` wäre der
                           Knopf eine Einladung zu einer 409. */}
-                      {j.status === 'FINALIZED' && (
+                      {j.status === 'FINALIZED' && darfAbschlussSignieren && (
                         <button
                           type="button"
                           onClick={() => setSignierZiel(j.id)}

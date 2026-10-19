@@ -421,7 +421,6 @@ export function BilanzForm({
             bilanzId={savedBilanzId}
             guvId={relatedIds.guvId}
             anhangId={relatedIds.anhangId}
-            canSign
           />
         </div>
       )}

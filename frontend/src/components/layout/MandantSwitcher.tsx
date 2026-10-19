@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
+import { setActiveMandantId } from '@/lib/api';
+import type { MandantRolle } from '@/lib/session';
 
 type MandantAccess = {
   id: string;
   firmenname: string;
-  rolle: 'GF' | 'STEUERBERATER' | 'WIRTSCHAFTSPRUEFER' | 'KANZLEI_ADMIN';
+  rolle: MandantRolle;
 };
 
 export function MandantSwitcher({
@@ -32,14 +34,18 @@ export function MandantSwitcher({
       // Wechseln über das Dropdown.
       const initial = userMandanten[0].id;
       setActiveId(initial);
-      localStorage.setItem('activeMandantId', initial);
+      // Ueber den Setter, nicht direkt in localStorage: der Setter meldet
+      // den Wechsel per Ereignis (siehe `lib/api.ts`). Wer den aktiven
+      // Mandanten auswertet — z.B. die Signier-Berechtigung — erfahrt
+      // sonst nie, dass er sich geaendert hat.
+      setActiveMandantId(initial);
     }
   }, [userMandanten]);
 
   function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
     setActiveId(id);
-    localStorage.setItem('activeMandantId', id);
+    setActiveMandantId(id);
     // Trigger page reload to apply new context
     window.location.reload();
   }

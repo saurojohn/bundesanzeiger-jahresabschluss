@@ -6,18 +6,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { MandantSwitcher } from './MandantSwitcher';
 import { apiFetch } from '@/lib/api';
 
-type SessionUser = {
-  id: string;
-  email: string;
-  vorname: string;
-  nachname: string;
-  globalRole: 'USER' | 'SYSTEM_ADMIN';
-  mandanten: Array<{
-    id: string;
-    firmenname: string;
-    rolle: 'GF' | 'STEUERBERATER' | 'WIRTSCHAFTSPRUEFER' | 'KANZLEI_ADMIN';
-  }>;
-};
+import type { SessionUser } from '@/lib/session';
 
 type NavItem = {
   href: string;

@@ -302,7 +302,6 @@ export function BilanzListView() {
                       entityType="bilanz"
                       entityId={b.id}
                       bilanzId={b.id}
-                      canSign
                     />
                     <button
                       type="button"

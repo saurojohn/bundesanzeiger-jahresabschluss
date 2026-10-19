@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { P12UploadDialog } from '@/components/signatur/P12UploadDialog';
+import { useSignaturBerechtigung } from '@/lib/session';
 
 type EntityType = 'bilanz' | 'guv' | 'anhang' | 'abschluss';
 type ExportKind = 'ebilanz' | 'datev' | 'signatur';
@@ -14,19 +15,31 @@ export function ExportActions({
   guvId,
   bilanzId,
   anhangId,
-  canSign = false,
 }: {
   entityType: EntityType;
   entityId: string;
   guvId?: string;
   bilanzId?: string;
   anhangId?: string;
-  canSign?: boolean;
 }) {
   const t = useTranslations();
   const [busy, setBusy] = useState<ExportKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signOpen, setSignOpen] = useState(false);
+
+  // BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): Die Sichtbarkeit des
+  // Signier-Knopfes war eine **Eigenschaft des Aufrufers** (`canSign` als
+  // Prop, an vier Stellen unbedingt gesetzt). Damit stand die Entscheidung
+  // dort, wo sie am leichtesten vergessen wird — und sie war an allen
+  // vier Stellen falsch: kein STEUERBERATER darf den Abschluss
+  // signieren, und ein KANZLEI_ADMIN darf gar nicht signieren.
+  //
+  // Die Entscheidung gehoert an **eine** Stelle: hier. Das `canSign`-Prop
+  // ist deshalb entfallen. Eine Aufrufstelle kann die Regel jetzt nicht
+  // mehr umgehen, weil es nichts mehr zu setzen gibt.
+  const kannSignieren = useSignaturBerechtigung(
+    entityType === 'abschluss' ? 'abschluss' : 'bestandteil',
+  );
 
   async function downloadBlob(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
@@ -150,7 +163,7 @@ export function ExportActions({
             : t('exports.datev.generate')}
         </button>
 
-        {canSign && (
+        {kannSignieren && (
           <button
             type="button"
             onClick={() => setSignOpen(true)}

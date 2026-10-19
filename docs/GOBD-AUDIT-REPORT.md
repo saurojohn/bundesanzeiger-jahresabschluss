@@ -4422,6 +4422,7 @@ vergessen, und es gibt keinen Wächter, der es merkt.
 |---|---|---|---|
 | TODO-8.16 | `dns.controller.ts` verspricht im Kommentar eine Rollenbindung, die nur im Service existiert. Entweder `@Roles` an die Route heben oder den Kommentar auf die Wirklichkeit korrigieren („Autorisierung im Service, siehe `assertKanzleiAdminAccess`") — sonst wird sie beim Refaktorieren stillschweigend vergessen | Dev | Sprint 5 |
 | TODO-8.18 | **Nachtrag 46 behoben.** Vor dem Pilot den Zahlungsweg einmal **echt** durchspielen: Checkout → Stripe sendet Webhook → Tarifwechsel sichtbar. Der Mock-Provider liefert für `handleWebhook()` immer `null`, der Pilotbetrieb prüft den Weg also nicht | Produkt + Dev | **vor dem ersten bezahlten Mandanten** |
+| ~~TODO-8.18~~ | ~~Zahlungsweg vor dem ersten bezahlten Mandanten echt durchspielen~~ — **erledigt in Nachtrag 52**: `backend/scripts/verify-billing-webhook.sh` startet das Backend im Stripe-Modus und nimmt den Zahlungsweg ab (korrekt signiert → Tarif wechselt; gefälscht → nichts). Einmal vor dem ersten bezahlten Mandanten laufen lassen | — | **vor dem ersten bezahlten Mandanten** ausführen |
 | TODO-8.19 | **Nachtrag 48 behoben.** `GET /api/api-keys` (Secret-Maskierung) und die übrigen 33 ungetesteten Routen nach und nach durchgehen — das Muster „nie aktiviert, nie getestet" hat heute vier echte Befunde geliefert (Nachtrag 35, 36, 46, 48) | Dev | laufend |
 | TODO-8.20 | **Es gibt keine Oberfläche für die MFA-Aktivierung.** `grep -rn totp frontend/src` findet nur die Verwendung im Login. `/auth/totp/setup` und `/auth/totp/enable` sind reine API-Funktionen — ein Nutzer, der MFA aktivieren will, muss die Route von Hand aufrufen (Nachtrag 48) | Dev + UX | vor dem Pilot |
 
@@ -4939,6 +4940,125 @@ speicherte, verwies auf einen Datensatz, den es nie gab. Hier wird
 **Merksatz für eigene Arbeit:** Ein 501 mit Begründung ist ein
 korrekter Umgang mit einer Lücke. Ein 202 mit erfundener ID ist es
 nicht — auch nicht, wenn der Endpoint „in Arbeit" ist.
+
+---
+
+### Nachtrag 2026-10-19 (Nachtrag 52): Der Zahlungsweg war **nicht installierbar** — mit `STRIPE_SECRET_KEY` startete die ganze Anwendung nicht
+
+**Der schwerwiegendste Befund der gesamten Prüfrunde — und er fiel bei der
+Umsetzung von TODO-8.18, nicht bei der Suche nach ihm.**
+
+#### Der Fund
+
+Das `stripe`-Paket stand in **keiner** `package.json` und war nicht
+installiert. `BillingProviderService` wirft beim Konstruieren, sobald
+`STRIPE_SECRET_KEY` gesetzt ist:
+
+```
+Error: Stripe-SDK fehlt. Installiere mit: cd backend && npm install stripe
+    at StripeProvider.verifyStripeInstalled (billing-provider.service.ts:170)
+    at new StripeProvider (billing-provider.service.ts:158)
+    at new BillingProviderService (billing-provider.service.ts:73)
+    at Injector.instantiateClass
+```
+
+Gemessen, durch Starten des Backends mit `STRIPE_SECRET_KEY`:
+
+```
+$ STRIPE_SECRET_KEY=sk_test_… npx ts-node src/main.ts
+$ curl http://localhost:3000/health
+HTTP 000            ← der Server antwortet gar nicht
+```
+
+**Die Anwendung startet nicht.** Nicht „die Zahlungsseite ist kaputt" —
+**alle Kanzleien, alle Benutzer, die ganze Plattform ist unten.** Und der
+Fehler fällt genau in dem Moment auf, in dem man Stripe **konfiguriert**,
+also beim Going-live. Wer die Konfiguration zum ersten Mal setzt, bekommt
+einen Server, der nicht startet, und eine Fehlermeldung, die nach einem
+fehlenden `npm install` aussieht.
+
+#### Warum das so lange unbemerkt blieb
+
+Der Code ist **richtig gebaut** — er prüft die Signatur über Stripe'
+`constructEvent`, er braucht den rohen Body, er prüft den Provider-Modus.
+Nur die **Abhängigkeit** fehlte. Und weil im Pilot der Mock-Provider läuft
+(`handleWebhook()` liefert immer `null`), wird der Stripe-Pfad **nie
+berührt** — weder beim Test noch im Betrieb.
+
+Der Lazy-Load-Kommentar im Code sagt: *„Damit bleibt das Backend auch ohne
+`npm install stripe` lauffähig."* Das ist richtig — und genau deshalb ist
+der Fehler so leicht zu übersehen: Der Zustand „ohne Stripe" ist der
+Normalzustand, der Zustand „mit Stripe" der Ausnahmezustand — und der
+Ausnahmezustand war nie lauffähig.
+
+#### Behoben
+
+`stripe` ist jetzt eine reguläre Abhängigkeit (`"stripe": "^23.0.0"`).
+`npm ci` installiert sie, und der Start mit `STRIPE_SECRET_KEY` gelingt:
+
+```
+[Nest] [StripeProvider]        Stripe-SDK gefunden
+[Nest] [BillingProviderService] Billing-Provider: STRIPE (Live-Mode)
+$ curl /health  ->  HTTP 200
+```
+
+**Nicht** geändert: das Fail-fast beim Start. Ein defekter Zahlungsanbieter
+muss die Anwendung **nicht** stillschweigend mit einem Mock-Betreiber
+weiterlaufen lassen — wer Stripe konfiguriert hat, will echte Zahlungen,
+und ein stilles Umschalten auf Mock wäre das Gegenteil von „fail-closed".
+Der Start bricht ab, und nach dieser Korrektur bricht er nur noch ab, wenn
+die Abhängigkeit wirklich fehlt.
+
+#### Und die Abnahme, die dazugehört (TODO-8.18)
+
+`backend/scripts/verify-billing-webhook.sh` startet das Backend im
+**Stripe-Modus**, prüft, dass der Provider wirklich `STRIPE` ist (nicht
+Mock), und führt `e2e/billing-webhook-stripe.e2e.spec.ts` aus:
+
+| Fall | Erwartung |
+|---|---|
+| korrekt signiertes Webhook (mit dem echten SDK signiert) | 200 `{received:true}` **und** `kanzlei.subscriptionTier` wechselt |
+| gefälschte Signatur | nicht 200, **Tarif bleibt unverändert** |
+| mit dem **leeren** Secret gerechnete Signatur | nicht 200, Tarif bleibt unverändert |
+
+Der dritte Fall ist der fail-closed-Nachweis aus Nachtrag 46: Wäre der
+Default wieder `''`, könnte genau diese Signatur jemand berechnen.
+
+**Negativprobe der Abnahme** (`@Public()` entfernt, Skript neu gestartet):
+
+```
+× ein korrekt signiertes Webhook setzt den Tarif
+    Antwort: {"message":"Nicht authentifiziert",…}: expected 401 to be 200
+
+FEHLGESCHLAGEN — der Zahlungsweg ist NICHT abgenommen.
+```
+
+**Im Pilotbetrieb wird diese Abnahme nicht ausgeführt** — dort fehlen die
+Variablen, und `describe.skipIf` lässt die Spec überspringen. Das ist
+Absicht: Eine Abnahme, die ihr Ziel nicht erreicht, ist keine Abnahme. Sie
+muss **einmal vor dem ersten bezahlten Mandanten** laufen, und zwar gegen
+eine Umgebung mit echtem `STRIPE_WEBHOOK_SECRET`.
+
+#### Und noch eine Klasse, die man nur durch Messen sieht
+
+Bei der Suche nach diesem Befund habe ich drei Test-Artefakte gefunden, die
+alle **durch eine fehlerhafte Messung** entstanden sind:
+
+1. Ein neu angelegter Mandant war dem Admin **nicht zugewiesen** — die
+   Bilanz-Erstellung schlug mit 403 fehl, das „Löschen mit Daten" war damit
+   sinnlos, und ich hätte „409 verhindert das Löschen" gemeldet, ohne je
+   Daten angelegt zu haben.
+2. `GET /api/api-keys` lieferte **0 Einträge**, weil der Key nicht erzeugt
+   worden war — ich hätte „die Liste gibt kein Secret aus" gemeldet, ohne
+   jemals eine Liste gesehen zu haben.
+3. `GET /api/subscription/tiers` lieferte **401**, weil ich **ohne Token**
+   gerufen hatte — ich war bereits sicher, das sei derselbe Defekt wie beim
+   Billing-Webhook (Nachtrag 46). Der Browser widerlegte mich.
+
+**Merksatz:** In allen drei Fällen hätte das Zwischenresultat als
+Befund ausgesehen. Rettend war jedes Mal, dass ich den **Zwischenschritt
+mit ausgegeben** habe — der 403, die 0 Einträge, der 401. Ein Endresultat
+ohne den Weg dorthin ist eine Behauptung.
 
 ---
 

@@ -22,7 +22,7 @@ import { expect, test, type Page } from '@playwright/test';
  * der Defekt unbemerkt.
  */
 
-const TARIFE = ['PILOT', 'PROFESSIONAL', 'PREMIUM'];
+const TARIFE = ['PILOT', 'STANDARD', 'PREMIUM'];
 
 /** Anmeldung — ohne sie laeuft die Seite in die Anmeldemaske. */
 async function anmelden(page: Page, email = 'kanzlei-admin@kanzlei.de') {

@@ -4500,7 +4500,7 @@ Risiko dokumentiert und **nicht** eingebaut.
 
 ---
 
-### Nachtrag 2026-10-19 (Nachtrag 46): Stripe konnte nie ein Webhook zustellen — und die Reparat��� hätte eine Tür geöffnet
+### Nachtrag 2026-10-19 (Nachtrag 46): Stripe konnte nie ein Webhook zustellen — und die Reparatur hätte eine Tür geöffnet
 
 **Der schwerwiegendste Betriebsdefekt der Prüfrunde.** Gefunden, weil eine
 Route aus der Bestandsaufnahme ungetestet war und deshalb **nie einen

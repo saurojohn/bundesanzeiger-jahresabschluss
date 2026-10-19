@@ -4421,12 +4421,12 @@ vergessen, und es gibt keinen Wächter, der es merkt.
 
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
-| TODO-8.16 | `dns.controller.ts` verspricht im Kommentar eine Rollenbindung, die nur im Service existiert. Entweder `@Roles` an die Route heben oder den Kommentar auf die Wirklichkeit korrigieren („Autorisierung im Service, siehe `assertKanzleiAdminAccess`") — sonst wird sie beim Refaktorieren stillschweigend vergessen | Dev | Sprint 5 |
+| ~~TODO-8.16~~ | ~~dns.controller.ts: Kommentar korrigiert~~ — **erledigt in Nachtrag 55**: die Sperre liegt bewusst im Service (Mandantenzugehörigkeit kann ein Rollen-Dekorator nicht ausdrücken); der Kommentar benennt das jetzt | — | erledigt |
 | TODO-8.18 | **Nachtrag 46 behoben.** Vor dem Pilot den Zahlungsweg einmal **echt** durchspielen: Checkout → Stripe sendet Webhook → Tarifwechsel sichtbar. Der Mock-Provider liefert für `handleWebhook()` immer `null`, der Pilotbetrieb prüft den Weg also nicht | Produkt + Dev | **vor dem ersten bezahlten Mandanten** |
 | ~~TODO-8.18~~ | ~~Zahlungsweg vor dem ersten bezahlten Mandanten echt durchspielen~~ — **erledigt in Nachtrag 52**: `backend/scripts/verify-billing-webhook.sh` startet das Backend im Stripe-Modus und nimmt den Zahlungsweg ab (korrekt signiert → Tarif wechselt; gefälscht → nichts). Einmal vor dem ersten bezahlten Mandanten laufen lassen | — | **vor dem ersten bezahlten Mandanten** ausführen |
 | TODO-8.19 | **Nachtrag 48 behoben.** `GET /api/api-keys` (Secret-Maskierung) und die übrigen 33 ungetesteten Routen nach und nach durchgehen — das Muster „nie aktiviert, nie getestet" hat heute vier echte Befunde geliefert (Nachtrag 35, 36, 46, 48) | Dev | laufend |
 | ~~TODO-8.19~~ | ~~Die restlichen ungetesteten Routen abarbeiten~~ — **erledigt in Nachtrag 53**: alle 38 gemessen, 3 echte Befunde (Nachtrag 46, 48, 52), 13 Verdachtsstellen entkräftet | — | erledigt |
-| TODO-8.20 | **Es gibt keine Oberfläche für die MFA-Aktivierung.** `grep -rn totp frontend/src` findet nur die Verwendung im Login. `/auth/totp/setup` und `/auth/totp/enable` sind reine API-Funktionen — ein Nutzer, der MFA aktivieren will, muss die Route von Hand aufrufen (Nachtrag 48) | Dev + UX | vor dem Pilot |
+| ~~TODO-8.20~~ | ~~Es gibt keine Oberfläche für die MFA-Aktivierung~~ — **erledigt in Nachtrag 55**: `Einstellungen → Sicherheit` mit `MfaSettings` (Status, QR-Code/Secret, Code + Passwort zum Ein- und Ausschalten), Navigationseintrag, deutsche Labels, Playwright-Test mit Negativprobe | — | erledigt |
 
 ---
 
@@ -5226,6 +5226,85 @@ Ausschluss der Fremdschlüssel entfernt, Server neu gestartet:
 Regressions-test: `audit-kette-mandant-loeschung.e2e.spec.ts` — legt einen
 Mandanten an, prüft die Kette, löscht ihn, prüft die Kette **und** dass der
 Audit-Eintrag mit `mandantId = null` erhalten bleibt.
+
+---
+
+### Nachtrag 2026-10-19 (Nachtrag 55): Drei Lücken geschlossen — MFA war vorhanden, aber unerreichbar
+
+#### TODO-8.17: Ein abgebrochener Testlauf beschaedigte den Audit-Trail
+
+`audit-integrity.service.spec.ts` raeumt seine Zeilen nach `entityId:
+hash-chain-test-<Date.now()>` auf — **nach genau diesem Tag**. Ein
+abgebrochener Lauf hinterlaess Zeilen, die **kein folgender Lauf mehr
+entfernen kann** (dessen Tag ist ein anderer). Diese Zeilen sind ungehasht
+oder falsch verkettet und liegen in der Kette mit `kanzleiId = null` — jede
+spaetere Pruefung der gesamten Kette liefert dann **PARTIAL statt OK**.
+
+Ein abgebrochener Testlauf hat damit den Audit-Trail der Entwicklungsdatenbank
+beschaedigt. Behoben: **fester Praefix**, und es wird **vor und nach** dem
+Lauf aufgeraeumt — damit ist in jedem Lauf alles raeumbar, was der
+vorherige hinterlassen hat.
+
+#### TODO-8.16: Eine Zusage im Kommentar, die 60 Zeilen tiefer eingeloest war
+
+Der `dns.controller.ts` versprach im Kommentar *„Beide erfordern
+KANZLEI_ADMIN oder SYSTEM_ADMIN"* — der Controller trägt weder `@Roles` noch
+`@RequireMandant`, und der globale `RolesGuard` lässt eine Route ohne
+`@Roles` durch. Die Autorisierung liegt **ausschließlich** im Service.
+
+Gemessen (Nachtrag 44): die Sperre **hält**, auch kanzleiübergreifend. Der
+Kommentar wurde trotzdem richtiggestellt, mit der Begründung — und **ohne**
+`@Roles` nachzuziehen: die Mandantenzugehörigkeit (diese Kanzlei, nicht eine
+andere) kann ein Rollen-Dekorator gar nicht ausdrücken. Ein Rollen-Dekorator
+**zusätzlich** zum Service einzuziehen hieße, die Regel auf zwei Orte zu
+verteilen.
+
+#### TODO-8.20: MFA war vorhanden — und von niemandem benutzbar
+
+`/auth/totp/setup`, `/auth/totp/enable` und `/auth/totp/disable` waren
+vorhanden, korrekt abgesichert (Nachtrag 48) — und **von der Oberfläche aus
+nicht erreichbar**. `grep -rn "totp" frontend/src` fand nur die Verwendung im
+Login.
+
+Das ist die unangenehmste Lücke: Die Funktion existiert, sie ist richtig, und
+**niemand kann sie benutzen**. Wer MFA aktivieren wollte, musste die Route
+von Hand aufrufen.
+
+Neu: `Einstellungen → Sicherheit` mit der Komponente `MfaSettings`:
+
+| Zustand | Oberfläche |
+|---|---|
+| MFA inaktiv | Status „Nicht aktiv", Knopf „MFA einrichten" |
+| Einrichtung | QR-Code + Secret (für Apps ohne Kamera), Code-Feld, Passwort-Feld |
+| MFA aktiv | Status „Aktiv", Knopf „MFA deaktivieren" |
+| Deaktivierung | Passwort **und** Code (entspricht der Backend-Regel) |
+
+**Die Dialoge folgen den Backend-Regeln, nicht eigenen Vorstellungen:**
+Das Aktivieren verlangt das **Passwort** (Nachtrag 48 — sonst könnte
+jemand mit gestohlenem JWT das MFA des Opfers übernehmen), das Deaktivieren
+verlangt **Passwort und Code** (sonst wäre ein verlorenes Gerät ein Weg aus
+dem Konto heraus).
+
+**Test:** `mfa-einrichtung.spec.ts` geht den ganzen Weg — Status „Nicht
+aktiv" → Dialog → **falscher** Code wird abgewiesen → **gültiger** Code
+aktiviert → Status „Aktiv" → deaktivieren → Ausgangszustand.
+
+Der Test rechnet den Code mit **derselben Bibliothek, mit der das Backend
+prüft** (`otplib@^12`, in beiden Paketen gepinnt). Eine eigene
+TOTP-Nachbaut wäre genau die Falle aus Nachtrag 54.
+
+**Negativprobe** (`onClick` vom Knopf entfernt — der Knopf wird tot):
+
+```
+× einrichten und wieder deaktivieren
+    Error: der QR-Code muss erscheinen
+```
+
+**Zur Version von `otplib`:** `npm install otplib` im Frontend zog zunaechst
+v13, dessen API kein `authenticator` mehr kennt. Das Backend nutzt v12. Der
+Test haette mit v13 **falsch** gerechnet — und der Test waere rot
+gewesen, ohne dass jemand den Grund gesehen haette. Beide Pakete sind jetzt
+auf `^12.0.1` gepinnt.
 
 ---
 

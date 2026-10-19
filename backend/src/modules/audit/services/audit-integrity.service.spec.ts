@@ -22,8 +22,24 @@ let integrity: AuditIntegrityService;
 /**
  * kanzleiId bleibt null: das Feld ist nullable, und die Hash-Berechnung
  * haengt nicht daran. Eine erfundene UUID verletzt den FK auf kanzlei.
+ *
+ * BEFUND 2026-10-19 (Nachtrag 55, TODO-8.17): Der Tag enthaelt frueher
+ * `Date.now()` — und **geraettet wird nur nach genau diesem Tag**. Ein
+ * abgebrochener Lauf (Ctrl-C, CI-Abbruch) hinterlaess also Zeilen, die
+ * **kein nachfolgender Lauf mehr entfernen kann**: der Tag des nächsten
+ * Laufs ist ein anderer.
+ *
+ * Diese Zeilen sind ungehasht oder falsch verkettet und liegen in der
+ * Kette mit `kanzleiId = null` — jede spaetere Pruefung der gesamten Kette
+ * liefert dann PARTIAL statt OK. Ein abgebrochener Testlauf hat damit den
+ * Audit-Trail der Entwicklungsdatenbank beschaedigt.
+ *
+ * Deshalb: **fester Praefix**, und es wird **vor und nach** dem Lauf
+ * aufgeraeumt. Der Praefix ist damit in jedem Lauf raeumbar, egal was
+ * der vorherige Lauf hinterlassen hat.
  */
-const TEST_TAG = `hash-chain-test-${Date.now()}`;
+const TEST_TAG_PRAEFIX = 'hash-chain-test-';
+const TEST_TAG = `${TEST_TAG_PRAEFIX}${Date.now()}`;
 
 function randomHex(bytes = 32): string {
   let out = '';
@@ -50,11 +66,19 @@ async function createEntry(action: string, neuHash: boolean): Promise<{ id: stri
 }
 
 beforeAll(async () => {
+  // **Vorher** aufraeumen: Reste eines abgebrochenen Laufs.
+  await prisma.auditLog.deleteMany({
+    where: { entityId: { startsWith: TEST_TAG_PRAEFIX } },
+  });
   integrity = new AuditIntegrityService(prisma as never);
 });
 
 afterAll(async () => {
-  await prisma.auditLog.deleteMany({ where: { entityId: TEST_TAG } });
+  // Auch nachher nach dem Praefix aufraeumen, nicht nach dem exakten Tag —
+  // sonst bleiben Zeilen liegen, wenn der Lauf dazwischen abbricht.
+  await prisma.auditLog.deleteMany({
+    where: { entityId: { startsWith: TEST_TAG_PRAEFIX } },
+  });
   await prisma.$disconnect();
 });
 

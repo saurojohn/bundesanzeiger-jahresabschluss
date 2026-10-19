@@ -49,6 +49,12 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = [
     visibleFor: ['KANZLEI_ADMIN', 'SYSTEM_ADMIN'],
   },
   {
+    // MFA gilt fuer **jeden** Benutzer, nicht nur fuer Admins — deshalb
+    // keine Rollenbeschraenkung.
+    href: '/einstellungen/sicherheit',
+    key: 'sicherheit',
+  },
+  {
     href: '/branding',
     key: 'branding',
     visibleFor: ['KANZLEI_ADMIN'],

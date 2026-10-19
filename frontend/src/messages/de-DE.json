@@ -63,7 +63,28 @@
       "message": "Sie wurden sicher abgemeldet.",
       "loginAgain": "Erneut anmelden"
     },
-    "sessionExpired": "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an."
+    "sessionExpired": "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.",
+    "mfa": {
+      "pageTitle": "Sicherheit",
+      "pageDescription": "Zweiter Faktor und Passwort für Ihren Zugang.",
+      "title": "Zwei-Faktor-Authentifizierung (MFA)",
+      "description": "Mit MFA ist neben dem Passwort ein zeitbasiertes Einmal-Kennwort von Ihrer Authenticator-App nötig. Das schützt den Zugang auch dann, wenn das Passwort bekannt wird.",
+      "active": "Aktiv",
+      "inactive": "Nicht aktiv",
+      "enable": "MFA einrichten",
+      "disable": "MFA deaktivieren",
+      "enableTitle": "MFA einrichten",
+      "disableTitle": "MFA deaktivieren",
+      "setupHint": "Scannen Sie den QR-Code mit Ihrer Authenticator-App (z. B. Google Authenticator, Microsoft Authenticator, 1Password) und tragen Sie den angezeigten Code ein.",
+      "disableHint": "Zum Deaktivieren werden Ihr Passwort und ein aktueller Code aus Ihrer Authenticator-App benötigt. Bei einem verlorenen Gerät hilft der Kanzlei-Admin.",
+      "secretLabel": "Geheimschlüssel (falls kein QR-Code scanbar ist)",
+      "qrAlt": "QR-Code für die Einrichtung der Zwei-Faktor-Authentifizierung",
+      "code": "Einmal-Code",
+      "password": "Passwort",
+      "submit": "Bestätigen",
+      "enabled": "Die Zwei-Faktor-Authentifizierung ist jetzt aktiv. Beim nächsten Login wird der Code abgefragt.",
+      "disabled": "Die Zwei-Faktor-Authentifizierung wurde abgeschaltet."
+    }
   },
   "navigation": {
     "dashboard": "Übersicht",
@@ -82,7 +103,8 @@
     "help": "Hilfe",
     "branding": "Branding",
     "apiKeys": "API-Schlüssel",
-    "subscription": "Subscription"
+    "subscription": "Subscription",
+    "sicherheit": "Sicherheit"
   },
   "dashboard": {
     "title": "Übersicht",

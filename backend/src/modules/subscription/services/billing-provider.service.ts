@@ -225,6 +225,22 @@ class StripeProvider implements BillingProvider {
       apiVersion: '2024-11-20.acacia',
     });
     const webhookSecret = this.configService.get<string>('STRIPE_WEBHOOK_SECRET') ?? '';
+    // BEFUND 2026-10-19 (Nachtrag 46): Fail-closed. Ohne Secret waere der
+    // HMAC-Schluessel der leere String — **jeder koennte ihn sich
+    // selbst berechnen** und eine vollstaendig gefaelschte Nutzlast
+    // mit gueltiger Signatur schicken, die dann `applyTierChange()` mit
+    // einem beliebigen Tarif ausloest.
+    //
+    // Das Projekt behandelt jeden anderen Schalter so: `BILLING_MOCK_ENABLED`
+    // ist `?? 'false'`, `SIGNATURE_ALLOW_SELF_SIGNED` ebenfalls. Hier war
+    // die Voreinstellung das Gegenteil.
+    if (!webhookSecret) {
+      throw new Error(
+        'STRIPE_WEBHOOK_SECRET ist nicht gesetzt — Webhooks werden ohne ' +
+          'konfiguriertes Secret angenommen, weil sonst jeder einen gueltigen ' +
+          'HMAC mit dem leeren Schluessel berechnen koennte.',
+      );
+    }
     if (!signature) {
       throw new Error('Stripe-Webhook-Signature fehlt');
     }

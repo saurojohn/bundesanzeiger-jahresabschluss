@@ -8,6 +8,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from '../../auth/decorators/public.decorator';
 import type { Request } from 'express';
 import { BillingWebhookService } from '../services/billing-webhook.service';
 
@@ -30,6 +31,25 @@ import { BillingWebhookService } from '../services/billing-webhook.service';
  *   Headers: stripe-signature: t=...,v1=...
  *   Body: roher Stripe-Webhook-Payload
  */
+// BEFUND 2026-10-19 (Nachtrag 46): Der Kommentar oben sagt „Endpoint ist
+// @Public()" — der Dekorator stand aber **nirgends**. Da `JwtAuthGuard` als
+// globaler `APP_GUARD` laeuft, wurde jeder Aufruf abgewiesen, BEVOR der
+// Controller erreicht wurde. Gemessen, vier Formen:
+//
+//     POST /api/subscription/webhook  (mit Signatur)   -> 401
+//     POST /api/subscription/webhook  (ohne Signatur)  -> 401
+//     POST /api/subscription/webhook  (Roh-Body, gefaelschte Signatur)
+//                                                           -> 401
+//
+// **Folge: Stripe konnte nie ein Webhook zustellen.** Checkout-Abschluss,
+// Tarifwechsel und Kuendigung haetten die Entitlements nie aktualisiert —
+// der komplette Zahlungslebenszyklus waere im Produktivbetrieb tot.
+//
+// Der `@Public()`-Pfad macht die Signaturpruefung zur einzigen
+// Authentifizierung. Sie ist echt (Stripe `constructEvent`), und
+// `STRIPE_WEBHOOK_SECRET` wird jetzt fail-closed behandelt — siehe
+// `billing-provider.service.ts`.
+@Public()
 @Controller('subscription/webhook')
 @SkipThrottle()
 export class BillingWebhookController {

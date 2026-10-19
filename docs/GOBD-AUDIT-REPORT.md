@@ -4596,6 +4596,58 @@ erreichbar.
 
 ---
 
+### Nachtrag 2026-10-19 (Nachtrag 47): Der SSRF-Pfad der Webhook-Zustellung hält — zweistufig gemessen
+
+Die Bestandsaufnahme bewertete `POST /webhook-subscriptions/:id/test`
+als „hoch — SSRF-Pfad, `ssrf-guard` nur ungetestet/unit". Gemessen, **beide
+Schichten**:
+
+**Schicht 1 — Registrierung.** Eine Subscription auf eine interne Adresse:
+
+```
+POST /api/webhook-subscriptions   url = http://127.0.0.1:3000/health
+  HTTP 400  "url muss eine öffentliche HTTP/HTTPS-URL sein
+            (keine internen, reservierten oder Loopback-Adressen)"
+```
+
+Auf eine öffentliche Adresse: **201**.
+
+**Schicht 2 — unmittelbar vor dem Request.** Die ausgelöste Zustellung
+scheitert an der DNS-Auflösung, nicht am HTTP-Request:
+
+```
+POST /api/webhook-subscriptions/:id/test  ->  202 {"deliveryId":"b5f786c8-…"}
+
+WebhookDelivery:
+  status:        FAILED
+  attemptCount:  1
+  errorMessage:  'Webhook-Ziel "example.invalid" ist nicht auflösbar'
+```
+
+Das ist genau die im Code kommentierte Absicht („Schicht 2 des
+SSRF-Schutzes: unmittelbar **vor** dem Request auflösen — der Name kann
+zwischen Registrierung und Zustellung wechseln").
+
+**Zusätzlich geprüft:** Die Route `POST /:id/test` ist mit
+`@Roles('KANZLEI_ADMIN')` geschützt, löst die `kanzleiId` aus dem
+angemeldeten User auf und sucht die Subscription **mandant-gefiltert**
+(`findSubscriptionById(id, kanzleiId)`) — ein Aufruf auf eine fremde
+Subscription findet sie nicht.
+
+**Kein Befund.** Wie bei den anderen drei aus der Bestandsaufnahme
+(Nachtrag 44): Die Einstufung „hoch" war eine **Abwesenheit von Tests**,
+keine Beobachtung am Verhalten. Vier gemeldete Verdachtsstellen, vier
+entkräftet — eine davon (DNS) mit einer bleibenden Dokumentationslücke
+(TODO-8.16).
+
+**Was die Bestandsaufnahme damit geleistet hat, war trotzdem richtig:**
+Ohne sie wäre kein einziger dieser vier Pfade angefasst worden. Die
+Richtung „welche Route hat keine Abdeckung" hat sieben echte Befunde
+hervorgebracht (Nachtrag 35, 36, 46) und ebenso viele nicht vorhandene
+ausgeschlossen.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

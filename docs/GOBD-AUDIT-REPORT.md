@@ -4422,6 +4422,8 @@ vergessen, und es gibt keinen Wächter, der es merkt.
 |---|---|---|---|
 | TODO-8.16 | `dns.controller.ts` verspricht im Kommentar eine Rollenbindung, die nur im Service existiert. Entweder `@Roles` an die Route heben oder den Kommentar auf die Wirklichkeit korrigieren („Autorisierung im Service, siehe `assertKanzleiAdminAccess`") — sonst wird sie beim Refaktorieren stillschweigend vergessen | Dev | Sprint 5 |
 | TODO-8.18 | **Nachtrag 46 behoben.** Vor dem Pilot den Zahlungsweg einmal **echt** durchspielen: Checkout → Stripe sendet Webhook → Tarifwechsel sichtbar. Der Mock-Provider liefert für `handleWebhook()` immer `null`, der Pilotbetrieb prüft den Weg also nicht | Produkt + Dev | **vor dem ersten bezahlten Mandanten** |
+| TODO-8.19 | **Nachtrag 48 behoben.** `GET /api/api-keys` (Secret-Maskierung) und die übrigen 33 ungetesteten Routen nach und nach durchgehen — das Muster „nie aktiviert, nie getestet" hat heute vier echte Befunde geliefert (Nachtrag 35, 36, 46, 48) | Dev | laufend |
+| TODO-8.20 | **Es gibt keine Oberfläche für die MFA-Aktivierung.** `grep -rn totp frontend/src` findet nur die Verwendung im Login. `/auth/totp/setup` und `/auth/totp/enable` sind reine API-Funktionen — ein Nutzer, der MFA aktivieren will, muss die Route von Hand aufrufen (Nachtrag 48) | Dev + UX | vor dem Pilot |
 
 ---
 
@@ -4645,6 +4647,113 @@ Ohne sie wäre kein einziger dieser vier Pfade angefasst worden. Die
 Richtung „welche Route hat keine Abdeckung" hat sieben echte Befunde
 hervorgebracht (Nachtrag 35, 36, 46) und ebenso viele nicht vorhandene
 ausgeschlossen.
+
+---
+
+### Nachtrag 2026-10-19 (Nachtrag 48): MFA-Aktivierung ohne erneute Authentifizierung — und eine Route ganz ohne Eingabevalidierung
+
+Zwei Befunde in einer Stunde, beide auf den drei TOTP-Routen, die laut
+Bestandsaufnahme **keinen einzigen HTTP-Test** hatten.
+
+#### Befund 1: Wer ein JWT hatte, konnte das MFA des Opfers übernehmen
+
+`POST /auth/totp/disable` verlangt **Passwort + TOTP-Code** — eine
+erneute Authentifizierung, korrekt. `POST /auth/totp/enable` verlangte
+**nur ein gültiges JWT**.
+
+Gemessen, über die öffentliche API:
+
+```
+(1) POST /auth/totp/setup                         -> 200, Secret geliefert
+(2) POST /auth/totp/enable (selbst erzeugter Code) -> 200, TOTP aktiviert
+(3) POST /auth/totp/disable, Opfer ohne Secret    -> 401 "TOTP-Code ungültig"
+(4) POST /auth/totp/disable, Code des Angreifers -> 200
+```
+
+**Der „Code" beweist hier nichts** — wer das Secret selbst erzeugt hat,
+kann daraus einen gültigen Code rechnen. Die Verifikation prüft nur die
+Konsistenz von Secret und Code, nicht die Identität desjenigen, der
+aktiviert.
+
+**Die Folge ist schwerer als der Ausgangszustand.** Das Opfer kennt sein
+Passwort, aber nicht das Secret — es ist damit **dauerhaft aus seinem
+eigenen MFA ausgesperrt** (Schritt 3), während der Angreifer es
+jederzeit abschalten kann (Schritt 4). Aus einer begrenzten
+Session-Übernahme (ein JWT) wird eine **dauerhafte**, und der legitime
+Nutzer kann sich nicht selbst zurückholen.
+
+**Behoben:** Das Aktivieren verlangt jetzt das Passwort — dieselbe Regel,
+die im **selben Controller** für das Deaktivieren gilt. Hier wurde nichts
+erfunden, sondern die im Haus geltende Regel auf die Schwester-Route
+angewandt.
+
+#### Befund 2: Ein Kreuzungstyp hat die Eingabevalidierung abgeschaltet
+
+Der Controller-Typ lautete:
+
+```ts
+@Body() body: TotpEnableRequestDto & { secret: string },
+```
+
+**Ein Kreuzungstyp ist zur Laufzeit `Object`.** Nests `design:paramtypes`
+kann den DTO nicht mehr erkennen, und der globale `ValidationPipe`
+(validiert mit `whitelist`, `forbidNonWhitelisted`, `transform`) prüft
+gegen einen untypisierten Body **gar nichts**.
+
+Der Beweis ist der 500er: Ein Aufruf **ohne** `password` — im DTO ein
+Pflichtfeld — lief in `bcrypt.compare(undefined, hash)` und endete als
+**HTTP 500** statt 400. Wäre die Pipe gelaufen, hätte sie das Feld
+abgewiesen.
+
+Damit war `POST /auth/totp/enable` die **einzige Route im Projekt ganz ohne
+Eingabevalidierung**: `secret` und `code` waren ebenfalls ungeprüft.
+
+**Der Kreuzungstyp war überflüssig** — `TotpEnableRequestDto` enthält
+`secret` und `code` bereits. Er ist entfernt; der Typ ist jetzt wieder der
+DTO, damit hängt die Validierung wieder an der Route.
+
+**Gesucht:** `grep -rn "@Body()[^:]*: \w+Dto\s*&" src` — **eine** Stelle
+im ganzen Projekt. Der Befund ist also isoliert, kein Muster.
+
+**Zusätzlich abgesichert:** `bcrypt.compare(undefined, hash)` wirft. Ein
+expliziter Guard liefert 400 statt 500, falls sich das DTO einmal ändert.
+
+#### Negativprobe
+
+Passwortprüfung entfernt, Server neu gestartet:
+
+```
+× mit falschem Passwort wird MFA nicht aktiviert
+    expected 200 to be 401
+```
+
+Der Test „ohne Passwort" bleibt **grün**, weil die DTO-Validierung (400)
+eine **unabhängige zweite Verteidigung** ist. Genau so soll es sein: die
+Negativprobe zielt auf die eine entfernte Schicht und lässt die andere
+arbeiten.
+
+#### Nebenbefund: MFA ist über die Oberfläche gar nicht einschaltbar
+
+`grep -rn "totp" frontend/src` findet **nur** die Verwendung im Login
+(`totp_required` → der Client sendet `totpCode`). Es gibt **keine**
+Oberfläche für `/auth/totp/setup` oder `/auth/totp/enable`.
+
+Damit ist die MFA-Aktivierung eine reine API-Funktion — und die
+vorherige Ausführungslosigkeit dieser Routen fällt dadurch nicht auf,
+dass niemand sie benutzt, sondern dass **niemand sie aufrufen kann**.
+Ein Nutzer, der MFA aktivieren will, muss die Route von Hand aufrufen.
+
+**Kein Defekt, sondern eine Lücke** — der Bau eines
+MFA-Einrichtungsdialogs ist ein Feature, keine Korrektur. Als TODO-8.20
+geführt, damit der Pilotbetrieb sie nicht übersieht.
+
+#### Was die Bestandsaufnahme hier bewirkt hat
+
+Die drei TOTP-Routen standen in der Liste als „hoch — MFA-Aktivierung,
+danach ggf. Token-Invalidierung" und hatten **null Tests**. Drei Routen,
+drei ungetestete, und in der einen, die man sich ansieht, steckt ein
+Autorisierungsdefekt **und** ein Mechanismus, der die gesamte
+Eingabevalidierung dieser Route abgeschaltet hat.
 
 ---
 

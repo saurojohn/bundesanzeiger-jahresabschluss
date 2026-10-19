@@ -107,6 +107,40 @@ Helper: `AuditTrailService.record(user, entity, action, prev, next)`.
 - PDF/A-3 Container für Langzeit-Archivierung
 - Zeitstempel von einem vertrauenswürdigen TSA (z.B. DigiStamp)
 
+### 3.7 Lockfile: dieselbe npm-Major-Version wie die CI
+Die CI laeuft auf **node 22 → npm 10**. Ein Lockfile, das mit einer anderen
+npm-Major-Version geschrieben wurde, kann von der CI **nicht installiert
+werden** — `npm ci` bricht dann ab, *bevor* irgendein Test laeuft.
+
+BEFUND 2026-10-20 (Nachtrag 56): `npm install --save-dev otplib@^12.0.1` mit
+lokalem **npm 11** entfernte den verschachtelten Lockfile-Eintrag
+`next-intl/node_modules/@swc/helpers@0.5.23`. Der Eintrag existierte, weil
+`next-intl/node_modules/@swc/core` die Peer-Abhaengigkeit
+`@swc/helpers >= 0.5.17` hat — die gehoiste Version 0.5.15 erfuellt sie nicht.
+Lokal fiel das **nicht auf** (`npm ci --dry-run` meldete „up to date", weil
+`node_modules` den Zustand schon hatte); die CI installiert sauber aus dem
+Lockfile und brach mit
+
+```
+npm error Missing: @swc/helpers@0.5.23 from lock file
+```
+
+ab.
+
+**Regel:**
+1. Lockfile-Aenderungen immer mit der npm-Version der CI erzeugen:
+   `npx npm@10 install --package-lock-only`
+2. Vor dem Push **im Clean-Room** pruefen (nur die beiden Dateien, echte
+   Installation, eigener Cache):
+
+   ```bash
+   rm -rf /tmp/lock-check && mkdir -p /tmp/lock-check
+   cp frontend/package.json frontend/package-lock.json /tmp/lock-check/
+   cd /tmp/lock-check && npx npm@10 ci --ignore-scripts --cache /tmp/npm-cache-lock
+   ```
+
+   Exit 0 heisst: die CI kann installieren.
+
 ## 4. BAnz Submission Channels
 
 | Channel | Trigger | Wann |

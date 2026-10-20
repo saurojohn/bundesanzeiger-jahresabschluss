@@ -6759,6 +6759,196 @@ und genau deshalb fiel nichts auf.
 
 ---
 
+### Nachtrag 2026-10-20 (Nachtrag 69): Ein neu angelegter Mandant landete in der **falschen Kanzlei** — und war deshalb unsichtbar
+
+#### Der Befund
+
+Nachtrag 68 hatte die Mandanten**liste** repariert. Dieselbe lose Logik
+steckte noch im **Anlegen**: `create()` benutzte `resolveKanzleiId(user)` —
+die Kanzlei des **ersten** Mandanten des Users (Session-Sortierung:
+Firmenname).
+
+**Gemessen.** Ein KANZLEI_ADMIN der Kanzlei A (aktiver Mandant dort) mit
+zusaetzlich einem Mandant „Aaa GmbH" in der Kanzlei B (dort STEUERBERATER)
+legt einen neuen Mandanten an:
+
+```
+Aktiver Mandant (Admin-Rolle): Beispiel GmbH      <- Kanzlei A
+POST /api/mandant -> HTTP 201
+
+Kanzlei des neuen Mandanten : 3863380e-…     (Kanzlei B)
+Kanzlei B (nicht verwaltet) : 3863380e-…     (Kanzlei B)
+  -> der Mandant ist in der KANZLEI B gelandet, in der der User KEIN Admin ist
+
+Mandantenliste des Anlegers: [„Aaa GmbH", „Beispiel GmbH", …]   (ohne „Neu GmbH")
+  -> der neue Mandant ist UNSICHTBAR (Anlegen schien wirkungslos)
+```
+
+Zwei Fehler in einem Vorgang:
+
+1. **Falsche Kanzlei.** Der Mandant gehoert zu einer Kanzlei, in der der
+   Anleger **kein** Admin ist. Die Rollenpruefung des Guards lief gegen den
+   **aktiven** Mandanten (Kanzlei A) — sie hat den Vorgang also erlaubt, und
+   der Service hat ihn trotzdem in Kanzlei B gelegt. Die Zustaendigkeit
+   passte nicht.
+2. **Unsichtbar.** Ein neuer Mandant ist niemandem zugewiesen. Er ist nur
+   sichtbar, wenn der Anleger in seiner Kanzlei Admin ist. In Kanzlei B ist
+   er das nicht — der Mandant existierte, war aber fuer niemanden auffindbar.
+   Das ist dieselbe Beschwerde wie in Nachtrag 28 („Mandant erstellt" gemeldet,
+   nichts sichtbar), nur in einer anderen Form.
+
+#### Die Behebung
+
+Der neue Mandant gehoert in die Kanzlei des **Kontext-Mandanten** — genau
+dort hat der `RolesGuard` die Admin-Rolle geprueft. Der Controller reicht
+den Mandanten-Kontext deshalb an den Service durch (`@MandantId()`, mit
+derselben Praezedenz wie der Guard), und der Service loest die Kanzlei aus
+**diesem** Mandanten auf.
+
+```
+Aktiver Mandant (Admin-Rolle): Beispiel GmbH      <- Kanzlei A
+POST /api/mandant -> HTTP 201
+Kanzlei des neuen Mandanten : b9b44f28-…         (Kanzlei A)  <- richtig
+Mandantenliste des Anlegers: [„Aaa GmbH", „Beispiel GmbH", …, „Neu GmbH", …]
+  -> der neue Mandant ist sichtbar
+```
+
+#### Die Negativprobe
+
+Die alte Regel wieder eingebaut und dieselbe Messung wiederholt:
+
+```
+Kanzlei des neuen Mandanten : 796ece28-…     (Kanzlei B)
+  -> der Mandant ist in der KANZLEI B gelandet, in der der User KEIN Admin ist
+Mandantenliste des Anlegers: [„Aaa GmbH", „Beispiel GmbH", …]   (ohne „Neu GmbH")
+  -> der neue Mandant ist UNSICHTBAR
+```
+
+#### Der Test
+
+`e2e/audit-quittierung.e2e.spec.ts` ruft den Service direkt auf und
+braucht deshalb jetzt den Kontext-Mandanten — das ist die **Anpassung an
+einer echten Signaturaenderung** und kein Testumbau: der Kontext ist jetzt
+Teil des Vertrags.
+
+Drei weitere Specs senden den Kontext jetzt ueber den Header
+`x-mandant-id`, weil `POST /api/mandant` ihn verlangt:
+
+| Spec | Aenderung |
+|------|-----------|
+| `e2e/audit-quittierung.e2e.spec.ts` | Service-Aufruf mit Kontext-Mandant |
+| `e2e/audit-kette-mandant-loeschung.e2e.spec.ts` | `POST /api/mandant` mit `x-mandant-id` |
+| `e2e/jahresabschluss.e2e.spec.ts` | `POST /api/mandant` mit `x-mandant-id` |
+
+**Merksatz:** Derselbe Fehler kann an mehreren Stellen derselben Datei
+stehen und trotzdem nur an **einer** auffallen. Die Liste fiel auf, weil
+sie gelesen wird; das Anlegen fiel nicht auf, weil es selten benutzt wird
+und sein Ergebnis (ein unsichtbarer Mandant) wie ein Bedienfehler
+aussieht. Der Test der einen Pfad abdeckt, deckt den anderen nicht ab.
+
+---
+
+### Nachtrag 2026-10-21 (Nachtrag 70): Der Schreibpfad war nicht mit repariert — ein KANZLEI_ADMIN konnte einen fremden Mandanten umbenennen und archivieren
+
+#### Der Befund
+
+Nachtrag 68 hat die Mandanten**liste** repariert, Nachtrag 69 das **Anlegen**.
+Dieselbe lose Logik stand an der dritten Stelle — der Schreibpfad:
+
+```ts
+// mandant.service.ts, assertMandantAccess()
+const istKanzleiAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+// ... und dann:
+const kanzleiId = await this.resolveKanzleiId(user);   // Kanzlei des ERSTEN Mandanten
+if (mandant.kanzleiId !== kanzleiId) { /* 403 */ }
+```
+
+Zwei Angaben, die auseinanderlaufen koennen: „Admin **IRGENDWO**" und
+„Kanzlei des **ersten** Mandanten". Zusammen ergaben sie „Admin in der
+Kanzlei des ersten Mandanten" — das ist nicht dasselbe.
+
+**Gemessen** ueber die oeffentliche API. Der KANZLEI_ADMIN der Kanzlei A
+hat in der Kanzlei B den Mandanten „Aaa GmbH" (dort STEUERBERATER, also
+**kein** Admin) — und „Aaa GmbH" sortiert vor „Beispiel GmbH", ist also
+sein **erster** Mandant. In derselben Kanzlei B liegt „Bravo GmbH", in dem
+der User **keine Rolle** hat:
+
+```
+Kontext-Header x-mandant-id: <Bravo GmbH>   (auf das Zielmandant selbst)
+
+GET   /api/mandant/<Bravo>               -> 200   Firmenname, USt-Id, Adresse
+PATCH /api/mandant/<Bravo>               -> 200   umbenannt in "Bravo (HIERARCHIE-VERLETZT)"
+PATCH /api/mandant/<Bravo>/archivierung  -> 200   archiviert
+```
+
+Ein Mandant, der fuer den User **unsichtbar** war (Nachtrag 68), war
+gleichzeitig veraenderbar. Die Liste war repariert, der Schreibpfad nicht.
+
+#### Warum der Header den Unterschied machte
+
+Der `RolesGuard` laesst einen User durch, wenn er die Rolle irgendwo hat
+und der Kontext-Mandant ihm nicht zugewiesen ist — mit der Annahme, der
+`MandantGuard` entscheide dann. Diese Annahme gilt **nicht fuer jede
+Route**: `PATCH/DELETE /api/mandant/:id` und die Archivierungsrouten tragen
+**keinen** `MandantGuard`. Dort war die Service-Pruefung die einzige
+Schranke — und sie stand auf der falschen Grundlage.
+
+Der Kontext-Header ist fuer den Rollen-Vergleich nicht der Ziel-Mandant:
+ein Client darf ihn auf einen beliebigen Mandanten setzen. Mit dem Header
+auf das Zielmandant selbst war die Rollenpruefung des `RolesGuard`
+„nicht zugewiesen" — also durchlaessig.
+
+#### Die Behebung
+
+Ein KANZLEI_ADMIN darf die Mandanten der Kanzleien verwalten, in denen er
+KANZLEI_ADMIN ist — plus seine eigenen Mandanten. Das ist **dieselbe**
+Bindung, die die Liste seit Nachtrag 68 verwendet (`rollenBindung()`):
+
+```ts
+const { adminKanzleiIds } = await this.rollenBindung(user);
+if (adminKanzleiIds.length === 0) throw new ForbiddenException(...);
+const mandant = await this.prisma.mandant.findUnique({ where: { id: mandantId }, ... });
+if (!adminKanzleiIds.includes(mandant.kanzleiId)) throw new ForbiddenException(...);
+```
+
+Eine Bindung, zwei Stellen: Liste und Schreibpfad sagen jetzt dasselbe.
+
+Die vier anderen Stellen, die ebenfalls „Kanzlei des ersten Mandanten"
+auflosen (`api-keys.controller`, `webhook.controller`, `konsolidierung.service`,
+`audit.controller`), sind **nicht** betroffen: sie bestimmen damit nur den
+*Arbeitsbereich* und pruefen die Rolle anschliessend ueber
+`assertAdminInKanzlei()` (`common/utils/kanzlei-rolle.ts`) — dort ist die
+Rolle an die Ziel-Kanzlei gebunden. Beim Mandant-Modul fehlte genau diese
+ zweite Pruefung.
+
+#### Die Negativprobe
+
+Die alte Regel wieder eingebaut, dieselbe Messung wiederholt:
+
+```
+GET   /api/mandant/<Bravo>               -> 200
+PATCH /api/mandant/<Bravo>               -> 200   "Bravo (HIERARCHIE-VERLETZT)"
+PATCH /api/mandant/<Bravo>/archivierung  -> 200
+Zustand danach: {"firmenname":"Bravo (HIERARCHIE-VERLETZT)","archiviertAt":"…"}
+```
+
+#### Der Test
+
+`e2e/mandant-trennung-admin.e2e.spec.ts` (7 Tests). Vier Negativpruefungen
+(lesen, umbenennen, archivieren, Zustandsbeleg), **zwei Gegenproben**
+(eigener Mandant lesbar, Mandant der Admin-Kanzlei bearbeitbar) und der
+Anlegepfad mit einem Kontext, auf dem der User nur STEUERBERATER ist.
+Ohne die Gegenproben waere ein Test gruen, der einfach alles sperrt.
+
+**Merksatz:** „Repariert" heisst nicht „an einer Stelle repariert". Der
+Befund von Nachtrag 68 lautete „Mandantentrennungs-Bruch" — die Liste war
+die *auffaellige* Stelle, nicht die einzige. Und: **ein Kommentar, der das
+Verhalten einer anderen Stelle beschreibt, ist eine Behauptung.** Der
+`RolesGuard` schrieb, der `MandantGuard` entscheide — auf den Mutationsrouten
+entschied niemand. Der Beleg ist der Code, nicht der Kommentar.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

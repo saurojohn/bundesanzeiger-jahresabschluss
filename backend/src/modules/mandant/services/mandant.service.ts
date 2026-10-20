@@ -46,6 +46,7 @@ export class MandantService {
    */
   async create(
     dto: CreateMandantDto,
+    mandantId: string,
     user: AuthUser,
     context: MandantContext,
   ): Promise<Mandant> {
@@ -55,7 +56,31 @@ export class MandantService {
       );
     }
 
-    const kanzleiId = await this.resolveKanzleiId(user);
+    //
+    // BEFUND 2026-10-20 (Nachtrag 68): Der neue Mandant gehoert in die
+    // Kanzlei des **aktiven** Mandanten — dort hat der `RolesGuard` die
+    // Admin-Rolle geprueft.
+    //
+    // Vorher stand hier `resolveKanzleiId(user)`: die Kanzlei des **ersten**
+    // Mandanten des Users (Session-Sortierung: Firmenname). Die beiden
+    // koennen verschiedene Kanzleien sein.
+    //
+    // **Gemessen:** ein KANZLEI_ADMIN der Kanzlei A (aktiver Mandant dort)
+    // mit zusaetzlich einem Mandant „Aaa GmbH" in der Kanzlei B (dort
+    // STEUERBERATER) legte seinen neuen Mandanten in der **Kanzlei B** an —
+    // in der er **kein** Admin ist. Folge: der neue Mandant war fuer den
+    // Anleger **unsichtbar** (er steht in keiner Kanzlei, in der der
+    // Anleger Admin ist, und ist niemandem zugewiesen). „Anlegen schien
+    // wirkungslos" — dieselbe Beschwerde wie in Nachtrag 28, nur in einer
+    // anderen Form.
+    const kontextMandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { kanzleiId: true },
+    });
+    if (!kontextMandant) {
+      throw new NotFoundException('Mandant nicht gefunden');
+    }
+    const kanzleiId = kontextMandant.kanzleiId;
 
     const mandant = await this.prisma.mandant.create({
       data: {
@@ -628,11 +653,16 @@ export class MandantService {
    * einmal loeschen ("Kein Zugriff auf diesen Mandanten"), obwohl er ihn
    * gerade erst erstellt hatte.
    *
-   * KANZLEI_ADMIN verwaltet die Mandanten SEINER Kanzlei. Das ist die
-   * rollenweite Konvention des gesamten Moduls (branding.service,
-   * subscription.service, domain-verification.service, api-key.service) und
-   * gilt hier jetzt ebenfalls — mit einer DB-Pruefung, damit ein
-   * KANZLEI_ADMIN einer fremden Kanzlei weiterhin abgewiesen wird.
+   * KANZLEI_ADMIN verwaltet die Mandanten der Kanzlei, in der er
+   * KANZLEI_ADMIN ist. Das ist die rollenweite Konvention des gesamten
+   * Moduls (branding.service, subscription.service, domain-verification.service,
+   * api-key.service) und gilt hier jetzt ebenfalls — mit einer DB-Pruefung,
+   * damit ein KANZLEI_ADMIN einer fremden Kanzlei weiterhin abgewiesen wird.
+   *
+   * BEFUND 2026-10-21 (Nachtrag 70): „seiner Kanzlei" war bisher ueber
+   * `resolveKanzleiId(user)` bestimmt — die Kanzlei des **ersten** Mandanten.
+   * Das ist die Kanzlei des Users, **nicht** die Kanzlei, in der er Admin
+   * ist. Siehe die ausfuehrliche Begruendung im Koerper der Methode.
    */
   private async assertMandantAccess(
     mandantId: string,
@@ -642,21 +672,48 @@ export class MandantService {
     const accessibleMandantIds = user.mandanten.map((m) => m.id);
     if (accessibleMandantIds.includes(mandantId)) return;
 
-    const istKanzleiAdmin = user.mandanten.some(
-      (m) => m.rolle === 'KANZLEI_ADMIN',
-    );
-    if (!istKanzleiAdmin) {
+    //
+    // BEFUND 2026-10-21 (Nachtrag 70): Der KANZLEI_ADMIN-Zweig verglich die
+    // Kanzlei des Ziel-Mandanten mit `resolveKanzleiId(user)` — der Kanzlei
+    // des **ersten** Mandanten des Users (Sortierung: Firmenname). Das ist
+    // dieselbe lose Logik wie in der Liste (Nachtrag 68), nur an der
+    // Schreibstelle: „Admin IRGENDWO" (irgendein Mandant hat die Rolle) und
+    // „Kanzlei des ersten Mandanten" wurden verknuepft, ohne dass die Rolle
+    // an **diese** Kanzlei gebunden war.
+    //
+    // **Gemessen.** Ein KANZLEI_ADMIN der Kanzlei A mit zusaetzlich einem
+    // Mandant „Aaa GmbH" in der Kanzlei B (dort STEUERBERATER, also
+    // KEIN Admin) — und ein weiterer Mandant „Bravo GmbH" in Kanzlei B, in
+    // dem der User **keine Rolle** hat. „Aaa GmbH" sortiert vor
+    // „Beispiel GmbH" (Kanzlei A) und ist damit der erste Mandant:
+    //
+    //   GET   /api/mandant/<Bravo>            -> 200  (Firmenname, USt-Id, Adresse)
+    //   PATCH /api/mandant/<Bravo>            -> 200  (umbenannt!)
+    //   PATCH /api/mandant/<Bravo>/archivierung -> 200 (archiviert!)
+    //
+    // Der Kontext-Header `x-mandant-id` zeigte dabei auf **das Zielmandant
+    // selbst**. Das ist kein Randfall: der `RolesGuard` laesst einen User
+    // durch, wenn er die Rolle irgendwo hat und der Kontext-Mandant ihm
+    // nicht zugewiesen ist („der MandantGuard entscheidet") — auf diesen
+    // Routen gibt es aber **keinen** `MandantGuard`. Die Service-Pruefung
+    // war damit die einzige Schranke, und sie stand auf der falschen
+    // Grundlage.
+    //
+    // **Die Regel jetzt:** ein KANZLEI_ADMIN darf die Mandanten der
+    // Kanzleien verwalten, in denen er KANZLEI_ADMIN ist — plus seine
+    // eigenen Mandanten. Dieselbe Bindung wie in der Liste
+    // (`rollenBindung()`), damit Liste und Schreibpfad dasselbe sagen.
+    const { adminKanzleiIds } = await this.rollenBindung(user);
+    if (adminKanzleiIds.length === 0) {
       throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
     }
 
-    // Mandant muss in derselben Kanzlei liegen wie die des Users.
     const mandant = await this.prisma.mandant.findUnique({
       where: { id: mandantId },
       select: { kanzleiId: true },
     });
     if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
-    const kanzleiId = await this.resolveKanzleiId(user);
-    if (mandant.kanzleiId !== kanzleiId) {
+    if (!adminKanzleiIds.includes(mandant.kanzleiId)) {
       throw new ForbiddenException('Kein Zugriff auf diesen Mandanten');
     }
   }

@@ -46,9 +46,12 @@ describe('Audit-Kette überlebt das Löschen eines Mandanten', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email, password: pw }),
     });
-    const d = (await r.json()) as { accessToken: string };
+    const d = (await r.json()) as {
+      accessToken: string;
+      user: { mandanten: Array<{ id: string; firmenname: string }> };
+    };
     expect(d.accessToken, `Login ${email}`).toBeTruthy();
-    return d.accessToken;
+    return d;
   };
 
   const integritaet = async () => {
@@ -61,7 +64,7 @@ describe('Audit-Kette überlebt das Löschen eines Mandanten', () => {
   };
 
   beforeAll(async () => {
-    adminToken = await login('admin@kanzlei.de', 'Admin123!');
+    adminToken = (await login('admin@kanzlei.de', 'Admin123!')).accessToken;
     // Die kanzleiId wird **im Test** aus dem neu angelegten Mandanten
     // abgeleitet, nicht aus `mandanten[0]`: im vollen Suite-Lauf ist die
     // Mandantenliste von anderen Specs manipuliert, und `mandanten[0]` kann
@@ -81,13 +84,26 @@ describe('Audit-Kette überlebt das Löschen eines Mandanten', () => {
   it('die Kette bleibt nach dem Löschen eines Mandanten intakt', async () => {
     const kanzleiAdmin = await login('kanzlei-admin@kanzlei.de');
 
+    // BEFUND 2026-10-20 (Nachtrag 69): `POST /api/mandant` verlangt jetzt
+    // einen Mandanten-Kontext. Ohne ihn ist nicht eindeutig, in welcher
+    // Kanzlei der neue Mandant entsteht — der MandantGuard lehnt die
+    // Anlage mit 403 "mandantId erforderlich" ab. Der Kontext-Mandant ist
+    // einer der Mandanten des KANZLEI_ADMIN; der neue Mandant bekommt
+    // dessen Kanzlei.
+    const kontextMandantId = kanzleiAdmin.user.mandanten[0]?.id;
+    expect(
+      kontextMandantId,
+      'der KANZLEI_ADMIN braucht mindestens einen Mandanten als Kontext',
+    ).toBeTruthy();
+
     // (1) Mandant anlegen
     const neu = (await (
       await fetch(`${BASE}/api/mandant`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${kanzleiAdmin}`,
+          authorization: `Bearer ${kanzleiAdmin.accessToken}`,
+          'x-mandant-id': kontextMandantId!,
         },
         body: JSON.stringify({
           firmenname: 'Kettenbruch-Regression GmbH',
@@ -118,7 +134,7 @@ describe('Audit-Kette überlebt das Löschen eines Mandanten', () => {
     // einen Audit-Eintrag (die CREATE-Aufzeichnung selbst).
     const det = (await (
       await fetch(`${BASE}/api/mandant/${mandantId}`, {
-        headers: { authorization: `Bearer ${kanzleiAdmin}` },
+        headers: { authorization: `Bearer ${kanzleiAdmin.accessToken}` },
       })
     ).json()) as { kanzleiId: string };
     kanzleiId = det.kanzleiId;
@@ -132,7 +148,7 @@ describe('Audit-Kette überlebt das Löschen eines Mandanten', () => {
     // (2) Mandant löschen
     const del = await fetch(`${BASE}/api/mandant/${mandantId}`, {
       method: 'DELETE',
-      headers: { authorization: `Bearer ${kanzleiAdmin}` },
+      headers: { authorization: `Bearer ${kanzleiAdmin.accessToken}` },
     });
     expect(del.status, `Mandant löschen: ${await del.clone().text()}`).toBe(204);
 

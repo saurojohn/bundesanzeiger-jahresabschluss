@@ -120,6 +120,18 @@ export class RolesGuard implements CanActivate {
     // (Gemessen: `mandant-quelle.e2e.spec.ts` — "PATCH mit Header einer
     // fremden mandantId -> 403 'Kein Zugriff'" lieferte nach der ersten
     // Fassung die Rollenmeldung. Der Status war richtig, die Meldung nicht.)
+    //
+    // BEFUND 2026-10-21 (Nachtrag 70): Die Annahme „der `MandantGuard`
+    // entscheidet" gilt **nicht fuer jede Route**. `PATCH/DELETE /api/mandant/:id`
+    // und die Archivierungsrouten tragen **keinen** `MandantGuard` — dort
+    // entscheidet der Service (`assertMandantAccess`). Der Service prueft
+    // die KANZLEI-Zustaendigkeit jetzt ueber die Admin-Kanzlei-Bindung
+    // (nicht ueber die Kanzlei des ersten Mandanten).
+    //
+    // Der Kontext-Mandant ist fuer den Rollen-Vergleich nicht der
+    // Ziel-Mandant: ein Client darf den Header auf einen beliebigen
+    // Mandanten setzen. Deshalb ist die Header-Aufloesung hier nur der
+    // *Vergleichsmaßstab*, nicht die Berechtigung selbst.
     if (!zugewiesen) {
       const userMandantRoles: MandantRole[] = user.mandanten.flatMap((m) => m.rolle);
       const hatIrgendeineRolle = requiredRoles.some(

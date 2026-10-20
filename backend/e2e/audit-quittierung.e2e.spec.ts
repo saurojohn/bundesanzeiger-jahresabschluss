@@ -67,6 +67,14 @@ describe('Audit-Trail: Quittierung erst nach dem Nachweis', () => {
   let audit: AuditService;
   let mandantService: MandantService;
   let user: AuthUser;
+  /**
+   * Der Mandant, dessen Kanzlei der neue Mandant bekommt.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 68): `create()` legt in der Kanzlei des
+   * **Kontext-Mandanten** an — dort hat der Guard die Admin-Rolle
+   * geprueft. Vorher war es der Mandant des Users an erster Stelle.
+   */
+  let kontextMandantId = '';
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -94,6 +102,15 @@ describe('Audit-Trail: Quittierung erst nach dem Nachweis', () => {
   });
 
   it('kehrt nicht zurueck, bevor der Audit-Eintrag geschrieben ist', async () => {
+    // Der Kontext-Mandant: irgendein Mandant des Seeds. Der neue Mandant
+    // bekommt dessen Kanzlei.
+    const kontextMandant = await prisma.mandant.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    expect(kontextMandant, 'der Seed muss Mandanten anlegen').toBeTruthy();
+    kontextMandantId = kontextMandant!.id;
+
     const original = audit.record.bind(audit);
 
     let freigeben!: () => void;
@@ -116,7 +133,7 @@ describe('Audit-Trail: Quittierung erst nach dem Nachweis', () => {
       let zurueckgekehrt = false;
 
       const lauf = mandantService
-        .create(dto(firmenname), user, {})
+        .create(dto(firmenname), kontextMandantId, user, {})
         .then((m) => {
           zurueckgekehrt = true;
           return m;
@@ -181,7 +198,13 @@ describe('Audit-Trail: Quittierung erst nach dem Nachweis', () => {
     const firmenname = `Quittierung-API-${Date.now()}`;
     const anlegen = await fetch('http://localhost:3000/api/mandant', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      // Der Mandanten-Kontext (Nachtrag 69): ohne ihn ist die Anlage nicht
+      // eindeutig — der neue Mandant gehoert in die Kanzlei des Kontexts.
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        'x-mandant-id': kontextMandantId,
+      },
       body: JSON.stringify(dto(firmenname)),
     });
     expect(anlegen.status, 'Anlegen muss gelingen').toBe(201);

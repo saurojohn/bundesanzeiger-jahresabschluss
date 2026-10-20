@@ -21,6 +21,8 @@ import { RolesGuard } from '../../auth/guards/roles.guard';
 import { MandantGuard } from '../../auth/guards/mandant.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { MandantId } from '../../auth/decorators/mandant-id.decorator';
+import { RequireMandant } from '../../auth/decorators/require-mandant.decorator';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { CreateMandantDto } from '../dto/create-mandant.dto';
 import { UpdateMandantDto } from '../dto/update-mandant.dto';
@@ -68,13 +70,30 @@ export class MandantController {
    */
   @Post()
   @UseGuards(MandantGuard)
+  // BEFUND 2026-10-20 (Nachtrag 69): Ohne `@RequireMandant()` ist der
+  // `MandantGuard` **inert** — er gibt frei, ohne einen Mandanten zu
+  // aufzuloesen. Damit blieb nur der globale Rollenvektor des
+  // `RolesGuard` („Admin IRGENDWO"), und der neue Mandant landete in der
+  // Kanzlei des ersten Mandanten des Users.
+  //
+  // Mit dem Kontext ist beides mandantenbezogen: der Guard prueft den
+  // Zugriff, der `RolesGuard` die Rolle **auf diesem** Mandanten, und der
+  // Service legt den Mandanten in dessen Kanzlei an.
+  @RequireMandant()
   @Roles('KANZLEI_ADMIN')
   create(
     @Body() dto: CreateMandantDto,
+    // BEFUND 2026-10-20 (Nachtrag 68): Der Mandanten-Kontext wird
+    // durchgereicht. Der `RolesGuard` hat die Admin-Rolle genau auf
+    // **diesem** Mandanten geprueft — der neue Mandant gehoert also in
+    // dessen Kanzlei. Vorher nutzte der Service `resolveKanzleiId(user)`,
+    // also die Kanzlei des **ersten** Mandanten des Users (Session-
+    // Sortierung: Firmenname) — die kann eine andere sein.
+    @MandantId() mandantId: string,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): ReturnType<MandantService['create']> {
-    return this.mandantService.create(dto, user, {
+    return this.mandantService.create(dto, mandantId, user, {
       ip: req.ip ?? null,
       userAgent: this.userAgent(req),
     });

@@ -269,9 +269,21 @@ describe('Jahresabschluss E2E (Anlage + Lesen)', () => {
   // =========================================================================
   it('Mandantentrennung: nicht zugewiesener Mandant -> 403, nicht 400', async () => {
     const admin = await anmelden('kanzlei-admin@kanzlei.de');
+    // BEFUND 2026-10-20 (Nachtrag 69): `POST /api/mandant` verlangt einen
+    // Mandanten-Kontext. Der neue Mandant entsteht in der Kanzlei des
+    // Kontext-Mandanten — dort hat der Guard die Admin-Rolle geprueft.
+    const kontextMandantId = admin.user.mandanten[0]?.id;
+    expect(
+      kontextMandantId,
+      'der KANZLEI_ADMIN braucht mindestens einen Mandanten als Kontext',
+    ).toBeTruthy();
     const neuer = await fetch(`${BASE}/api/mandant`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${admin.accessToken}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${admin.accessToken}`,
+        'x-mandant-id': kontextMandantId!,
+      },
       body: JSON.stringify({
         firmenname: 'Mandantentrennung GmbH',
         rechtsform: 'GmbH',

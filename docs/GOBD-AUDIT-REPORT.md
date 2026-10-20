@@ -6318,11 +6318,42 @@ ungetestetes Skript nicht gefunden hätte):
   laufen. Dafür gibt es jetzt `APP_DATABASE_URL` — **plus** die Gegenprobe aus
   Punkt 4, die genau diesen Fehler erkennt.
 
+#### Und der erste CI-Lauf des neuen Tests war **rot**
+
+Das ist der Teil, der die Sache rund macht. Der neue Workflow wurde durch
+den Push **automatisch** ausgeloest (der Pfad-Filter auf dem Workflow-File)
+— und **scheiterte**:
+
+```
+FEHLER SOURCE_DATABASE_URL und TARGET_DATABASE_URL muessen gesetzt sein
+Process completed with exit code 2.
+```
+
+Das Skript erwartete `SOURCE_DATABASE_URL`, der Workflow setzte
+`DATABASE_URL`. **Ein kaputter Test, der einen Monat lang stillschweigend
+fehlschlaegt** — genau das haette der Zeitplan allein nicht verhindert, und
+genau das haette der erste Monatslauf am 1. November gezeigt, also vier
+Wochen nach der Aenderung.
+
+Behoben: Das Skript faellt auf `DATABASE_URL` zurueck (der Normalfall: die
+Quelle ist die konfigurierte Datenbank), und der Workflow setzt beide
+Variablen ausdruecklich. Der zweite Lauf: **gruen**.
+
+Der lokale Lauf hatte den Fehler **nicht** gefunden, weil dort `DATABASE_URL`
+und die Quell-URL identisch gesetzt waren — der Fehler lag im *Namen* der
+Variablen, nicht in der Logik. Ein Test, den man nur lokal fährt, prüft
+nicht die Schnittstelle, die in der CI benutzt wird.
+
 #### Merksatz
 
 Ein Test, der von einem Handgriff auf einem Host abhängt, ist kein Test. Er
 ist ein Wunsch. Und ein grünes Ergebnis, das niemand liest, ist kein
 Nachweis.
+
+**Und: ein Test, den man nur lokal fährt, prüft nicht die Schnittstelle,
+die in der CI benutzt wird.** Der erste Lauf des neuen Workflows war rot —
+und niemand hätte es gemerkt, wenn der Workflow nicht selbst ausgelöst
+worden wäre.
 
 ---
 

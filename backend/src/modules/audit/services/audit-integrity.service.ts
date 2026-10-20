@@ -353,62 +353,96 @@ export class AuditIntegrityService {
       return { status: 'NO_ENTRIES', entriesChecked: 0 };
     }
 
-    let prevHash = AuditIntegrityService.GENESIS_HASH;
+    // BEFUND 2026-10-20 (Nachtrag 67): Die Kette ist **je Kanzlei** zu
+    // pruefen — so, wie sie geschrieben wird.
+    //
+    // `computeHashForEntry()` sucht den Vorgaenger **innerhalb derselben
+    // Kanzlei** (`kanzleiId: current.kanzleiId`). Die Pruefung hat bisher
+    // **global** verkettet: der letzte Eintrag der Kanzlei A war der
+    // Vorgaenger des ersten Eintrags der Kanzlei B. Das ist mit dem
+    // Schreibpfad unvereinbar — und die Folge war ein **Fehlalarm**:
+    // „BROKEN" (Manipulationsverdacht) fuer eine vollstaendig intakte Kette,
+    // sobald eine zweite Kanzlei Audit-Eintraege hat.
+    //
+    // **Gemessen** (429 Eintraege auf 7 Kanzleien): die globale Kette
+    // bricht bei seq=344, die Kette je Kanzlei bricht **nirgends**.
+    //
+    // Der Kommentar im Schreibpfad (2026-10-05) sagt es bereits: „Die
+    // Kette lief damit ueber ALLE Mandanten hinweg, waehrend
+    // `verifyIntegrity()` je Kanzlei prueft." Die Pruefung hat das nur noch
+    // nicht getan — im Einzeltest (eine Kanzlei) fiel es nicht auf, in der
+    // vollstaendigen Suite (sieben) schon.
+    const gruppen = new Map<string, typeof entries>();
+    for (const eintrag of entries) {
+      // `null` (Systemaktionen ohne Kanzlei) bildet eine eigene Gruppe.
+      const schluessel = eintrag.kanzleiId ?? '\u0000ohne-kanzlei';
+      const gruppe = gruppen.get(schluessel);
+      if (gruppe) gruppe.push(eintrag);
+      else gruppen.set(schluessel, [eintrag]);
+    }
+
     let entriesChecked = 0;
-    let oldestUnhashed: string | undefined;
 
-    for (const entry of entries) {
-       
-      const entryAny = entry as any;
-      const storedEntryHash = entryAny.entryHash as string | null | undefined;
+    for (const gruppe of gruppen.values()) {
+      // Jede Kanzlei hat ihre eigene Kette und startet bei Genesis.
+      let prevHash = AuditIntegrityService.GENESIS_HASH;
 
-      if (!storedEntryHash) {
-        // Eintrag hat keinen Hash — entweder Schema-Migration pending
-        // (alle Einträge) oder älterer Eintrag aus Pre-Hash-Chain-Phase.
-        if (!oldestUnhashed) oldestUnhashed = entry.id;
-        // Wir können diesen Eintrag nicht verifizieren, aber wir geben
-        // auf und melden PARTIAL-Status.
-        return {
-          status: 'PARTIAL',
-          entriesChecked,
-          oldestUnhashedEntry: oldestUnhashed,
-        };
+      for (const entry of gruppe) {
+        const entryAny = entry as any;
+        const storedEntryHash = entryAny.entryHash as string | null | undefined;
+
+        if (!storedEntryHash) {
+          // Eintrag hat keinen Hash — entweder Schema-Migration pending
+          // (alle Einträge) oder älterer Eintrag aus Pre-Hash-Chain-Phase.
+          //
+          // Wir nennen den **ältesten** ungehashten Eintrag der ganzen
+          // Kette, nicht den zuerst gefundenen: das Feld behauptet
+          // „ältester", also muss es der älteste sein.
+          const oldestUnhashed = entries.find((e) => !(e as any).entryHash)?.id;
+          // Wir können diesen Eintrag nicht verifizieren, aber wir geben
+          // auf und melden PARTIAL-Status.
+          return {
+            status: 'PARTIAL',
+            entriesChecked,
+            oldestUnhashedEntry: oldestUnhashed,
+          };
+        }
+
+        // Berechne erwarteten Hash
+        const expectedHash = crypto
+          .createHash('sha256')
+          .update(prevHash + this.serializeForHashing(entry))
+          .digest('hex');
+
+        if (expectedHash !== storedEntryHash) {
+          // KEINE Unterscheidung "INCOMPATIBLE" — bewusst verworfen
+          // (2026-10-05). Der Versuch, Altketten über den prevHash des
+          // Nachfolgers von echter Manipulation zu trennen, hat den
+          // bestehenden Test "erkennt eine nachträgliche Manipulation"
+          // umgeworfen: Wird B.entryHash nachträglich verändert, zeigt der
+          // Nachfolger C.prevHash IMMER noch auf den unveränderten Wert —
+          // eine echte Manipulation sieht damit exakt aus wie eine Altkette.
+          //
+          // Das hätte genau die Verhaltensweise erzeugt, die dieser Bericht
+          // vermeiden soll: Manipulationsverdacht als "bekannter Fall"
+          // einstufen. Sicherheitsprüfungen müssen FALL-OPEN sein — im
+          // Zweifel BROKEN. Eine Altkette braucht eine dokumentierte
+          // Neuberechnung mit Freigabe des Wirtschaftsprüfers, keine
+          // automatische Einstufung.
+          return {
+            status: 'BROKEN',
+            entriesChecked,
+            brokenAt: {
+              auditLogId: entry.id,
+              expectedHash,
+              actualHash: storedEntryHash,
+            },
+          };
+        }
+
+        prevHash = storedEntryHash;
+        entriesChecked++;
       }
-
-      // Berechne erwarteten Hash
-      const expectedHash = crypto
-        .createHash('sha256')
-        .update(prevHash + this.serializeForHashing(entry))
-        .digest('hex');
-
-      if (expectedHash !== storedEntryHash) {
-        // KEINE Unterscheidung "INCOMPATIBLE" — bewusst verworfen
-        // (2026-10-05). Der Versuch, Altketten über den prevHash des
-        // Nachfolgers von echter Manipulation zu trennen, hat den
-        // bestehenden Test "erkennt eine nachträgliche Manipulation"
-        // umgeworfen: Wird B.entryHash nachträglich verändert, zeigt der
-        // Nachfolger C.prevHash IMMER noch auf den unveränderten Wert —
-        // eine echte Manipulation sieht damit exakt aus wie eine Altkette.
-        //
-        // Das hätte genau die Verhaltensweise erzeugt, die dieser Bericht
-        // vermeiden soll: Manipulationsverdacht als "bekannter Fall"
-        // einstufen. Sicherheitsprüfungen müssen FALL-OPEN sein — im
-        // Zweifel BROKEN. Eine Altkette braucht eine dokumentierte
-        // Neuberechnung mit Freigabe des Wirtschaftsprüfers, keine
-        // automatische Einstufung.
-        return {
-          status: 'BROKEN',
-          entriesChecked,
-          brokenAt: {
-            auditLogId: entry.id,
-            expectedHash,
-            actualHash: storedEntryHash,
-          },
-        };
-      }
-
-      prevHash = storedEntryHash;
-      entriesChecked++;
     }
 
     return { status: 'OK', entriesChecked };

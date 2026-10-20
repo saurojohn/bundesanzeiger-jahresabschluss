@@ -3365,7 +3365,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.1 | **Entwurf liegt vor** — `docs/VERFAHRENSDOKUMENTATION.md` (Nachtrag 64): das Verfahren ist vollstaendig aus dem Quelltext abgeleitet und jede Aussage mit einer Stelle im Code belegt. **Die Freigabe durch Compliance steht aus** (8 offene Punkte, u. a. Zuständigkeitszuordnung und Zuordnungsrichtlinie) | Compliance | Q4/2026 |
 | TODO-8.2 | **Entwurf liegt vor** — `docs/IKS-Beschreibung.md` (Nachtrag 64): 32 Kontrollen entlang des Verfahrens, jeweils mit Risiko, Kontrolle, **technischem Nachweis** (dem wiederverwendbaren Test) und Verantwortlichkeit. **Die Freigabe durch Compliance und den Wirtschaftspruefer steht aus**; die Wirksamkeitsbeurteilung ist Aufgabe des WP | Compliance + WP | Q4/2026 |
 | TODO-8.3 | Externer GoBD-Auditor beauftragen | Geschäftsführung | Q4/2026 |
-| TODO-8.4 | Schema-Migration für Audit-Hash-Chain ausführen | DevOps | nach Pilot-Phase-2-Ende |
+| ~~TODO-8.4~~ | ~~Schema-Migration für Audit-Hash-Chain ausführen~~ — **erledigt in Nachtrag 66**: das Backfill-Skript war **kaputt** und hätte die Kette zerstört (Nachbau der Hash-Berechnung → BigInt-Absturz, falsche Reihenfolge, `prevHash` aus einer lokalen Variablen). Es benutzt jetzt **eine** Implementierung — `AuditIntegrityService.computeHashForEntry()` — und ist durch einen e2e-Test abgesichert. **Dabei kam ein weiterer Befund heraus (Nachtrag 67): die Integritätsprüfung meldete „BROKEN" für eine intakte Kette, sobald eine zweite Kanzlei Audit-Einträge hat.** **Der Lauf auf der Produktionsdatenbank bleibt ein Ops-Schritt** | DevOps | Skript fertig, Ausführung durch Ops |
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
 | ~~TODO-8.6~~ | ~~Automatischer monatlicher Restore-Test in CI~~ — **erledigt in Nachtrag 65**: `.github/workflows/restore-test.yml` laeuft **monatlich** (1. um 02:17 UTC) und auf Zuruf: Dump → Restore → Pruefung (alle Migrationen angewendet, Zeilenzahlen aller 28 Tabellen, Audit-Hash-Kette im wiederhergestellten Bestand **intakt**, WORM-Audit gruen). Das Skript `backend/scripts/restore-test.sh` ist versioniert und lokal lauffaehig. **Die Grenze ist ausdruecklich:** die CI beweist die **Prozedur**, nicht das Produktions-Backup — das prueft der Produktionslauf (Hetzner-Snapshot, DR-Plan Abschnitt 4) | DevOps | erledigt (Produktionslauf bleibt Ops) |
 | ~~TODO-8.7~~ | ~~`assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code?~~ — **erledigt in Nachtrag 58**: es war **weder** Tiefenschutz **noch** toter Code, sondern **zwoelfmal derselbe Code** (12 Kopien in 12 Services). Die Antwort auf die gestellte Frage ist damit eine dritte: *ungenutzter Tiefenschutz*. Jetzt gibt es **eine** Implementierung (`common/utils/mandant-zugriff.ts`), und ein Test beweist, dass sie greift, wenn der Guard umgangen wird | — | erledigt |
@@ -6354,6 +6354,275 @@ Nachweis.
 die in der CI benutzt wird.** Der erste Lauf des neuen Workflows war rot —
 und niemand hätte es gemerkt, wenn der Workflow nicht selbst ausgelöst
 worden wäre.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 66): Das Skript, das die Audit-Kette vervollständigen sollte, hätte sie **zerstört**
+
+#### Der Befund
+
+TODO-8.4 verlangte, die Schema-Migration für die Audit-Hash-Chain
+**auszuführen** — dafür gibt es `backend/scripts/backfill-audit-hash-chain.ts`.
+Das Skript setzt `entryHash` und `prevHash` für alle Einträge, die vor der
+Migration entstanden sind.
+
+**Das Skript war kaputt. Bei der Ausführung hätte es genau das zerstört,
+was es heilen sollte.**
+
+Drei voneinander unabhängige Fehler — jeder einzelne hätte gereicht:
+
+**1. Die Hash-Berechnung war eine Nachbau.**
+
+```ts
+// VORHER — im Skript
+function serializeForHashing(entry: unknown): string {
+  return JSON.stringify(entry, (_key, value) => {
+    if (value instanceof Date) return value.toISOString();
+    if (value === null) return null;
+    return value;
+  });
+}
+```
+
+Der Produktivcode (`AuditIntegrityService.canonicalizeForHash`) macht vier
+Dinge, die hier fehlen:
+
+| | Produktivcode | Nachbau im Skript |
+|---|---|---|
+| Schlüssel **rekursiv sortieren** | ja | **nein** |
+| `entryHash`/`prevHash`/`sequenz` ausschließen | ja | **nein** |
+| Fremdschlüssel (`mandantId`, `userId`, …) ausschließen | ja (Nachtrag 54) | **nein** |
+| **BigInt** (`sequenz` ist BIGINT) → String | ja | **nein** |
+
+Der letzte Punkt ist der sofortige: `JSON.stringify` wirft bei BigInt.
+Gemessen:
+
+```
+[Backfill] Fehler: TypeError: Do not know how to serialize a BigInt
+```
+
+Das Skript wäre **beim ersten Eintrag** abgebrochen. Und selbst wenn es
+durchgelaufen wäre, hätte es einen **anderen** Hash geschrieben als der
+Produktivpfad — die Kette wäre `BROKEN`, und `verifyIntegrity()` hätte es
+gemeldet.
+
+Das ist Nachtrag 54 zum wiederholten Malten: *„Wer eine Funktion zum
+Vergleich nachbaut, misst die Nachbildung."*
+
+**2. Die Reihenfolge war `createdAt`, nicht `sequenz`.**
+
+Der Produktivpfad verkettet über die monotone Spalte `sequenz`. Bei
+**gleichen Zeitstempeln** — bei einem Sammel-Import der Regelfall — ist die
+Reihenfolge nach `createdAt` nicht bestimmt. Die Kette hätte an einem
+anderen Vorgänger gehangen als der, den `verifyIntegrity()` erwartet.
+
+**3. `prevHash` kam aus einer lokalen Variablen.**
+
+```ts
+let prevHash = GENESIS_HASH;   // ← am Skriptanfang, nicht aus der DB
+```
+
+Der Idempotenz-Fall („`WHERE entryHash IS NULL`") ist genau der Fall, in
+dem **andere** Einträge bereits gehasht sind. Der erste noch fehlende
+Eintrag hätte den GENESIS-Hash bekommen — statt des Hashes seines
+tatsächlichen Vorgängers. Die Kette wäre an dieser Stelle **abgerissen**.
+
+#### Wie der Befund auffiel: das reparierte Skript meldete „BROKEN"
+
+Das Skript prueft am Ende **sich selbst** — mit dem Produktivcode, gegen die
+wiederhergestellte Datenbank. Und es meldete:
+
+```
+[Backfill] Fertig: 3 AuditLog-Einträge gehasht.
+[Backfill] Integritätsprüfung: BROKEN (343 Einträge geprüft).
+```
+
+Der isolierte Test war gruen, die **volle Suite** rot. Der Unterschied: die
+volle Suite hatte Eintraege von **sieben** Kanzleien in der Datenbank, der
+isolierte Test nur von einer. Das fuehrte zu Nachtrag 67.
+
+**Ein Skript, das sich selbst prueft, findet Fehler, die ein Test daneben
+nicht sieht.** Ohne diese Selbstpruefung waere das kaputte Skript
+unauffaellig geblieben — es haette ja nie gelaufen.
+
+#### Die Behebung: eine Implementierung statt zwei
+
+Das Skript rechnet nicht mehr selbst. Es benutzt
+`AuditIntegrityService.computeHashForEntry()` — dieselbe Funktion, die der
+Produktivpfad benutzt, mit derselben kanonischen Form, demselben
+`sequenz`-Vorgänger und derselben `kanzleiId`-Filterung.
+
+```ts
+const integrity = new AuditIntegrityService(prisma as never);
+while (true) {
+  const next = await prisma.auditLog.findFirst({
+    where: { entryHash: null },
+    orderBy: [{ sequenz: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true },
+  });
+  if (!next) break;
+  await integrity.computeHashForEntry(next.id);
+}
+```
+
+**Eine zweite Implementierung kann nicht mehr auseinanderlaufen** — es gibt
+keine zweite mehr.
+
+Zusätzlich prüft das Skript am Ende **selbst**, mit dem Produktivcode:
+
+```
+[Backfill] Fertig: 3 AuditLog-Einträge gehasht.
+[Backfill] Integritätsprüfung: OK (525 Einträge geprüft).
+```
+
+Bricht die Prüfung ab, bricht auch das Skript ab — es kann nicht
+„erfolgreich" melden und eine kaputte Kette hinterlassen.
+
+#### Der Test
+
+`e2e/audit-backfill.e2e.spec.ts`:
+
+1. drei Audit-Einträge **ohne** Hash direkt schreiben — genau der Zustand,
+   den die Schema-Migration hinterlässt,
+2. das Skript **als Subprozess** laufen lassen (so, wie ein Operator es
+   aufruft — kein Nachbau im Test, kein Aufruf einer exportierten Funktion),
+3. die Kette mit dem **Produktivcode** prüfen: `verifyIntegrity()` → `OK`.
+
+**Die Negativprobe** mit dem alten Skript:
+
+```
+× hasht die uebrigen Eintraege so, dass die Kette danach intakt ist
+  [Backfill] Fehler: TypeError: Do not know how to serialize a BigInt
+```
+
+Der Test prüft nicht das Skript, sondern das **Ergebnis**: nach dem Lauf
+muss die Kette intakt sein. Und der Aufruf läuft als Subprozess, weil ein
+Test, der eine exportierte Funktion aufruft, nicht die Kommandozeile prüft,
+die ein Operator benutzt.
+
+#### Was daraus folgt
+
+**Die Reihenfolge der Aufgaben war falsch.** „Skript ausführen" stand in der
+TODO-Liste, aber das Skript war nie gelaufen — weder in der CI noch lokal.
+Ein Skript, das seit Monaten auf „später" stand, ist **ungetesteter Code,
+der auf den Produktionsdaten zeigt.**
+
+**Merksatz:** Bevor ein Skript auf Produktionsdaten ausgeführt wird, muss
+sein Ergebnis geprüft sein — nicht nur sein Start. Und das Ergebnis wird
+geprüft, indem man es mit dem Produktivcode prüft, nicht indem man das
+Skript selbst nachbaut.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 67): Die Integritätsprüfung meldete **BROKEN** für eine intakte Kette
+
+#### Der Befund
+
+Der reparierte Backfill (Nachtrag 66) meldete nach seinem Lauf:
+
+```
+[Backfill] Integritätsprüfung: BROKEN (343 Einträge geprüft).
+```
+
+Der isolierte Test war grün, die **volle Suite** rot. Der Unterschied war
+der Datenbankzustand: die volle Suite hatte Einträge von **sieben**
+Kanzleien, der isolierte Test von einer.
+
+**Gemessen.** In der Datenbank lagen 429 Audit-Einträge auf sieben
+`kanzleiId`s. Die beiden Verkettungen im Vergleich:
+
+```
+GLOBALE Kette bricht bei: seq=344 kanzlei=null
+KETTE JE KANZLEI bricht bei: nirgends
+globaler Vorgaenger: seq=343 kanzlei=b3a02076-…
+Brucheintrag prevHash (global erwartet): 0000…0000
+Brucheintrag prevHash (kanzleilokal)  : 0000…0000   ← richtig
+```
+
+**Die Kette war intakt. Die Prüfung meldete trotzdem „BROKEN".**
+
+#### Die Ursache: Schreibpfad und Prüfung verketteten unterschiedlich
+
+| | Verkettung | Quelle |
+|---|---|---|
+| **Schreibpfad** (`computeHashForEntry`) | **je Kanzlei** — der Vorgaenger wird über `kanzleiId: current.kanzleiId` gesucht | `audit-integrity.service.ts` |
+| **Prüfung** (`verifyIntegrity`) | **global** — der Hash des letzten Eintrags war der Vorgänger des nächsten, über alle Kanzleien hinweg | `audit-integrity.service.ts` |
+
+Die beiden können nicht übereinstimmen, sobald mehr als eine Kanzlei
+Audit-Einträge hat.
+
+**Und es war kein Unfall.** Der Kommentar im Schreibpfad (Bugfix vom
+2026-10-05) sagt:
+
+> *„Es fehlte der `kanzleiId`-Filter. Die Kette lief damit über ALLE Mandanten
+> hinweg, während `verifyIntegrity()` je Kanzlei prüft. Beide konnten nie
+> übereinstimmen — die Prüfung meldete dauerhaft BROKEN, sobald mehr als eine
+> Kanzlei Audit-Einträge schrieb."*
+
+Der Filter im Schreibpfad wurde also **damit behoben, dass er dem
+behaupteten Verhalten der Prüfung angeglichen wurde** — aber die Prüfung
+hatte dieses Verhalten nie gehabt. Der Fix hat das Symptom zum Verschwinden
+gebracht, **nicht die Ursache**.
+
+#### Warum das ein schwerer Befund ist
+
+`BROKEN` bedeutet für einen GoBD-Auditor: **Manipulationsverdacht**. Und
+der Fehlalarm hat eine zweite, schlimmere Eigenschaft — er **verdeckt
+echte Befunde**:
+
+Die Negativprobe zu Nachtrag 67 zeigt es. Mit der globalen Verkettung wird
+**nicht nur** der Fehlalarm-Fall rot, sondern auch der Fall „eine echte
+Manipulation wird erkannt":
+
+```
+x meldet bei zwei Kanzleien KEINEN Bruch
+x meldet weiterhin einen echten Bruch (Manipulation)      ← der Fehlalarm verdeckt den echten Befund
+✓ meldet fuer eine einzelne Kanzlei OK
+```
+
+Die Prüfung bricht an der **Kanzlei-Grenze** ab — also **vor** dem Eintrag,
+an dem die Manipulation liegt. Ein Auditor hätte eine echte Manipulation
+übersehen.
+
+Und die Sichtbarkeit: im Einzeltest (eine Kanzlei) fällt nichts auf, im
+Produktivbetrieb mit mehreren Kanzleien meldet die Prüfung **dauerhaft
+BROKEN**. Ein Prüfwerk, das immer „Manipulation" sagt, wird nach der
+zweiten Woche ignoriert — und dann sieht auch eine echte Manipulation
+niemand mehr.
+
+#### Die Behebung
+
+`verifyIntegrity()` prüft jetzt **je Kanzlei** — jede Kanzlei hat ihre
+eigene Kette und beginnt bei Genesis. Das entspricht:
+
+- dem Schreibpfad (`kanzleiId`-gefilterter Vorgaenger) ✓
+- der dokumentierten Absicht („`verifyIntegrity()` prüft je Kanzlei") ✓
+- dem fachlichen Rahmen: der Audit-Trail einer Kanzlei ist deren
+  Nachweisrahmen; die Kanzleien sind Mandanten und ihre Trails sind
+  voneinander unabhängig ✓
+
+`null` (Systemaktionen ohne Kanzlei) bildet eine eigene Gruppe.
+
+**Die Gegenprobe** ist im selben Test: eine tatsächlich veränderte
+`entryHash` muss weiterhin `BROKEN` ergeben — der Fix darf keine Meldung
+verschlucken.
+
+#### Der Test
+
+`src/modules/audit/services/audit-integrity-kanzlei.spec.ts` — vier Einträge
+auf zwei Kanzleien, **über den Produktivpfad** gehasht
+(`computeHashForEntry`), dann `verifyIntegrity()`:
+
+| Fall | Erwartung |
+|---|---|
+| zwei Kanzleien, alles korrekt | `OK`, 4 Einträge geprüft |
+| **eine echte Manipulation** | `BROKEN`, `brokenAt` = der manipulierte Eintrag |
+| eine einzelne Kanzlei (gefiltert) | `OK`, 2 Einträge geprüft |
+
+**Merksatz:** Ein Prüfwerk, das immer „Manipulationsverdacht" meldet, wird
+ignoriert — und dann sieht auch eine echte Manipulation niemand mehr. Ein
+Fehlalarm ist nicht nur lästig; er **verbraucht die Aufmerksamkeit**, die
+für das echte Signal gebraucht wird.
 
 ---
 

@@ -5,16 +5,6 @@
  * Setzt entryHash + prevHash für alle existierenden AuditLog-Einträge
  * (die vor der Schema-Migration keinen Hash hatten).
  *
- * Algorithmus:
- *   - Hole ältesten unhashed Eintrag (Genesis-Eintrag)
- *   - Genesis-PrevHash = "0".repeat(64)
- *   - Berechne entryHash = SHA-256(prevHash + serialize(entry))
- *   - Update mit entryHash + prevHash
- *   - Nächster Eintrag: prevHash = entryHash vom vorherigen
- *
- * Idempotenz:
- *   - WHERE "entryHash" IS NULL — überspringt bereits gehashte Einträge
- *
  * Aufruf:
  *   cd backend && npx ts-node scripts/backfill-audit-hash-chain.ts
  *
@@ -22,26 +12,49 @@
  *   - Schema-Migration 2026_09_25_m4_production_schema ist gelaufen
  *     (ALTER TABLE audit_log ADD COLUMN entryHash, prevHash)
  *   - DATABASE_URL gesetzt
+ *
+ * ## BEFUND 2026-10-20 (Nachtrag 66): Dieses Skript war **kaputt** — und
+ * hätte bei Ausführung die Kette zerstört.
+ *
+ * Es hatte drei voneinander unabhängige Fehler. Jeder einzelne hätte
+ * gereicht, die Kette zu brechen:
+ *
+ * 1. **Die Hash-Berechnung war eine Nachbau.**
+ *    Das Skript serialisierte den Eintrag selbst — ohne rekursive
+ *    Sortierung der Schlüssel, ohne Ausschluss von `entryHash`/`prevHash`/
+ *    `sequenz` und ohne Ausschluss der veränderbaren Fremdschlüssel
+ *    (`mandantId`, `userId`, `jahresabschlussId`, `kanzleiId`). Und ohne
+ *    BigInt-Behandlung: `sequenz` ist BIGINT, `JSON.stringify` wirft
+ *    darauf — das Skript wäre beim **ersten** Eintrag abgebrochen.
+ *
+ *    Und selbst wenn es gelaufen wäre: der Hash wäre ein **anderer** als
+ *    der des Produktivcodes. Die Kette wäre BROKEN, und `verifyIntegrity()`
+ *    hätte es gemeldet. (Nachtrag 54: „Wer eine Funktion zum Vergleich
+ *    nachbaut, misst die Nachbildung.")
+ *
+ * 2. **Die Reihenfolge war `createdAt`, nicht `sequenz`.** Bei gleichen
+ *    Zeitstempeln (bei einem Sammel-Import der Regelfall) ist die
+ *    Reihenfolge nicht bestimmt — die Kette haengte dann an einem anderen
+ *    Vorgänger als der Produktivcode.
+ *
+ * 3. **`prevHash` kam aus einer lokalen Variablen.** Der Idempotenz-Fall
+ *    („WHERE entryHash IS NULL") haette dem ersten noch fehlenden Eintrag
+ *    den GENESIS-Hash gegeben — statt des Hashes seines tatsaechlichen
+ *    Vorgaengers.
+ *
+ * **Die Behebung:** Das Skript rechnet nicht mehr selbst. Es benutzt
+ * `AuditIntegrityService.computeHashForEntry()` — dieselbe Funktion, die
+ * der Produktivpfad benutzt. Eine zweite Implementierung kann nicht mehr
+ * auseinanderlaufen.
  */
-
 import { PrismaClient } from '@prisma/client';
-import * as crypto from 'crypto';
+import { AuditIntegrityService } from '../src/modules/audit/services/audit-integrity.service';
 
 const prisma = new PrismaClient();
-const GENESIS_HASH = '0'.repeat(64);
 
-function serializeForHashing(entry: unknown): string {
-  return JSON.stringify(entry, (_key, value) => {
-    if (value instanceof Date) return value.toISOString();
-    if (value === null) return null;
-    return value;
-  });
-}
-
-async function backfill() {
+async function backfill(): Promise<void> {
   console.log('[Backfill] Starte Audit-Hash-Chain-Backfill...');
 
-  // Phase 1: Anzahl unhashed ermitteln
   const totalUnhashed = await prisma.auditLog.count({
     where: { entryHash: null },
   });
@@ -52,31 +65,24 @@ async function backfill() {
     return;
   }
 
-  // Phase 2: Iteriere chronologisch
-  let processed = 0;
-  let prevHash = GENESIS_HASH;
+  // **Der Produktivcode.** `computeHashForEntry()` sucht den Vorgänger
+  // selbst in der Datenbank (`sequenz`, `kanzleiId`-gefiltert) und
+  // serialisiert mit derselben kanonischen Form wie der Schreibpfad.
+  const integrity = new AuditIntegrityService(prisma as never);
 
-  // Hole chronologisch alle unhashed Einträge (ID + createdAt + body)
-  // Wir nutzen Cursor-Pattern: nach jedem Update den nächsten ältesten holen
+  // Reihenfolge: `sequenz` — dieselbe Totalordnung, die der Produktivpfad
+  // verwendet. Nur so ist der Vorgänger eines Eintrags **schon** gehasht,
+  // wenn der nächste drankommt.
+  let processed = 0;
   while (true) {
     const next = await prisma.auditLog.findFirst({
       where: { entryHash: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ sequenz: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
     });
     if (!next) break;
 
-    const entryString = serializeForHashing(next);
-    const entryHash = crypto
-      .createHash('sha256')
-      .update(prevHash + entryString)
-      .digest('hex');
-
-    await prisma.auditLog.update({
-      where: { id: next.id },
-      data: { entryHash, prevHash },
-    });
-
-    prevHash = entryHash;
+    await integrity.computeHashForEntry(next.id);
     processed++;
 
     if (processed % 100 === 0) {
@@ -86,11 +92,19 @@ async function backfill() {
     }
   }
 
+  // Gegenprobe: der Weg, den ein Auditor geht.
+  const integrityResult = await integrity.verifyIntegrity();
   console.log(
     `[Backfill] Fertig: ${processed} AuditLog-Einträge gehasht. ` +
-      `Chain-Länge: ${processed}. ` +
-      `Letzter entryHash: ${prevHash.substring(0, 16)}...`,
+      `Integritätsprüfung: ${integrityResult.status} ` +
+      `(${integrityResult.entriesChecked} Einträge geprüft).`,
   );
+  if (integrityResult.status !== 'OK') {
+    throw new Error(
+      'Die Hash-Kette ist nach dem Backfill NICHT intakt — ' +
+        `Status ${integrityResult.status}. Bitte NICHT als erfolgreich verbuchen.`,
+    );
+  }
 }
 
 backfill()

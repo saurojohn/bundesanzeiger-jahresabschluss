@@ -3362,8 +3362,8 @@ rot**, darunter exakt der aus der CI.
 
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
-| TODO-8.1 | Verfahrensdokumentation (GoBD Rz. 10.3) erstellen | Compliance | Q4/2026 |
-| TODO-8.2 | Internes-Kontrollsystem-Doku (IKS) | Compliance + WP | Q4/2026 |
+| TODO-8.1 | **Entwurf liegt vor** — `docs/VERFAHRENSDOKUMENTATION.md` (Nachtrag 64): das Verfahren ist vollstaendig aus dem Quelltext abgeleitet und jede Aussage mit einer Stelle im Code belegt. **Die Freigabe durch Compliance steht aus** (8 offene Punkte, u. a. Zuständigkeitszuordnung und Zuordnungsrichtlinie) | Compliance | Q4/2026 |
+| TODO-8.2 | **Entwurf liegt vor** — `docs/IKS-Beschreibung.md` (Nachtrag 64): 32 Kontrollen entlang des Verfahrens, jeweils mit Risiko, Kontrolle, **technischem Nachweis** (dem wiederverwendbaren Test) und Verantwortlichkeit. **Die Freigabe durch Compliance und den Wirtschaftspruefer steht aus**; die Wirksamkeitsbeurteilung ist Aufgabe des WP | Compliance + WP | Q4/2026 |
 | TODO-8.3 | Externer GoBD-Auditor beauftragen | Geschäftsführung | Q4/2026 |
 | TODO-8.4 | Schema-Migration für Audit-Hash-Chain ausführen | DevOps | nach Pilot-Phase-2-Ende |
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
@@ -3374,7 +3374,7 @@ rot**, darunter exakt der aus der CI.
 | ~~TODO-8.10~~ | ~~`SIGNED → SUBMITTED → PUBLISHED` haben keinen Schreibpfad~~ — **erledigt in Nachtrag 62**: die Zustandsmaschine hat jetzt einen Schreibpfad (`POST :id/einreichen`, `POST :id/veroeffentlichen`). Die Bestellnummer ist **Pflicht** (sie ist der einzige Beleg fuer die Einreichung) und **eindeutig** (`@unique` in der Datenbank — der Kommentar versprach es, das Schema erzwingte es nicht). Die Anwendung reicht weiterhin **nicht selbst ein** (es gibt keine Submission-API des Verlags); sie protokolliert, was die Kanzlei draussen getan hat | — | erledigt |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | ~~TODO-8.12~~ | ~~Der Signier-Knopf war an 5 Stellen ohne Rollenprüfung sichtbar~~ — **erledigt in Nachtrag 57**: die Sichtbarkeit hängt jetzt an **einer** Stelle (`lib/session.ts`) und bildet den `RolesGuard` mandantenbezogen ab. Die TODO-Formulierung war dabei ungenau: `sign-bilanz/guv/anhang` erlauben **auch** `STEUERBERATER`, nur `sign-abschluss` ist WP-only — gemessen am Controller, nicht angenommen | — | erledigt |
-| TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
+| TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. **Nachtrag 63: die Gegenprobe wurde nach der Audit-Umstellung (Nachtrag 56) wiederholt** — die alte Messung stammte von vor dem Fix. Vier Läufe, je 60/60 mit HTTP 201, `integrity` → **OK** (335 / 398 / 461 / 524 Einträge geprüft). Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | ~~TODO-8.14~~ | ~~Eintrag `seq=249` ungeklärt~~ — **erledigt in Nachtrag 54**: es war die **Datenbank** (Prisma `SetNull` auf `AuditLog.mandantId` beim Löschen eines Mandanten), nicht ein fremder Prozess. Der Hash schützt jetzt den Inhalt, nicht die veränderbaren Fremdschlüssel | — | erledigt |
 | ~~TODO-8.14~~ | ~~Zweiter Schreiber auf der Audit-Kette identifizieren~~ — **erledigt in Nachtrag 54**: es war die **Datenbank** (Prisma `SetNull` auf `AuditLog.mandantId` beim Löschen eines Mandanten), nicht ein fremder Prozess. Der Hash schützt jetzt den Inhalt, nicht die veränderbaren Fremdschlüssel | — | erledigt |
 | ~~TODO-8.15~~ | ~~Komponentensignatur am offenen Aggregat: zulaessig oder unzulaessig?~~ — **erledigt in Nachtrag 60**: **zulaessig, aber mit trennendem Modellfeld** (vom Nutzer bestaetigt): `signature.signaturEbene` = `ABSCHLUSS` (Endabnahme) oder `BESTANDTEIL` (gepruefter Bestandteil). Vorher lag eine Komponentensignatur auf der `jahresabschlussId`-Achse und war damit von einer Abschluss-Signatur **nicht unterscheidbar** — ein Auditor las „der Jahresabschluss ist signiert", obwohl nur die GuV geprueft war | — | erledigt |
@@ -4174,7 +4174,7 @@ sichtbar, statt in einer Notiz zu verschwinden. TODO-8.14.
 
 | ID | Aufgabe | Owner | Frist |
 |---|---|---|---|
-| TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
+| TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. **Nachtrag 63: die Gegenprobe wurde nach der Audit-Umstellung (Nachtrag 56) wiederholt** — die alte Messung stammte von vor dem Fix. Vier Läufe, je 60/60 mit HTTP 201, `integrity` → **OK** (335 / 398 / 461 / 524 Einträge geprüft). Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | TODO-8.14 | Eintrag `seq=249`: Schreibpfad hängt korrekt am Vorgänger, `verifyIntegrity` berechnet einen anderen Hash. Felder zwischen Schreib- und Prüfzeitpunkt vergleichen — derzeit nur durch Instrumentieren des Schreibpfads isolierbar | Dev + Compliance | Sprint 5 |
 
 ---
@@ -6105,6 +6105,123 @@ Sperre.
 Die Tabelle `banz_submission` wird geschrieben. Damit liefert die Public API
 erstmals echte Einreichungsdaten — und der Weg zur echten Cursor-Paginierung,
 den der Public-API-Service als Voraussetzung benannt hat, ist geebnet.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 63): Eine Gegenprobe, die von einem älteren Codestand stammte
+
+TODO-8.13 (und der gleichlautende Abschnitt aus Nachtrag 43) trägt die
+Aussage: *„Zwei echte Instanzen auf derselben Datenbank, 60
+Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**"*.
+
+**Diese Messung stammt aus Nachtrag 45 — also von vor der Audit-Umstellung
+(Nachtrag 56).** Seitdem hat sich der Audit-Pfad materiell geändert: der
+Audit-Write wartet jetzt auf den Aufrufer, und die Hash-Kette wartet auf
+**ihren eigenen** Eintrag statt auf die leere Warteschlange. Eine Messung,
+die einen anderen Codestand beschreibt, belegt den heutigen nicht.
+
+**Nachgemessen, mit dem Code von heute.** Zwei echte Anwendungsinstanzen
+(`:3000` und `:3101`) auf derselben Datenbank, 60 fachliche
+Schreibvorgänge, abwechselnd auf beide verteilt:
+
+```
+Fachschreibvorgaenge: 60  {"201":60}
+Integritaet: {"status":"OK","entriesChecked":335, ...}
+```
+
+Vier Läufe, jeder mit 60/60 HTTP 201:
+
+| Lauf | Schreibvorgänge | `integrity` | geprüfte Einträge |
+|---|---|---|---|
+| 1 | 60/60 (201) | **OK** | 335 |
+| 2 | 60/60 (201) | **OK** | 398 |
+| 3 | 60/60 (201) | **OK** | 461 |
+| 4 | 60/60 (201) | **OK** | 524 |
+
+**Die Gegenprobe ist also weiterhin negativ** — und jetzt ist sie eine
+Messung des heutigen Codes.
+
+#### Warum die Umstellung die Beobachtung nicht kippt
+
+Die Änderung aus Nachtrag 56 hat die Kette nicht entschärft, sondern sie
+**enger** gezogen: der Aufrufer wartet jetzt, bis sein eigener Eintrag einen
+Hash hat. Damit gilt die Reihenfolge aus Nachtrag 41 unverändert:
+
+1. **Die Reihenfolge kommt aus der Datenbank.** Die Kette hasht immer den
+   Eintrag mit der kleinsten `sequenz`, der noch keinen Hash hat — nicht
+   „den Eintrag, für den ich gerufen wurde". Zwei Instanzen können sich
+   nicht überholen, weil keine von ihnen eine eigene Reihenfolge
+   mitbringt.
+2. **Die Berechnung ist idempotent.** Rechnen zwei Instanzen dieselbe offene
+   Zeile, kommen sie zum selben Ergebnis.
+
+Der früher befundene Randfall bleibt dokumentiert (Nachtrag 45): Instanz A
+hat die offene Zeile gewählt und noch nicht geschrieben, Instanz B hängt
+ihre Zeile an den Vorletzten. In **acht** Läufen (vier aus Nachtrag 45, vier
+von heute) trat er nicht auf.
+
+**Merksatz für die eigene Arbeit:** Eine Gegenprobe, deren Codestand
+geändert wurde, ist keine Gegenprobe mehr. Sie muss wiederholt werden,
+sonst steht am Ende der Dokumentation eine Aussage über einen Zustand, den
+es nicht mehr gibt.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 64): Die Verfahrensdokumentation und die IKS-Beschreibung — als Entwurf aus dem Code
+
+#### Warum das ein Entwurf ist und kein fertiges Dokument
+
+TODO-8.1 und TODO-8.2 tragen als Owner **„Compliance"** bzw. **„Compliance +
+WP"**. Das ist richtig so: eine Verfahrensdokumentation nach GoBD Rz. 10.3
+beschreibt nicht nur die Software, sondern den **Prozess der Kanzlei** —
+wer macht was, in welcher Reihenfolge, mit welchem Medium, und wer
+haeltet das fest.
+
+Die Software kann den einen Teil belegen (den technischen) und den anderen
+nicht (den organisatorischen). Ein Dokument, das den zweiten behauptet,
+waere eine erfundene Compliance-Aussage — genau die Sorte Beleg, die in
+einem GoBD-Audit schadet.
+
+**Darum: zwei Entwuerfe, die den belegbaren Teil vollstaendig liefern und den
+organisatorischen Teil als offene Punkte ausweisen.**
+
+| Dokument | Inhalt |
+|---|---|
+| `docs/VERFAHRENSDOKUMENTATION.md` | Zweck, Geltungsbereich, Begriffe, Rollen, das Verfahren in fuenf Schritten, Aufbewahrung, Nachvollziehbarkeit, Zugriffsschutz, IT-Massnahmen, **8 offene Punkte** |
+| `docs/IKS-Beschreibung.md` | 32 Kontrollen entlang des Verfahrens, jeweils mit Risiko, Kontrolle, **technischem Nachweis** (dem wiederverwendbaren Test) und Verantwortlichkeit, plus **6 offene Punkte** der IKS |
+
+#### Die Grundsaetze, die beide Dokumente tragen
+
+1. **Jede Aussage ist mit einer Stelle im Quelltext belegt.** Kein Satz
+   beschreibt etwas, was nicht im Code nachlesbar waere.
+2. **Der technische Nachweis ist maschinell.** Jede Kontrolle verweist auf
+   einen wiederverwendbaren Test. Eine Kontrolle ohne Test ist eine
+   Behauptung — das ist der Kern des IKS, nicht die Matrix.
+3. **Was die Software nicht belegen kann, steht als offener Punkt**, nicht
+   als Aussage.
+
+#### Was beim Schreiben auffiel — und was daraus entstanden ist
+
+**Die Empfangsbestaetigung des Portals fehlt.** Die Anwendung speichert das
+signierte PDF und die Bestellnummer. Die **vom Bundesanzeiger erzeugte
+Empfangsbestaetigung** wird nicht als Beleg erfasst. Das ist eine echte
+Luecke — sie steht jetzt als offener Punkt in beiden Dokumenten (K-18) und
+in der TODO-Zeile zu TODO-8.10, damit sie vor dem Pilot geschlossen wird.
+
+**Der Restore-Test fehlt ebenfalls** (TODO-8.6). Der DR-Plan beschreibt
+das Verfahren, aber ohne monatlichen Wiederherstellungstest ist die
+Wirksamkeit der Aufbewahrung nicht belegt — das ist K-22 und offener Punkt
+4 in der IKS.
+
+#### Und die Nachmessung aus Nachtrag 63
+
+TODO-8.13s Gegenprobe stammte von **vor** der Audit-Umstellung. Sie wurde
+heute mit dem aktuellen Code wiederholt: zwei echte Instanzen auf derselben
+Datenbank, 60 abwechselnde Schreibvorgaenge je Lauf, vier Laeufe,
+`integrity` -> **OK** (335 / 398 / 461 / 524 Eintraege geprueft).
+
+Die Aussage ist damit keine mehr ueber einen Codestand, den es nicht mehr
+gibt.
 
 ---
 

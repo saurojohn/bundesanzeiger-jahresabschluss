@@ -248,3 +248,5 @@ Vollständiges ER-Diagramm in `docs/datenmodell.md` (Phase 1 Sprint 2).
 - [docs/rechtsrahmen.md](docs/rechtsrahmen.md) — HGB/PublG/GoBD-Mappings (Phase 1 Sprint 1)
 - [docs/banz-schemata.md](docs/banz-schemata.md) — BAnz XML/XBRL Schemas (Phase 2)
 - [docs/gobd-architektur.md](docs/gobd-architektur.md) — GoBD-Architektur (Phase 1 Sprint 3)
+- [docs/VERFAHRENSDOKUMENTATION.md](docs/VERFAHRENSDOKUMENTATION.md) — GoBD Rz. 10.3, aus dem Code abgeleitet (ENTWURF, Freigabe durch Compliance offen)
+- [docs/IKS-Beschreibung.md](docs/IKS-Beschreibung.md) — Kontrollmatrix mit technischem Nachweis (ENTWURF, Freigabe offen)

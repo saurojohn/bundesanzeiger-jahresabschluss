@@ -75,6 +75,8 @@ jobs:
       NODE_VERSION: '22'
       # Quelle: die migrierte und geseedete Datenbank
       DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger?schema=public
+      # Ausdruecklich, damit Quelle und Ziel nicht vertauscht werden koennen.
+      SOURCE_DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger?schema=public
       # Ziel: die wiederhergestellte Datenbank (siehe unten)
       TARGET_DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger_restore?schema=public
       JWT_SECRET: ci-only-not-a-real-secret-0000000000000000000000000000

@@ -64,8 +64,14 @@ log_fail() { echo -e "${ROT}FEHLER${NC} $*"; }
 
 FEHLER=0
 
-if [ -z "${SOURCE_DATABASE_URL:-}" ] || [ -z "${TARGET_DATABASE_URL:-}" ]; then
-  log_fail "SOURCE_DATABASE_URL und TARGET_DATABASE_URL muessen gesetzt sein"
+# Die Quelle ist die konfigurierte Datenbank; ein eigener Name erlaubt es,
+# eine andere Quelle zu nehmen. `DATABASE_URL` ist der Normalfall — der
+# erste CI-Lauf schlug genau hier fehl (der Workflow setzte `DATABASE_URL`,
+# das Skript las `SOURCE_DATABASE_URL`).
+SOURCE_DATABASE_URL="${SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
+
+if [ -z "${SOURCE_DATABASE_URL}" ] || [ -z "${TARGET_DATABASE_URL:-}" ]; then
+  log_fail "SOURCE_DATABASE_URL (oder DATABASE_URL) und TARGET_DATABASE_URL muessen gesetzt sein"
   exit 2
 fi
 

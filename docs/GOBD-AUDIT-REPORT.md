@@ -6716,6 +6716,35 @@ Mandantenliste: ["Aaa GmbH", "Beispiel GmbH", "Demo GmbH", "Test AG"]
 Der eigene Mandant ist da, die eigene Kanzlei ist wieder da, und der
 fremde Mandant ist weg.
 
+#### Und was **nicht** betroffen war — ebenfalls gemessen
+
+Dieselbe lockere Admin-Pruefung steht an zwei weiteren Stellen derselben
+Datei (`delete()` und `assertKanzleiAdmin()` fuer Archivierung). Sie wurde
+mit demselben Szenario geprueft — aktiver Mandant „Aaa GmbH" (Kanzlei B,
+dort STEUERBERATER), der User ist KANZLEI_ADMIN in der Kanzlei A:
+
+```
+PATCH /api/mandant/<Aaa>     -> HTTP 403  Rolle KANZLEI_ADMIN fehlt fuer diesen Mandanten
+DELETE /api/mandant/<Aaa>     -> HTTP 403  (dieselbe Meldung)
+PATCH /archivierung           -> HTTP 403  (dieselbe Meldung)
+```
+
+**Geschuetzt.** Der Grund ist die Rollenpruefung des Guards (Nachtrag 40):
+sie wertet die Rolle **je aktivem Mandanten** aus, und die Meldung sagt es
+explizit („Die Rolle gilt mandantenbezogen: eine Rolle aus einem anderen
+Mandanten berechtigt nicht, fuer diesen"). Die lockere Service-Pruefung ist
+damit nur eine **zweite Schicht** — sie kann nichts erlauben, was der Guard
+nicht schon erlaubt hat.
+
+**Und damit ist erklaert, warum ausgerechnet die Liste betroffen war:**
+Die Mutationsrouten tragen `@Roles('KANZLEI_ADMIN')` — der Guard ist ihr
+Tor. Die **Liste** (`GET /api/mandant`) traegt **kein** `@Roles`; dort war
+die Service-Logik das einzige Tor — und das stand offen.
+
+**Merksatz zu gemessenen Negativbefunden:** Die beiden anderen Stellen
+sehen im Quelltext identisch aus und sind es nicht. Ein Befund, der nur im
+Quelltext begründet wird, trifft hier die falsche Stelle.
+
 #### Der Test
 
 `src/modules/mandant/services/findall-kanzlei-filter.spec.ts` — der

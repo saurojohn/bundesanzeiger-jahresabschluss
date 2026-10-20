@@ -6626,6 +6626,110 @@ für das echte Signal gebraucht wird.
 
 ---
 
+### Nachtrag 2026-10-20 (Nachtrag 68): Die Mandantenliste zeigte einem KANZLEI_ADMIN die Mandanten einer Kanzlei, in der er **keine Rolle** hatte
+
+#### Der Befund
+
+Nachtrag 11 hatte einen Bruch gefunden: „Admin IRGENDWO" statt „Admin **in
+dieser** Kanzlei". Der Befund wurde in vier Services behoben
+(`common/utils/kanzlei-rolle.ts`). **Die fünfte Stelle blieb stehen** — und
+dort ist der Bruch nicht nur sicherheitsrelevant, sondern er war bis eben
+auch **funktional falsch**.
+
+#### Gemessen
+
+Ein KANZLEI_ADMIN der Kanzlei A bekommt zusätzlich einen Mandant in der
+Kanzlei B (dort STEUERBERATER). Die Mandanten der Kanzlei B heißen
+„Aaa GmbH" (sein eigener) und „Bravo GmbH" (keine Rolle).
+
+```
+Session-Mandanten (Reihenfolge): Aaa GmbH/STEUERBERATER, Beispiel GmbH/KANZLEI_ADMIN, …
+Mandantenliste (VORHER): ["Aaa GmbH", "Bravo GmbH"]
+
+"+"Bravo GmbH" (KEINE Rolle des Users) in der Liste : JA  <-- BRUCH
+"+"Aaa GmbH"  (eigener Mandant) in der Liste         : ja
+```
+
+Zwei Dinge zugleich:
+
+1. **Sicherheitsbruch.** „Bravo GmbH" gehört einem Mandanten, in dem der
+   User **keine Rolle** hat. Die Liste liefert Firmenname, USt-Id und
+   Adresse — Mandantentrennungs-Bruch (§ 146 AO).
+2. **Funktional falsch.** Die Mandanten der Kanzlei A, in der er Admin
+   **ist**, fehlen in der Liste. Sein eigener Kanzlei-Bestand war unsichtbar.
+
+#### Die Ursache: zwei Fragen, die auseinanderlaufen
+
+```ts
+const istKanzleiAdmin =
+  istSystemAdmin || user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+const eigeneKanzleiId = istKanzleiAdmin ? await this.resolveKanzleiId(user) : null;
+```
+
+- `istKanzleiAdmin` beantwortet: **„Ist der User irgendwo Admin?"**
+- `eigeneKanzleiId` beantwortet: **„In welcher Kanzlei ist sein erster
+  Mandant?"**
+
+Die beiden werden verknüpft, als wären sie dieselbe Frage. `resolveKanzleiId`
+nimmt `user.mandanten[0]` — und die Session sortiert die Mandanten nach
+**Firmenname** (`MANDANTEN_SORTIERUNG`). Der „erste" Mandant ist damit der
+alphabetisch erste — und der kann in der Kanzlei liegen, in der der User
+**nicht** Admin ist. Dann filtert die Liste auf genau diese Kanzlei.
+
+Das ist Nachtrag 11 an fünfter Stelle: dieselbe Sache, ein anderer Ort.
+
+#### Die Regel jetzt
+
+**Der User sieht:**
+
+1. alle Mandanten der Kanzleien, in denen er **KANZLEI_ADMIN** ist, und
+2. seine **eigenen** Mandanten — in jeder Kanzlei, mit jeder Rolle.
+
+Punkt 2 ist nicht nur Sicherheit: ohne ihn wäre seine Mandantenliste
+unvollständig (sein eigener Mandant in der zweiten Kanzlei fehlte).
+
+Und ein `kanzleiId` aus dem Query-String darf nur eine Kanzlei treffen, in
+der der User Admin ist **oder** selbst einen Mandanten hat — sonst wieder
+Fremdzugriff, nur auf einem anderen Weg.
+
+Die Bindung kommt jetzt aus **einer** Stelle: `rollenBindung()` im
+Mandant-Service. Das ist dieselbe Idee wie `common/utils/kanzlei-rolle.ts`
+— nur eben dort, wo sie bisher fehlte.
+
+#### Die Negativprobe
+
+Die alte Regel wieder eingebaut (die Liste filtert auf die Kanzlei des
+ersten Mandanten) und **dieselbe Messung** wiederholt:
+
+```
+Mandantenliste: ["Aaa GmbH", "Bravo GmbH"]
+"+"Bravo GmbH" (KEINE Rolle des Users) in der Liste : JA  <-- BRUCH
+```
+
+Nach dem Fix:
+
+```
+Mandantenliste: ["Aaa GmbH", "Beispiel GmbH", "Demo GmbH", "Test AG"]
+"+"Bravo GmbH" (KEINE Rolle des Users) in der Liste : nein
+```
+
+Der eigene Mandant ist da, die eigene Kanzlei ist wieder da, und der
+fremde Mandant ist weg.
+
+#### Der Test
+
+`src/modules/mandant/services/findall-kanzlei-filter.spec.ts` — der
+bestehende Test (Nachtrag 11) wird um den Mehr-Kanzlei-Fall erweitert:
+„ein Admin in zwei Kanzleien sieht **beide** — und nicht die fremden".
+
+**Merksatz:** Ein Fix, der an **vier** Stellen angewendet wurde, hat die
+fünfte nicht gefunden. „Suche nach dem Muster" ist nicht dasselbe wie
+„suche nach allen Vorkommen". Der Mehr-Kanzlei-Fall war bisher von **keinem**
+Test abgedeckt — der Standardfall (ein Admin, eine Kanzlei) ist in Ordnung,
+und genau deshalb fiel nichts auf.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

@@ -95,6 +95,66 @@ export class MandantService {
   }
 
   /**
+   * Die Rollenbindung des Users: in welchen Kanzleien ist er
+   * KANZLEI_ADMIN, und welche Mandanten sind seine eigenen.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 68): Die Liste benutzte zwei Angaben, die
+   * auseinanderlaufen koennen:
+   *
+   *     istKanzleiAdmin  = "Admin IRGENDWO"  (irgendein Mandant hat die Rolle)
+   *     eigeneKanzleiId  = Kanzlei des ERSTEN Mandanten (Sortierung: Firma)
+   *
+   * Ist der erste Mandant in der Kanzlei, in der der User **kein** Admin
+   * ist, sah er **alle** Mandanten dieser Kanzlei. Das ist der
+   * Nachtrag-11-Defekt an der fuenften Stelle — Mandantentrennungs-Bruch
+   * (§ 146 AO): Firmenname, USt-Id und Adresse fremder Mandanten.
+   *
+   * **Gemessen:** ein KANZLEI_ADMIN der Kanzlei A mit einem Mandant
+   * „Aaa GmbH" in der Kanzlei B (dort STEUERBERATER) sieht in der Liste
+   * **„Bravo GmbH"** — einen Mandanten der Kanzlei B, in dem er **keine
+   * Rolle** hat. Und die Mandanten der Kanzlei A, in der er Admin **ist**,
+   * fehlen in der Liste.
+   *
+   * Diese Methode bindet die Rolle an die Kanzlei — genau wie
+   * `common/utils/kanzlei-rolle.ts` es fuer Webhooks, Abos, API-Schluessel
+   * und DNS tut. Es gibt jetzt **eine** Stelle fuer diese Bindung.
+   */
+  private async rollenBindung(user: AuthUser): Promise<{
+    /** Kanzleien, in denen der User KANZLEI_ADMIN ist. */
+    adminKanzleiIds: string[];
+    /** Alle Kanzleien, in denen der User einen Mandanten hat. */
+    eigeneKanzleiIds: string[];
+    /** Die Mandanten des Users. */
+    eigeneMandantIds: string[];
+  }> {
+    const eigeneMandantIds = user.mandanten.map((m) => m.id);
+    if (eigeneMandantIds.length === 0) {
+      return { adminKanzleiIds: [], eigeneKanzleiIds: [], eigeneMandantIds: [] };
+    }
+
+    const rolleJeMandant = new Map(user.mandanten.map((m) => [m.id, m.rolle]));
+    const mandanten = await this.prisma.mandant.findMany({
+      where: { id: { in: eigeneMandantIds } },
+      select: { id: true, kanzleiId: true },
+    });
+
+    const adminKanzleiIds = new Set<string>();
+    const eigeneKanzleiIds = new Set<string>();
+    for (const mandant of mandanten) {
+      eigeneKanzleiIds.add(mandant.kanzleiId);
+      if (rolleJeMandant.get(mandant.id) === 'KANZLEI_ADMIN') {
+        adminKanzleiIds.add(mandant.kanzleiId);
+      }
+    }
+
+    return {
+      adminKanzleiIds: [...adminKanzleiIds],
+      eigeneKanzleiIds: [...eigeneKanzleiIds],
+      eigeneMandantIds,
+    };
+  }
+
+  /**
    * Liste aller Mandanten, auf die der User Zugriff hat.
    *
    * SYSTEM_ADMIN sieht alle Mandanten der Kanzlei (eigentlich sogar
@@ -121,13 +181,19 @@ export class MandantService {
     // domain-verification.service, api-key.service). Die Liste war die
     // einzige Stelle mit der engeren Regel — sie wird jetzt angeglichen.
     const istSystemAdmin = user.globalRole === 'SYSTEM_ADMIN';
-    const istKanzleiAdmin =
-      istSystemAdmin || user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+    //
+    // BEFUND 2026-10-20 (Nachtrag 68): „Admin IRGENDWO" und „Kanzlei des
+    // ersten Mandanten" sind zwei verschiedene Fragen — und die alte
+    // Verknuepfung beider ergab einen Mandantentrennungs-Bruch. Jetzt
+    // kommt die Bindung aus `rollenBindung()`: die Kanzleien, in denen der
+    // User **Admin ist**, und seine eigenen Mandanten.
+    const { adminKanzleiIds, eigeneKanzleiIds, eigeneMandantIds } =
+      await this.rollenBindung(user);
     // `resolveKanzleiId` WIRFT, wenn nichts auflösbar ist — es liefert nie
     // leer. Damit ist der alte `{}`-Zweig (kein Filter = alle Mandanten
     // aller Kanzleien) nicht erreichbar und wird hier entfernt: er war
     // eine latente Falle, keine Absicht.
-    const eigeneKanzleiId = istKanzleiAdmin ? await this.resolveKanzleiId(user) : null;
+    const eigeneKanzleiId = istSystemAdmin ? await this.resolveKanzleiId(user) : null;
 
     // BEFUND 2026-10-11: `pagination.kanzleiId` stammt aus dem Query-String
     // und ÜBERSCHrieb zuvor den aufgelösten Wert. Live gemessen:
@@ -145,19 +211,45 @@ export class MandantService {
     // abweichender Widerspruch wird abgelehnt statt still ignoriert: ein
     // stilles Ignorieren laesst den Aufrufer glauben, er habe die fremde
     // Kanzlei gesehen.
+    //
+    // BEFUND 2026-10-20 (Nachtrag 68): Ein `kanzleiId` aus dem
+    // Query-String darf nur eine Kanzlei treffen, in der der User Admin
+    // ist **oder** selbst einen Mandanten hat. Sonst waere es wieder der
+    // Fremdzugriff vom 2026-10-11 — nur mit einem anderen Weg.
     if (
       !istSystemAdmin &&
       pagination?.kanzleiId &&
-      pagination.kanzleiId !== eigeneKanzleiId
+      !adminKanzleiIds.includes(pagination.kanzleiId) &&
+      !eigeneKanzleiIds.includes(pagination.kanzleiId)
     ) {
       throw new ForbiddenException(
-        'Die angeforderte Kanzlei gehört nicht zu Ihrem Mandanten.',
+        'Die angeforderte Kanzlei gehört nicht zu Ihren Mandanten.',
       );
     }
 
-    const where: Prisma.MandantWhereInput = istKanzleiAdmin
-      ? { kanzleiId: istSystemAdmin ? (pagination?.kanzleiId ?? eigeneKanzleiId!) : eigeneKanzleiId! }
-      : { id: { in: user.mandanten.map((m) => m.id) } };
+    //
+    // **Die Sichtbarkeit.** Der User sieht:
+    //   1. alle Mandanten der Kanzleien, in denen er KANZLEI_ADMIN ist,
+    //   2. seine eigenen Mandanten — in jeder Kanzlei, mit jeder Rolle.
+    //
+    // Punkt 2 ist wichtig: ein User mit einem Mandant in einer zweiten
+    // Kanzlei sieht diesen sonst gar nicht — seine eigene Mandantenliste
+    // waere unvollstaendig.
+    const sichtbar: Prisma.MandantWhereInput =
+      adminKanzleiIds.length === 0
+        ? { id: { in: eigeneMandantIds } }
+        : {
+            OR: [
+              { kanzleiId: { in: adminKanzleiIds } },
+              { id: { in: eigeneMandantIds } },
+            ],
+          };
+
+    const where: Prisma.MandantWhereInput = istSystemAdmin
+      ? { kanzleiId: pagination?.kanzleiId ?? eigeneKanzleiId! }
+      : pagination?.kanzleiId
+        ? { AND: [sichtbar, { kanzleiId: pagination.kanzleiId }] }
+        : sichtbar;
 
     // Backwards-Compat (M3-Regression-Fix): Ohne explizite Pagination liefern
     // wir ein flaches Array — so wie vor dem Cursor-Pagination-Rollout. Der

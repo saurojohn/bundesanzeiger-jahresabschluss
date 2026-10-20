@@ -98,6 +98,9 @@ export class PdfService {
         entityType: 'BILANZ',
         entityId: bilanzId,
         mandantId,
+        // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Eine Bilanz auf DRAFT
+        // ist ein Arbeitsstand — sie darf nicht im Beweis-Archiv liegen.
+        istEntwurf: bilanz.status === 'DRAFT',
         metadata: {
           firmenname: mandant.firmenname,
           geschaeftsjahr: bilanz.geschaeftsjahr,
@@ -154,6 +157,7 @@ export class PdfService {
         entityType: 'GUV',
         entityId: guvId,
         mandantId,
+        istEntwurf: guv.status === 'DRAFT',
         metadata: {
           firmenname: mandant.firmenname,
           geschaeftsjahr: guv.geschaeftsjahr,
@@ -202,6 +206,7 @@ export class PdfService {
         entityType: 'ANHANG',
         entityId: anhangId,
         mandantId,
+        istEntwurf: anhang.status === 'DRAFT',
         metadata: {
           firmenname: mandant.firmenname,
           geschaeftsjahr: anhang.geschaeftsjahr,
@@ -280,6 +285,9 @@ export class PdfService {
         entityType: 'ABSCHLUSS',
         entityId: abschlussId,
         mandantId,
+        // Der Jahresabschluss selbst ist auf DRAFT ein Entwurf; nach dem
+        // Abschluss (FINALIZED/SIGNED) ist er ein Beweisobjekt.
+        istEntwurf: abschluss.status === 'DRAFT',
         metadata: {
           firmenname: mandant.firmenname,
           geschaeftsjahr: bilanz.geschaeftsjahr,
@@ -331,10 +339,19 @@ export class PdfService {
     // Existenz der Entity (mandant-gefiltert) prüfen
     await this.assertEntityExists(entityType, entityId, mandantId);
 
-    const manifest = await this.wormObjectRepository.findActiveByEntity(
-      this.entityTypeForPdf(entityType),
-      entityId,
-    );
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Zuerst das Beweisobjekt,
+    // dann der Entwurf. Der Entwurf hat einen eigenen EntityType — ohne
+    // diesen Hinweis wuerde der Download eines Entwurfs "nicht vorhanden"
+    // melden, obwohl das PDF existiert.
+    const manifest =
+      (await this.wormObjectRepository.findActiveByEntity(
+        this.entityTypeForPdf(entityType),
+        entityId,
+      )) ??
+      (await this.wormObjectRepository.findActiveByEntity(
+        this.entityTypeForPdf(entityType, true),
+        entityId,
+      ));
     if (!manifest) {
       throw new NotFoundException(
         `Kein PDF für ${entityType} (${entityId}) vorhanden — bitte zuerst /generate aufrufen.`,
@@ -455,15 +472,32 @@ export class PdfService {
     const buffer = await renderer(objectKey, korrelationsId, erstelltAm);
     const sha256Hash = WormObjectRepository.sha256Of(buffer);
 
-    // WORM-Upload (idempotent bei Re-Upload mit gleichem Hash).
-    const meta = await this.storageService.uploadToWorm({
-      objectKey,
-      entityType: this.entityTypeForPdf(request.entityType),
-      entityId: request.entityId,
-      mandantId: request.mandantId,
-      data: buffer,
-      contentType: 'application/pdf',
-    });
+    // Upload (idempotent bei Re-Upload mit gleichem Hash).
+    //
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Ein **Entwurf** wird ohne
+    // Object-Lock abgelegt. Er ist ein Arbeitsstand; 10 Jahre COMPLIANCE
+    // waere eine Behauptung, die niemand freigegeben hat.
+    const wormEntityType = this.entityTypeForPdf(
+      request.entityType,
+      request.istEntwurf,
+    );
+    const meta = request.istEntwurf
+      ? await this.storageService.uploadOhneSperre({
+          objectKey,
+          entityType: wormEntityType,
+          entityId: request.entityId,
+          mandantId: request.mandantId,
+          data: buffer,
+          contentType: 'application/pdf',
+        })
+      : await this.storageService.uploadToWorm({
+          objectKey,
+          entityType: wormEntityType,
+          entityId: request.entityId,
+          mandantId: request.mandantId,
+          data: buffer,
+          contentType: 'application/pdf',
+        });
 
     // Falls Upload einen abweichenden Hash zurückgibt (sehr selten —
     // kann passieren, wenn der S3-Storage eigene Metadaten anhängt),
@@ -474,16 +508,19 @@ export class PdfService {
     const storageConfig = this.storageService.getConfig();
     const manifest = await this.wormObjectRepository.create({
       objectKey,
-      entityType: this.entityTypeForPdf(request.entityType),
+      entityType: wormEntityType,
       entityId: request.entityId,
       mandantId: request.mandantId,
       sha256Hash: finalHash,
       sizeBytes: meta.sizeBytes,
-      objectLockMode: storageConfig.lockMode,
-      retentionDays: storageConfig.retentionDays,
+      // Ein Entwurf traegt "NONE" — das Register (und das WORM-Audit-
+      // Skript) erkennt ihn daran. Ohne diese Sperre wuerde ein Entwurf
+      // wie ein Beweisobjekt geprueft.
+      objectLockMode: request.istEntwurf ? 'NONE' : storageConfig.lockMode,
+      retentionDays: request.istEntwurf ? 0 : storageConfig.retentionDays,
       retentionExpiresAt: meta.retentionExpiresAt,
       uploadedById: user.id,
-      legalHold: true,
+      legalHold: !request.istEntwurf,
     });
 
     // AuditLog: GENERATE_PDF-Äquivalent (via 'CREATE' auf WormObject).
@@ -514,6 +551,7 @@ export class PdfService {
 
     return {
       wormObjectKey: manifest.objectKey,
+      istEntwurf: request.istEntwurf,
       sha256Hash: finalHash,
       sizeBytes: manifest.sizeBytes,
       uploadedAt: manifest.uploadedAt,
@@ -533,7 +571,12 @@ export class PdfService {
   private buildObjectKey(request: PdfGenerationRequest, geschaeftsjahr: number): string {
     const suffix = uuidv4();
     const entity = request.entityType.toLowerCase();
-    return `mandant/${request.mandantId}/${entity}/${geschaeftsjahr}/${suffix}.pdf`;
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwuerfe bekommen einen
+    // **eigenen Praefix**. Er haelt die beiden Bestaende im Storage
+    // getrennt: ein Entwurf kann nicht versehentlich als Beweisobjekt
+    // behandelt werden (und umgekehrt), weil die Pfade verschieden sind.
+    const praefix = request.istEntwurf ? 'entwuerfe/mandant' : 'mandant';
+    return `${praefix}/${request.mandantId}/${entity}/${geschaeftsjahr}/${suffix}.pdf`;
   }
 
   private buildDownloadUrl(
@@ -645,7 +688,7 @@ export class PdfService {
   private buildFilename(
     entityType: PdfEntityType,
     mandant: Mandant,
-    _wormEntityType: string,
+    wormEntityType: string,
     geschaeftsjahr?: number,
   ): string {
     const slug = mandant.firmenname
@@ -653,7 +696,11 @@ export class PdfService {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
     const year = geschaeftsjahr ?? new Date().getUTCFullYear();
-    return `${entityType.toLowerCase()}-${slug}-${year}.pdf`;
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Der Dateiname eines
+    // Entwurfs sagt "ENTWURF". Wer die Datei aus dem Archiv zieht, muss
+    // sehen, dass sie kein Beweis ist — der Name ist Teil der Ablage.
+    const entwurf = wormEntityType.endsWith('_ENTWURF') ? 'entwurf-' : '';
+    return `${entwurf}${entityType.toLowerCase()}-${slug}-${year}.pdf`;
   }
 
   private async loadMandant(mandantId: string): Promise<Mandant> {
@@ -713,14 +760,19 @@ export class PdfService {
   /**
    * Mappt Domain-Entity auf WORM-EntityType (Prisma-String).
    */
-  private entityTypeForPdf(entityType: PdfEntityType): string {
+  private entityTypeForPdf(entityType: PdfEntityType, istEntwurf = false): string {
     const map: Record<PdfEntityType, string> = {
       BILANZ: 'BILANZ_PDF',
       GUV: 'GUV_PDF',
       ANHANG: 'ANHANG_PDF',
       ABSCHLUSS: 'ABSCHLUSS_PDF',
     };
-    return map[entityType];
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwuerfe bekommen einen
+    // **eigenen** EntityType. Er ist das, was sie im Register von einem
+    // Beweisobjekt unterscheidet — ohne ihn waere ein Entwurf in einer
+    // Auswertung nicht als solcher erkennbar.
+    if (!istEntwurf) return map[entityType];
+    return `${map[entityType]}_ENTWURF`;
   }
 
   /**

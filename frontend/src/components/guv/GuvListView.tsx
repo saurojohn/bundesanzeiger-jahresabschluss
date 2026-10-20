@@ -32,6 +32,8 @@ type Guv = {
   ergebnis: number;
   positionen: GuvPosition[];
   wormObjectKey: string | null;
+  /** BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwurf oder Beweisobjekt? */
+  pdfIstEntwurf?: boolean;
 };
 
 type GuvListResponse =
@@ -302,6 +304,7 @@ export function GuvListView() {
                       entityType="guv"
                       entityId={g.id}
                       wormObjectKey={g.wormObjectKey}
+                      pdfIstEntwurf={g.pdfIstEntwurf}
                       onGenerated={() => void loadList()}
                     />
                     {/* Bugfix 2026-10-05: Die GuV war über die Oberfläche

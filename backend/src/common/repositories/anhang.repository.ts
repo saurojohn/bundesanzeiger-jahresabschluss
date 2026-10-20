@@ -97,24 +97,34 @@ export class AnhangRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<
-    Array<AnhangListEntry & { wormObjectKey: string | null }>
+    Array<AnhangListEntry & { wormObjectKey: string | null; pdfIstEntwurf: boolean }>
   > {
     const anhaenge = await this.findByMandantAndJahr(mandantId, jahr);
     if (anhaenge.length === 0) return [];
     const wormObjects = await this.prismaService.wormObject.findMany({
       where: {
-        entityType: 'ANHANG_PDF',
+        entityType: { in: ['ANHANG_PDF', 'ANHANG_PDF_ENTWURF'] },
         entityId: { in: anhaenge.map((a) => a.id) },
       },
       orderBy: { uploadedAt: 'desc' },
     });
-    const map = new Map<string, string>();
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Liste muss auch den
+    // **Entwurf** finden — er hat einen eigenen EntityType. Und sie muss
+    // sagen, ob es ein Entwurf ist: der WORM-Hinweis in der Oberflaeche
+    // waere fuer einen Entwurf eine falsche Aussage.
+    const map = new Map<string, { key: string; entwurf: boolean }>();
     for (const w of wormObjects) {
-      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+      if (!map.has(w.entityId)) {
+        map.set(w.entityId, {
+          key: w.objectKey,
+          entwurf: w.entityType.endsWith('_ENTWURF'),
+        });
+      }
     }
     return anhaenge.map((a) => ({
       ...a,
-      wormObjectKey: map.get(a.id) ?? null,
+      wormObjectKey: map.get(a.id)?.key ?? null,
+      pdfIstEntwurf: map.get(a.id)?.entwurf ?? false,
     }));
   }
 
@@ -130,7 +140,7 @@ export class AnhangRepository {
     pageSize: number;
     jahr?: number;
   }): Promise<
-    Array<AnhangListEntry & { wormObjectKey: string | null }>
+    Array<AnhangListEntry & { wormObjectKey: string | null; pdfIstEntwurf: boolean }>
   > {
     const where: Prisma.AnhangWhereInput = {
       mandantId: args.mandantId,
@@ -159,18 +169,28 @@ export class AnhangRepository {
     if (anhaenge.length === 0) return [];
     const wormObjects = await this.prismaService.wormObject.findMany({
       where: {
-        entityType: 'ANHANG_PDF',
+        entityType: { in: ['ANHANG_PDF', 'ANHANG_PDF_ENTWURF'] },
         entityId: { in: anhaenge.map((a) => a.id) },
       },
       orderBy: { uploadedAt: 'desc' },
     });
-    const map = new Map<string, string>();
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Liste muss auch den
+    // **Entwurf** finden — er hat einen eigenen EntityType. Und sie muss
+    // sagen, ob es ein Entwurf ist: der WORM-Hinweis in der Oberflaeche
+    // waere fuer einen Entwurf eine falsche Aussage.
+    const map = new Map<string, { key: string; entwurf: boolean }>();
     for (const w of wormObjects) {
-      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+      if (!map.has(w.entityId)) {
+        map.set(w.entityId, {
+          key: w.objectKey,
+          entwurf: w.entityType.endsWith('_ENTWURF'),
+        });
+      }
     }
     return anhaenge.map((a) => ({
       ...a,
-      wormObjectKey: map.get(a.id) ?? null,
+      wormObjectKey: map.get(a.id)?.key ?? null,
+      pdfIstEntwurf: map.get(a.id)?.entwurf ?? false,
     }));
   }
 

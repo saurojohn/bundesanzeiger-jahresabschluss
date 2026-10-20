@@ -57,6 +57,28 @@ export interface SignaturStatusDto {
   anzahlSignaturen: number;
 
   /**
+   * Was die massgebliche Signatur bescheinigt.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Ohne diese Angabe war eine
+   * Komponentensignatur von einer Abschluss-Signatur nicht unterscheidbar.
+   * Ein Auditor las „der Jahresabschluss ist signiert", obwohl nur die GuV
+   * geprueft war.
+   *
+   *   * "ABSCHLUSS"   — der Jahresabschluss selbst wurde signiert (Endabnahme)
+   *   * "BESTANDTEIL" — ein Bestandteil wurde geprueft
+   */
+  signaturEbene: 'ABSCHLUSS' | 'BESTANDTEIL';
+
+  /**
+   * Anzahl der **geprueften Bestandteile** dieses Jahresabschlusses.
+   *
+   * Relevant nur fuer `entityType === 'Abschluss'`: dort sagen Komponenten-
+   * signaturen nichts ueber die Endabnahme aus, gehoeren aber in die
+   * Anzeige — sie sind ein Teil des Pruefprotokolls.
+   */
+  anzahlBestandteilPruefungen: number;
+
+  /**
    * Menschenlesbare Erläuterung. Steht hier, weil der Unterschied in der
    * Oberfläche nicht in einem Status-Enum verloren gehen darf.
    */

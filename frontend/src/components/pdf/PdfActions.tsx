@@ -10,11 +10,19 @@ export function PdfActions({
   entityType,
   entityId,
   wormObjectKey,
+  pdfIstEntwurf = false,
   onGenerated,
 }: {
   entityType: EntityType;
   entityId: string;
   wormObjectKey: string | null;
+  /**
+   * BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwuerfe liegen nicht im
+   * Beweis-Archiv. Der Hinweis unter den Knöpfen muss das sagen — sonst
+   * behauptet die Oberflaeche fuer einen Arbeitsstand, er liege
+   * "revisionssicher im WORM-Archiv".
+   */
+  pdfIstEntwurf?: boolean;
   onGenerated?: (key: string) => void;
 }) {
   const t = useTranslations();
@@ -164,7 +172,14 @@ export function PdfActions({
         )}
       </div>
       {wormObjectKey && (
-        <span className="text-[10px] text-slate-500">{t('pdf.wormHint')}</span>
+        <span
+          className={
+            'text-[10px] ' +
+            (pdfIstEntwurf ? 'text-amber-600' : 'text-slate-500')
+          }
+        >
+          {pdfIstEntwurf ? t('pdf.entwurfHint') : t('pdf.wormHint')}
+        </span>
       )}
       {error && <span className="text-xs text-red-600">{error}</span>}
     </div>

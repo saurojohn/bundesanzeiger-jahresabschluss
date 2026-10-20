@@ -29,6 +29,20 @@ type StatusResponse = {
   anzahlSignaturen: number;
   geaendertNachSignatur: boolean;
   hinweis: string;
+  /**
+   * BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Was die Signatur
+   * bescheinigt — die Endabnahme des Jahresabschlusses ("ABSCHLUSS") oder
+   * die Pruefung eines Bestandteils ("BESTANDTEIL").
+   */
+  signaturEbene?: 'ABSCHLUSS' | 'BESTANDTEIL';
+  /**
+   * Anzahl der geprueften Bestandteile eines Jahresabschlusses.
+   *
+   * Nur relevant fuer `entityType === 'abschluss'`: dort sagen
+   * Komponentensignaturen nichts ueber die Endabnahme aus — gehoeren aber
+   * in die Anzeige, weil sie ein Teil des Pruefprotokolls sind.
+   */
+  anzahlBestandteilPruefungen?: number;
 };
 
 const TYP: Record<EntityType, string> = {
@@ -70,7 +84,25 @@ export function SignaturStatusBadge({
     };
   }, [entityType, entityId]);
 
-  if (!daten || daten.status === 'UNSIGNIERT') return null;
+  if (!daten) return null;
+
+  // BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Ein Jahresabschluss, dessen
+  // Bestandteile geprueft wurden, ist **nicht** signiert. Ohne diesen
+  // Zweiten Zustand waere die Anzeige leer — und der Leser wuerde weder
+  // sehen, dass geprueft wurde, noch, dass die Endabnahme fehlt.
+  if (daten.status === 'UNSIGNIERT') {
+    const bestandteil = daten.anzahlBestandteilPruefungen ?? 0;
+    if (bestandteil === 0) return null;
+    return (
+      <span
+        title={daten.hinweis}
+        data-testid="signatur-status-bestandteil"
+        className="inline-flex items-center rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-300"
+      >
+        ⚠ {bestandteil}× Bestandteil geprüft — nicht signiert
+      </span>
+    );
+  }
 
   if (daten.status === 'ABWEICHEND') {
     return (

@@ -82,6 +82,8 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
 
 interface PdfGenResponse {
   wormObjectKey: string;
+  /** BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwurf oder Beweisobjekt? */
+  istEntwurf?: boolean;
   sha256Hash: string;
   sizeBytes: number;
   uploadedAt: string;
@@ -224,7 +226,18 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as PdfGenResponse;
     expect(body.wormObjectKey).toBeTruthy();
-    expect(body.wormObjectKey).toMatch(/^mandant\/.+\/bilanz\/.+\/.+\.pdf$/);
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Seed-Bilanz steht auf
+    // DRAFT — sie ist damit ein **Entwurf** und landet NICHT im
+    // Beweis-Archiv: eigener Key-Praefix, eigener EntityType, kein
+    // Object-Lock.
+    //
+    // Der WORM-Weg (VALIDATED) ist in `e2e/pdf-entwurf.e2e.spec.ts` als
+    // Gegenprobe abgesichert — dort wird der Object-Lock am Objekt selbst
+    // nachgewiesen, nicht nur im Manifest.
+    expect(body.istEntwurf, 'die Seed-Bilanz ist ein Entwurf').toBe(true);
+    expect(body.wormObjectKey).toMatch(
+      /^entwuerfe\/mandant\/.+\/bilanz\/.+\/.+\.pdf$/,
+    );
     expect(body.sha256Hash).toMatch(/^[a-f0-9]{64}$/);
     expect(body.sizeBytes).toBeGreaterThan(1000);
     expect(body.downloadUrl).toMatch(/^\/api\/pdf\/bilanz\/.+\/download/);
@@ -240,7 +253,12 @@ describe('PDF E2E (Sprint 1.x — WORM Storage)', () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/pdf');
-    expect(res.headers.get('content-disposition')).toMatch(/inline; filename="bilanz-.+\.pdf"/);
+    // Der Dateiname eines Entwurfs traegt "entwurf-" (Nachtrag 61).
+    // (Fuer den WORM-Pfad gilt der Dateiname ohne Praefix — siehe die
+    // Gegenprobe in `e2e/pdf-entwurf.e2e.spec.ts`.)
+    expect(res.headers.get('content-disposition')).toMatch(
+      /inline; filename="entwurf-bilanz-.+\.pdf"/,
+    );
     const buffer = Buffer.from(await res.arrayBuffer());
     expect(buffer.length).toBeGreaterThan(1000);
     // PDF Magic Bytes: %PDF-

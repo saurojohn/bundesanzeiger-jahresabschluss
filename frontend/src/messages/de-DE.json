@@ -348,6 +348,7 @@
     "downloadError": "PDF konnte nicht heruntergeladen werden",
     "noPdfYet": "Noch kein PDF erzeugt",
     "wormHint": "WORM-archiviert (10 Jahre, § 147 AO)",
+    "entwurfHint": "Entwurf – nicht im Beweis-Archiv, nicht aufbewahrt",
     "abschluss": {
       "title": "Jahresabschluss",
       "subtitle": "Kombinierter Jahresabschluss (Bilanz + GuV + Anhang)",
@@ -465,7 +466,10 @@
     "pruefung": {
       "ok": "Alle Pflichtangaben erfüllt.",
       "offen": "Noch offen",
-      "warnung": "Hinweis"
+      "warnung": "Hinweis",
+      "begruendungLabel": "Schriftliche Begründung für die Abweichung",
+      "begruendungHilfe": "Mindestens 20 Zeichen. Die Begründung wird mit dem Abschluss im Audit-Trail protokolliert.",
+      "freigeben": "Mit Begründung freigeben"
     }
   },
   "audit": {

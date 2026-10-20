@@ -95,23 +95,33 @@ export class GuVRepository {
   async findByMandantAndJahrWithWorm(
     mandantId: string,
     jahr?: number,
-  ): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null }>> {
+  ): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null; pdfIstEntwurf: boolean }>> {
     const guvs = await this.findByMandantAndJahr(mandantId, jahr);
     if (guvs.length === 0) return [];
     const wormObjects = await this.prismaService.wormObject.findMany({
       where: {
-        entityType: 'GUV_PDF',
+        entityType: { in: ['GUV_PDF', 'GUV_PDF_ENTWURF'] },
         entityId: { in: guvs.map((g) => g.id) },
       },
       orderBy: { uploadedAt: 'desc' },
     });
-    const map = new Map<string, string>();
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Liste muss auch den
+    // **Entwurf** finden — er hat einen eigenen EntityType. Und sie muss
+    // sagen, ob es ein Entwurf ist: der WORM-Hinweis in der Oberflaeche
+    // waere fuer einen Entwurf eine falsche Aussage.
+    const map = new Map<string, { key: string; entwurf: boolean }>();
     for (const w of wormObjects) {
-      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+      if (!map.has(w.entityId)) {
+        map.set(w.entityId, {
+          key: w.objectKey,
+          entwurf: w.entityType.endsWith('_ENTWURF'),
+        });
+      }
     }
     return guvs.map((g) => ({
       ...g,
-      wormObjectKey: map.get(g.id) ?? null,
+      wormObjectKey: map.get(g.id)?.key ?? null,
+      pdfIstEntwurf: map.get(g.id)?.entwurf ?? false,
     }));
   }
 
@@ -127,7 +137,7 @@ export class GuVRepository {
     cursor?: string;
     pageSize: number;
     jahr?: number;
-  }): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null }>> {
+  }): Promise<Array<GuVWithoutPositionen & { wormObjectKey: string | null; pdfIstEntwurf: boolean }>> {
     const where: Prisma.GuVWhereInput = {
       mandantId: args.mandantId,
       // Bugfix 2026-10-07: Der Konzernsatz ist ein eigener Datensatz.
@@ -158,18 +168,28 @@ export class GuVRepository {
     if (guvs.length === 0) return [];
     const wormObjects = await this.prismaService.wormObject.findMany({
       where: {
-        entityType: 'GUV_PDF',
+        entityType: { in: ['GUV_PDF', 'GUV_PDF_ENTWURF'] },
         entityId: { in: guvs.map((g) => g.id) },
       },
       orderBy: { uploadedAt: 'desc' },
     });
-    const map = new Map<string, string>();
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Liste muss auch den
+    // **Entwurf** finden — er hat einen eigenen EntityType. Und sie muss
+    // sagen, ob es ein Entwurf ist: der WORM-Hinweis in der Oberflaeche
+    // waere fuer einen Entwurf eine falsche Aussage.
+    const map = new Map<string, { key: string; entwurf: boolean }>();
     for (const w of wormObjects) {
-      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+      if (!map.has(w.entityId)) {
+        map.set(w.entityId, {
+          key: w.objectKey,
+          entwurf: w.entityType.endsWith('_ENTWURF'),
+        });
+      }
     }
     return guvs.map((g) => ({
       ...g,
-      wormObjectKey: map.get(g.id) ?? null,
+      wormObjectKey: map.get(g.id)?.key ?? null,
+      pdfIstEntwurf: map.get(g.id)?.entwurf ?? false,
     }));
   }
 

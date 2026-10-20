@@ -30,6 +30,15 @@ export interface SignaturEintragDto {
   entityType: string | null;
   entityId: string | null;
   jahresabschlussId: string | null;
+  /**
+   * Was die Signatur bescheinigt: die Endabnahme des Jahresabschlusses
+   * ("ABSCHLUSS") oder die Pruefung eines Bestandteils ("BESTANDTEIL").
+   *
+   * BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Ohne diese Angabe war
+   * nicht unterscheidbar, ob der Jahresabschluss selbst signiert wurde oder
+   * nur ein Bestandteil geprueft wurde.
+   */
+  signaturEbene: string;
   signaturTyp: string;
   /** ISO-8601 — der Zeitpunkt ist belegt oder `null`, niemals geraten. */
   zeitstempel: string | null;

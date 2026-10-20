@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { P12UploadDialog } from '@/components/signatur/P12UploadDialog';
 import { useSignaturBerechtigung } from '@/lib/session';
+import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 
 type JahresabschlussSummary = {
   id: string;
@@ -22,7 +23,14 @@ type FinalizeAntwort = {
   status: string;
   pruefungen: Array<{ gegenstand: string; bestanden: boolean; meldung: string }>;
   warnungen: Array<{ gegenstand: string; bestanden: boolean; meldung: string }>;
-  saldoabgleich: { hinweis: string; abweichung: number | null };
+  saldoabgleich: {
+    hinweis: string;
+    abweichung: number | null;
+    /** Wurde die Abweichung mit schriftlicher Begruendung freigegeben? */
+    freigegeben?: boolean;
+    /** Die Begruendung, mit der freigegeben wurde. */
+    begruendung?: string;
+  };
 };
 
 export function JahresabschlussView() {
@@ -36,6 +44,17 @@ export function JahresabschlussView() {
   const [jahr, setJahr] = useState(2025);
   /** Abschluss, dessen Signatur-Dialog offen ist (null = keiner). */
   const [signierZiel, setSignierZiel] = useState<string | null>(null);
+  /**
+   * BEFUND 2026-10-20 (Nachtrag 59, Entscheidung 1): Der Saldoabgleich
+   * zwischen Bilanz und GuV **sperrt** jetzt. Die Abweichung kann aber mit
+   * einer schriftlichen Begruendung freigegeben werden (Eigenkapital-
+   * bewegungen, die das Produkt nicht erfasst).
+   *
+   * `begruendungZiel` haelt den Abschluss, fuer den die Begruendung noetig
+   * ist — ohne ihn gaelte der Text im Panel fuer keinen bestimmten Abschluss.
+   */
+  const [begruendungZiel, setBegruendungZiel] = useState<string | null>(null);
+  const [begruendung, setBegruendung] = useState('');
 
   // BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): Die Signatur des
   // **Jahresabschlusses** ist die Endabnahme — sie ist ausschliesslich dem
@@ -116,7 +135,7 @@ export function JahresabschlussView() {
    * zeigt nur, was er sagt. Bei 409 (nicht vollstaendig) werden die
    * beanstandeten Punkte angezeigt statt einer nackten Fehlermeldung.
    */
-  async function abschliessen(id: string) {
+  async function abschliessen(id: string, grund?: string) {
     const token = getAccessToken();
     const mandantId = getActiveMandantId();
     if (!token || !mandantId) return;
@@ -127,14 +146,21 @@ export function JahresabschlussView() {
         {
           method: 'POST',
           accessToken: token,
-          body: JSON.stringify({}),
+          body: JSON.stringify(grund ? { begruendung: grund } : {}),
         },
       );
       setPruefung(antwort);
+      setBegruendungZiel(null);
+      setBegruendung('');
       await loadList();
     } catch (err) {
-      const pruefungen = (err as { body?: { pruefungen?: FinalizeAntwort['pruefungen'] } })
-        .body?.pruefungen;
+      const body = (err as { body?: {
+        pruefungen?: FinalizeAntwort['pruefungen'];
+        begruendungErforderlich?: boolean;
+      } }).body;
+      const pruefungen = body?.pruefungen;
+      // Der Server sagt, ob eine Begruendung den Weg zur Freigabeoeffnet.
+      setBegruendungZiel(body?.begruendungErforderlich ? id : null);
       if (pruefungen) {
         // Der Server hat die Pruefungen mitgeschickt — anzeigen statt
         // einer nackten Fehlermeldung.
@@ -303,6 +329,18 @@ export function JahresabschlussView() {
                           {t('jahresabschluss.actions.alreadySigned')}
                         </span>
                       )}
+                      {/* BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15):
+                          Das Badge unterscheidet „der Jahresabschluss ist
+                          signiert" (Endabnahme) von „ein Bestandteil wurde
+                          geprueft". Ohne es war beides nicht unterscheidbar
+                          — der Abschluss zeigte „Signiert", obwohl nur die
+                          GuV geprueft war. */}
+                      {j.status !== 'SIGNED' && (
+                        <SignaturStatusBadge
+                          entityType="abschluss"
+                          entityId={j.id}
+                        />
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -362,6 +400,37 @@ export function JahresabschlussView() {
                   <p className="mt-2 text-xs text-amber-700">
                     {pruefung.saldoabgleich.hinweis}
                   </p>
+                )}
+
+                {begruendungZiel && (
+                  <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3">
+                    <label
+                      htmlFor="jahresabschluss-begruendung"
+                      className="block text-xs font-medium text-slate-800"
+                    >
+                      {t('jahresabschluss.pruefung.begruendungLabel')}
+                    </label>
+                    <textarea
+                      id="jahresabschluss-begruendung"
+                      data-testid="jahresabschluss-begruendung"
+                      value={begruendung}
+                      onChange={(e) => setBegruendung(e.target.value)}
+                      rows={3}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                    />
+                    <button
+                      type="button"
+                      data-testid="jahresabschluss-freigeben"
+                      onClick={() => void abschliessen(begruendungZiel, begruendung)}
+                      disabled={begruendung.trim().length < 20}
+                      className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {t('jahresabschluss.pruefung.freigeben')}
+                    </button>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {t('jahresabschluss.pruefung.begruendungHilfe')}
+                    </p>
+                  </div>
                 )}
               </div>
             );

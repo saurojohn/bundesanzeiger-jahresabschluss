@@ -125,10 +125,45 @@ export class StorageService {
    *   4. Metadata zurückgeben (WORM-Manifest wird separat geschrieben).
    */
   async uploadToWorm(options: WormStorageOptions): Promise<WormObjectMetadata> {
+    return this.upload(options, true);
+  }
+
+  /**
+   * Laedt einen Buffer **ohne** Object-Lock.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwurfs-PDFs duerfen nicht
+   * im Beweis-Archiv liegen. Ein Entwurf ist ein Arbeitsstand — er wird
+   * geaendert, verworfen, neu erzeugt. Mit Object-Lock COMPLIANCE und 10
+   * Jahren Retention waere er danach **unloeschbar** und waere damit ein
+   * "Beweis" fuer einen Stand, den niemand freigegeben hat.
+   *
+   * ENTSCHEIDUNG 2026-10-20: Entwuerfe bekommen einen eigenen
+   * `entityType`, einen eigenen Key-Praefix und **keinen** Object-Lock.
+   * Sie werden protokolliert (Hash, Groesse, Audit-Eintrag) — aber sie
+   * sind nicht unwiderruflich.
+   *
+   * Der Aufrufer muss das unterscheiden koennen: der Manifest-Eintrag
+   * traegt `objectLockMode: "NONE"`, `retentionDays: 0` und
+   * `legalHold: false`. Das WORM-Audit-Skript ueberspringt genau diese
+   * Zeilen (und zaehlt sie) — ein Entwurf ist kein Beweisobjekt.
+   */
+  async uploadOhneSperre(options: WormStorageOptions): Promise<WormObjectMetadata> {
+    return this.upload(options, false);
+  }
+
+  private async upload(
+    options: WormStorageOptions,
+    mitSperre: boolean,
+  ): Promise<WormObjectMetadata> {
     const sha256Hash = WormObjectRepository.sha256Of(options.data);
     const sizeBytes = options.data.length;
     const uploadedAt = new Date();
-    const retentionDays = options.retentionDays ?? this.defaultRetentionDays;
+    // Ohne Sperre gibt es nichts aufzubewahren: die Retention laeuft sofort
+    // ab. Der Wert steht trotzdem in der Zeile — die Spalte ist NOT NULL,
+    // und "0 Tage" ist die ehrliche Aussage.
+    const retentionDays = mitSperre
+      ? (options.retentionDays ?? this.defaultRetentionDays)
+      : 0;
     const retentionExpiresAt = new Date(uploadedAt);
     retentionExpiresAt.setUTCDate(retentionExpiresAt.getUTCDate() + retentionDays);
 
@@ -164,16 +199,23 @@ export class StorageService {
         );
       }
     } else {
-      // 2. PutObject mit Lock-Headern.
+      // 2. PutObject — mit Lock-Headern (WORM) oder ohne (Entwurf).
       await this.s3.send(
         new PutObjectCommand({
           Bucket: this.bucket,
           Key: options.objectKey,
           Body: options.data,
           ContentType: options.contentType ?? 'application/pdf',
-          ObjectLockMode: this.defaultLockMode,
-          ObjectLockRetainUntilDate: retentionExpiresAt,
-          ObjectLockLegalHoldStatus: 'ON',
+          // Ohne Sperre werden die Object-Lock-Header **nicht** gesetzt —
+          // das ist der ganze Unterschied zwischen einem Beweisobjekt und
+          // einem Arbeitsstand.
+          ...(mitSperre
+            ? {
+                ObjectLockMode: this.defaultLockMode,
+                ObjectLockRetainUntilDate: retentionExpiresAt,
+                ObjectLockLegalHoldStatus: 'ON' as const,
+              }
+            : {}),
           Metadata: {
             sha256: sha256Hash,
             entityType: options.entityType,
@@ -184,7 +226,9 @@ export class StorageService {
       );
 
       this.logger.log(
-        `WORM-Upload OK: key=${options.objectKey} size=${sizeBytes}B hash=${sha256Hash.slice(0, 12)}… retention=${retentionDays}d`,
+        mitSperre
+          ? `WORM-Upload OK: key=${options.objectKey} size=${sizeBytes}B hash=${sha256Hash.slice(0, 12)}… retention=${retentionDays}d`
+          : `Entwurf-Upload OK (ohne Sperre): key=${options.objectKey} size=${sizeBytes}B hash=${sha256Hash.slice(0, 12)}…`,
       );
     }
 

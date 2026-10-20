@@ -25,6 +25,19 @@ export interface PdfGenerationRequest {
     bilanzsumme?: string;
     status: string;
   };
+  /**
+   * Ist der Bestand ein **Arbeitsstand** (DRAFT)?
+   *
+   * BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Ohne diese Unterscheidung
+   * landete auch ein Entwurf im Beweis-Archiv — mit 10-Jahres-Object-Lock
+   * COMPLIANCE. Ein Entwurf ist aber ein Arbeitsstand: er wird geaendert,
+   * verworfen, neu erzeugt. Unwiderruflich archiviert waere er ein
+   * "Beweis" fuer einen Stand, den niemand freigegeben hat.
+   *
+   * ENTSCHEIDUNG 2026-10-20: Entwuerfe bekommen einen eigenen
+   * `entityType`, einen eigenen Key-Praefix und **keinen** Object-Lock.
+   */
+  istEntwurf: boolean;
 }
 
 /**
@@ -54,6 +67,14 @@ export interface PdfDocumentMetadata {
  */
 export interface PdfGenerationResponse {
   wormObjectKey: string;
+  /**
+   * War das PDF ein Entwurf (Arbeitsstand) oder ein Beweisobjekt?
+   *
+   * BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Anwenderin muss sehen
+   * koennen, dass sie einen Entwurf hat — und nicht einen 10 Jahre
+   * gesperrten Beweis.
+   */
+  istEntwurf: boolean;
   sha256Hash: string;
   sizeBytes: number;
   uploadedAt: Date;

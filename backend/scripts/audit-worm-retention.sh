@@ -79,8 +79,31 @@ if [ -z "$WORM_ROWS" ]; then
 fi
 
 TOTAL=0
+# Entwuerfe (kein Object-Lock) werden uebersprungen und gezaehlt.
+ENTWURF_COUNT=0
 while IFS='|' read -r OBJECT_KEY RETENTION_DAYS RETENTION_EXPIRES_AT SHA256_HASH LOCK_MODE; do
   TOTAL=$((TOTAL + 1))
+
+  # Check 0: Entwuerfe sind keine Beweisobjekte.
+  #
+  # BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwurfs-PDFs (ein Arbeitsstand
+  # in Bearbeitung) werden OHNE Object-Lock abgelegt — mit eigenem
+  # EntityType und eigenem Key-Praefix. Sie stehen in derselben Tabelle,
+  # tragen aber `object_lock_mode = 'NONE'`.
+  #
+  # Sie sind **keine** WORM-Objekte: sie duerfen nicht aufbewahrt werden und
+  # duerfen nicht als Beweis behandelt werden. Fuer sie gilt keine
+  # 10-Jahres-Retention — sie wuerden sonst als "Retention laeuft ab" oder
+  # "Lock-Mode ist nicht COMPLIANCE" fehlschlagen, also als **Fehlalarm** in
+  # einem Compliance-Bericht.
+  #
+  # Sie werden deshalb uebersprungen — aber **gezaehlt und ausgewiesen**.
+  # Eine stillschweigende Ausnahme waere eine Ausnahmeliste, die veralten
+  # kann; eine gezaehlte ist nachvollziehbar.
+  if [ "$LOCK_MODE" = "NONE" ]; then
+    ENTWURF_COUNT=$((ENTWURF_COUNT + 1))
+    continue
+  fi
 
   # Check 1: Lock-Mode = COMPLIANCE
   if [ "$LOCK_MODE" != "COMPLIANCE" ]; then
@@ -134,6 +157,11 @@ echo "Total:    $TOTAL Objekte"
 echo -e "  ${GREEN}OK:     $OK_COUNT${NC}"
 echo -e "  ${RED}FAIL:   $FAIL_COUNT${NC}"
 echo -e "  ${YELLOW}WARN:   $WARN_COUNT${NC}"
+echo "  Entwuerfe (kein Object-Lock, nicht auditierbar): $ENTWURF_COUNT"
+if [ "$ENTWURF_COUNT" -gt 0 ]; then
+  echo "  -> Entwuerfe sind Arbeitsstaende (Nachtrag 61, TODO-8.9) und gehoeren"
+  echo "     nicht in den 10-Jahres-Nachweis. Gezaehlt, nicht stillschweigend ignoriert."
+fi
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   echo ""

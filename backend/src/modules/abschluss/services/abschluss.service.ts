@@ -203,15 +203,22 @@ export class AbschlussService {
    *   - einer der drei Saetze steht noch auf DRAFT (in Bearbeitung)
    *   - der Abschluss ist nicht DRAFT (kein Zuruecksetzen)
    *
-   * **Meldung, ohne Sperre**:
+   * **Sperre mit schriftlich begruendetem Ausweg**:
    *   - die Abweichung zwischen `A.V.` (Bilanz) und dem GuV-Ergebnis.
    *
-   * Warum die Abweichung NICHT sperrt: `A.V.` ist nicht zwangslaeufig das
-   * Jahresergebnis — Kapitalerhoehungen und Entnahmen verschieben den
-   * Saldo, ohne in der GuV zu erscheinen, und solche
-   * Eigenkapitalbewegungen modelliert das Produkt nicht. Eine Sperre wuerde
-   * berechtigte Abschluesse blockieren. Sobald die Bewegungen erfasst sind,
-   * gehoert die Abweichung zu den Sperren.
+   * ENTSCHEIDUNG 2026-10-20 (Nachtrag 59, Entscheidung 1): Dieser Punkt
+   * war eine blosse Meldung — die Abweichung wurde angezeigt, und der
+   * Abschluss ging trotzdem durch. Jetzt **sperrt** er.
+   *
+   * Der Ausweg bleibt, weil es einen realen Grund fuer die Abweichung
+   * gibt: `A.V.` ist nicht zwangslaeufig das Jahresergebnis —
+   * Kapitalerhoehungen und Entnahmen verschieben den Saldo, ohne in der
+   * GuV zu erscheinen, und solche Eigenkapitalbewegungen modelliert das
+   * Produkt nicht. Wer das weiss, begruendet die Abweichung schriftlich
+   * (`begruendung` im Body); die Begruendung geht in den Audit-Trail.
+   *
+   * Die Begruendung gilt **nur** fuer diesen Punkt. Die anderen Sperren
+   * sind unabhaengig davon und lassen sich nicht begruenden.
    */
   async finalize(
     id: string,
@@ -312,7 +319,24 @@ export class AbschlussService {
       });
     }
 
-    // --- Saldoabgleich: melden, nicht sperren (siehe Kommentar oben) ---
+    // --- Saldoabgleich: SPERRE mit schriftlich begruendetem Ausweg ---
+    //
+    // ENTSCHEIDUNG 2026-10-20 (Nachtrag 59, Entscheidung 1): Der
+    // Saldoabgleich war eine **Meldung** — die Abweichung zwischen `A.V.`
+    // (Bilanz) und dem GuV-Ergebnis wurde angezeigt, und der Abschluss
+    // ging trotzdem durch. Ein Abschluss, dessen Bilanz nicht auf die GuV
+    // aufgeht, ist aber keine Bilanzaussage.
+    //
+    // Die Sperre hat einen Ausweg, weil es einen realen Grund fuer die
+    // Abweichung gibt: Kapitalerhoehungen und Entnahmen verschieben den
+    // Saldo, ohne in der GuV zu erscheinen — das Produkt erfasst solche
+    // Eigenkapitalbewegungen nicht (keine Entitaet, kein Feld). Wer das
+    // weiss, begruendet die Abweichung schriftlich; die Begruendung geht
+    // in den Audit-Trail.
+    //
+    // **Die Begruendung gilt ausschliesslich fuer den Saldoabgleich.**
+    // Die anderen Sperren (Bilanz geht nicht auf, GuV fehlt, Anhang mit
+    // Platzhaltern, Saetze in Bearbeitung) sind davon nicht beruehrt.
     const aV = abschluss.bilanz.positionen.find(
       (p) => p.kontonummer === 'A.V.',
     );
@@ -323,7 +347,12 @@ export class AbschlussService {
         ? bilanzJahresueberschuss - guvJahresergebnis
         : null;
 
+    const begruendung = dto.begruendung?.trim();
+    const abweichungRelevant = abweichung !== null && Math.abs(abweichung) > 0.01;
+
     const warnungen: VollstaendigkeitsPruefung[] = [];
+    let saldoFreigegeben = false;
+
     if (abweichung === null) {
       warnungen.push({
         gegenstand: 'Saldoabgleich Bilanz/GuV',
@@ -332,16 +361,45 @@ export class AbschlussService {
           'Die Bilanz fuehrt keine Position A.V. (Jahresueberschuss); ' +
           'ein Abgleich war nicht moeglich.',
       });
-    } else if (Math.abs(abweichung) > 0.01) {
+    } else if (abweichungRelevant && !begruendung) {
+      // SPERRE — aber mit dem Weg zur Freigabe.
+      throw new ConflictException({
+        message:
+          'Der Saldoabgleich zwischen Bilanz und GuV weicht ab: ' +
+          `Die Bilanz weist ${bilanzJahresueberschuss!.toFixed(2)} EUR als ` +
+          `Jahresueberschuss aus, die GuV dagegen ${guvJahresergebnis.toFixed(2)} EUR ` +
+          `— Abweichung ${abweichung.toFixed(2)} EUR. ` +
+          'Das kann an Eigenkapitalbewegungen liegen (Kapitalerhoehung, Entnahme), ' +
+          'die das Produkt nicht erfasst. ' +
+          'Wenn das der Fall ist, kann der Abschluss mit einer schriftlichen ' +
+          'Begruendung (mindestens 20 Zeichen) freigegeben werden — sie geht ' +
+          'in den Audit-Trail.',
+        pruefungen: [
+          {
+            gegenstand: 'Saldoabgleich Bilanz/GuV',
+            bestanden: false,
+            meldung:
+              `Abweichung ${abweichung.toFixed(2)} EUR zwischen Bilanz (A.V. ` +
+              `${bilanzJahresueberschuss!.toFixed(2)} EUR) und GuV-Ergebnis ` +
+              `(${guvJahresergebnis.toFixed(2)} EUR).`,
+          },
+        ],
+        abweichung,
+        guvJahresergebnis,
+        bilanzJahresueberschuss,
+        begruendungErforderlich: true,
+      });
+    } else if (abweichungRelevant) {
+      saldoFreigegeben = true;
       warnungen.push({
-        gegenstand: 'Saldoabgleich Bilanz/GuV',
+        gegenstand: 'Saldoabgleich Bilanz/GuV (freigegeben)',
         bestanden: true,
         meldung:
           `Die Bilanz weist ${bilanzJahresueberschuss!.toFixed(2)} EUR als ` +
           `Jahresueberschuss aus, die GuV dagegen ${guvJahresergebnis.toFixed(2)} EUR ` +
           `— Abweichung ${abweichung.toFixed(2)} EUR. ` +
-          'Das kann an Eigenkapitalbewegungen liegen (Kapitalerhoehung, Entnahme), ' +
-          'die das Produkt nicht erfasst — bitte pruefen.',
+          'FREIGEGEBEN mit schriftlicher Begruendung: ' +
+          `"${begruendung}"`,
       });
     }
 
@@ -366,6 +424,19 @@ export class AbschlussService {
         finalisiertAm: aktualisiert.finalisiertAm?.toISOString(),
         warnungen: warnungen.map((w) => w.meldung),
         saldoabgleich: abweichung,
+        // Die Ausnahme muss fuer einen Auditor sichtbar sein: ein
+        // Abschluss, der **trotz** einer Abweichung durchging, ist eine
+        // Ausnahme — und steht deshalb im Audit-Trail, mit der
+        // Begruendung, die sie getragen hat.
+        ...(saldoFreigegeben
+          ? {
+              saldoabgleichFreigegeben: {
+                abweichung,
+                begruendung,
+                freigegebenVon: user.id,
+              },
+            }
+          : {}),
       } as unknown as Prisma.JsonValue,
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,
@@ -390,9 +461,14 @@ export class AbschlussService {
           abweichung === null
             ? 'Ein Abgleich war nicht moeglich (keine Position A.V. in der Bilanz).'
             : Math.abs(abweichung) > 0.01
-              ? `Abweichung ${abweichung.toFixed(2)} EUR zwischen Bilanz (A.V.) und GuV. ` +
-                'Kann an Eigenkapitalbewegungen liegen — das Produkt erfasst sie nicht.'
+              ? saldoFreigegeben
+                ? `Abweichung ${abweichung.toFixed(2)} EUR zwischen Bilanz (A.V.) und GuV — ` +
+                  `FREIGEGEBEN mit Begruendung: "${begruendung}"`
+                : `Abweichung ${abweichung.toFixed(2)} EUR zwischen Bilanz (A.V.) und GuV. ` +
+                  'Kann an Eigenkapitalbewegungen liegen — das Produkt erfasst sie nicht.'
               : 'Bilanz und GuV stimmen ueberein.',
+        freigegeben: saldoFreigegeben,
+        ...(saldoFreigegeben ? { begruendung } : {}),
       },
     };
   }

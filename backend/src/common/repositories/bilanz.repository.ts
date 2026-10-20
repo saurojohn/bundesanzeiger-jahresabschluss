@@ -110,26 +110,36 @@ export class BilanzRepository {
     mandantId: string,
     jahr?: number,
   ): Promise<
-    Array<BilanzListEntry & { wormObjectKey: string | null }>
+    Array<BilanzListEntry & { wormObjectKey: string | null; pdfIstEntwurf: boolean }>
   > {
     const bilanzen = await this.findByMandantAndJahr(mandantId, jahr);
     if (bilanzen.length === 0) return [];
     const wormObjects = await this.prismaService.wormObject.findMany({
       where: {
-        entityType: 'BILANZ_PDF',
+        entityType: { in: ['BILANZ_PDF', 'BILANZ_PDF_ENTWURF'] },
         entityId: { in: bilanzen.map((b) => b.id) },
       },
       orderBy: { uploadedAt: 'desc' },
     });
-    const map = new Map<string, string>();
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Liste muss auch den
+    // **Entwurf** finden — er hat einen eigenen EntityType. Und sie muss
+    // sagen, ob es ein Entwurf ist: der WORM-Hinweis in der Oberflaeche
+    // waere fuer einen Entwurf eine falsche Aussage.
+    const map = new Map<string, { key: string; entwurf: boolean }>();
     for (const w of wormObjects) {
-      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+      if (!map.has(w.entityId)) {
+        map.set(w.entityId, {
+          key: w.objectKey,
+          entwurf: w.entityType.endsWith('_ENTWURF'),
+        });
+      }
     }
     const salden = await this.saldenProBilanz(bilanzen.map((b) => b.id));
     return bilanzen.map((b) => ({
       ...b,
       ...(salden.get(b.id) ?? this.leereSalden()),
-      wormObjectKey: map.get(b.id) ?? null,
+      wormObjectKey: map.get(b.id)?.key ?? null,
+      pdfIstEntwurf: map.get(b.id)?.entwurf ?? false,
     }));
   }
 
@@ -185,7 +195,7 @@ export class BilanzRepository {
     pageSize: number;
     jahr?: number;
   }): Promise<
-    Array<BilanzListEntry & { wormObjectKey: string | null }>
+    Array<BilanzListEntry & { wormObjectKey: string | null; pdfIstEntwurf: boolean }>
   > {
     const where: Prisma.BilanzWhereInput = {
       mandantId: args.mandantId,
@@ -218,20 +228,30 @@ export class BilanzRepository {
     // WORM-ObjectKeys in einem einzigen Query nachladen (kein N+1).
     const wormObjects = await this.prismaService.wormObject.findMany({
       where: {
-        entityType: 'BILANZ_PDF',
+        entityType: { in: ['BILANZ_PDF', 'BILANZ_PDF_ENTWURF'] },
         entityId: { in: bilanzen.map((b) => b.id) },
       },
       orderBy: { uploadedAt: 'desc' },
     });
-    const map = new Map<string, string>();
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Liste muss auch den
+    // **Entwurf** finden — er hat einen eigenen EntityType. Und sie muss
+    // sagen, ob es ein Entwurf ist: der WORM-Hinweis in der Oberflaeche
+    // waere fuer einen Entwurf eine falsche Aussage.
+    const map = new Map<string, { key: string; entwurf: boolean }>();
     for (const w of wormObjects) {
-      if (!map.has(w.entityId)) map.set(w.entityId, w.objectKey);
+      if (!map.has(w.entityId)) {
+        map.set(w.entityId, {
+          key: w.objectKey,
+          entwurf: w.entityType.endsWith('_ENTWURF'),
+        });
+      }
     }
     const salden = await this.saldenProBilanz(bilanzen.map((b) => b.id));
     return bilanzen.map((b) => ({
       ...b,
       ...(salden.get(b.id) ?? this.leereSalden()),
-      wormObjectKey: map.get(b.id) ?? null,
+      wormObjectKey: map.get(b.id)?.key ?? null,
+      pdfIstEntwurf: map.get(b.id)?.entwurf ?? false,
     }));
   }
 

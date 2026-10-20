@@ -15,12 +15,22 @@ import { PrismaClient } from '@prisma/client';
  *   4. Mandant archiviert                       -> 409
  *   5. alle Prüfungen bestanden                 -> 201, FINALIZED
  *   6. zweites Abschließen                       -> 409 (kein Zurücksetzen)
- *   7. Saldoabgleich Bilanz/GuV                 -> gemeldet, NICHT gesperrt
+ *   7. Saldoabgleich Bilanz/GuV                 -> 409, FREIGABE per Begründung
  *
- * Punkt 7 ist die bewusste Offenheit: `A.V.` ist nicht zwangsläufig das
- * GuV-Ergebnis (Kapitalerhöhungen, Entnahmen), und solche Bewegungen
- * modelliert das Produkt nicht. Eine harte Sperre würde berechtigte
- * Abschlüsse blockieren — der Abgleich wird deshalb gemeldet.
+ * ENTSCHEIDUNG 2026-10-20 (Nachtrag 59, Entscheidung 1): Punkt 7 war die
+ * bewusste Offenheit — `A.V.` ist nicht zwangsläufig das GuV-Ergebnis
+ * (Kapitalerhöhungen, Entnahmen), und solche Bewegungen modelliert das
+ * Produkt nicht, deshalb wurde der Abgleich nur **gemeldet**.
+ *
+ * Jetzt **sperrt** er. Der Grund fuer die damalige Offenheit bleibt aber
+ * real — und deshalb gibt es den Ausweg: wer die Abweichung schriftlich
+ * **begründet** (mindestens 20 Zeichen), darf den Abschluss freigeben. Die
+ * Begründung geht in den Audit-Trail, damit ein Auditor die Ausnahme
+ * sieht.
+ *
+ * Die Begründung gilt **ausschließlich** für den Saldoabgleich. Die
+ * anderen Sperren (Bilanz geht nicht auf, Anhang mit Platzhaltern, Sätze in
+ * Bearbeitung) lassen sich nicht begründen.
  *
  * Kein `createNestApplication()`: die Spec spricht per HTTP mit dem Server
  * auf :3000; `PrismaClient` nur fuer Aufraeumen und das Setzen von
@@ -280,15 +290,18 @@ describe('Jahresabschluss E2E (abschliessen / Vollstaendigkeitspruefung)', () =>
   });
 
   // =========================================================================
-  it('Saldoabgleich: eine Abweichung wird GEMELDET, nicht gesperrt', async () => {
-    await allesAufraeumen();
-    await saetzeAnlegen(true);
-    // A.V. = 999, GuV-Ergebnis = 1000 -> Abweichung 1 EUR.
-    //
-    // WICHTIG: Das Kapital wird auf 1 gesetzt, damit die Bilanz dabei
-    // AUSGEGLICHEN bleibt (Aktiva 1000 = Passiva 1 + 999). Erster Entwurf:
-    // Kapital 500 + A.V. 999 -> Passiva 1499, und der Bilanz-Check hat
-    // korrekt mit 409 geblockt. Der Test pruefte damit die falsche Sperre.
+  // ENTSCHEIDUNG 2026-10-20 (Nachtrag 59, Entscheidung 1)
+  // =========================================================================
+
+  /**
+   * Legt die Abweichung zwischen `A.V.` (Bilanz) und dem GuV-Ergebnis an.
+   *
+   * WICHTIG: Das Kapital wird auf 1 gesetzt, damit die Bilanz dabei
+   * AUSGEGLICHEN bleibt (Aktiva 1000 = Passiva 1 + 999). Erster Entwurf:
+   * Kapital 500 + A.V. 999 -> Passiva 1499, und der Bilanz-Check hat
+   * korrekt mit 409 geblockt. Der Test pruefte damit die falsche Sperre.
+   */
+  async function saldoabgleichHerstellen(): Promise<void> {
     const bilanz = await prisma.bilanz.findFirst({
       where: { mandantId: mid, geschaeftsjahr: JAHR },
       include: { positionen: true },
@@ -308,20 +321,111 @@ describe('Jahresabschluss E2E (abschliessen / Vollstaendigkeitspruefung)', () =>
         reihenfolge: 9,
       },
     });
+  }
+
+  it('Saldoabgleich: eine Abweichung SPERRRT — ohne Begruendung 409', async () => {
+    await allesAufraeumen();
+    await saetzeAnlegen(true);
+    // A.V. = 999, GuV-Ergebnis = 1000 -> Abweichung 1 EUR.
+    await saldoabgleichHerstellen();
 
     const id = await abschlussAnlegen();
     const res = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
       method: 'POST', headers: headers(), body: JSON.stringify({}),
     });
-    expect(res.status, 'die Abweichung darf NICHT sperren — Eigenkapitalbewegungen sind nicht modelliert').toBe(200);
-    const body = (await res.json()) as {
-      warnungen: Array<{ meldung: string }>;
-      saldoabgleich: { abweichung: number | null; hinweis: string };
-    };
-    expect(body.saldoabgleich.abweichung).not.toBeNull();
+    const text = await res.text();
     expect(
-      body.warnungen.some((w) => w.meldung.includes('Abweichung')),
-      'die Abweichung muss gemeldet werden',
+      res.status,
+      'eine Abweichung zwischen Bilanz und GuV darf den Abschluss nicht mehr ' +
+        'ohne weiteres durchgehen lassen',
+    ).toBe(409);
+    const body = JSON.parse(text) as {
+      message?: string;
+      pruefungen?: Array<{ gegenstand: string; bestanden: boolean; meldung: string }>;
+      abweichung?: number;
+      begruendungErforderlich?: boolean;
+    };
+    expect(body.begruendungErforderlich, 'der Server muss den Weg zur Freigabe nennen').toBe(true);
+    // A.V. 999 minus GuV-Ergebnis 1000 = **-1**. Der erste Entwurf dieses
+    // Tests erwartete 1 — die Vorzeichen waren vertauscht, nicht der Code.
+    expect(body.abweichung, 'die Abweichung muss benannt werden').toBe(-1);
+    expect(
+      body.pruefungen?.some(
+        (p) => p.gegenstand === 'Saldoabgleich Bilanz/GuV' && !p.bestanden,
+      ),
+      'die Meldung muss den Saldoabgleich als Grund nennen',
     ).toBe(true);
+    expect(body.message).toContain('Begruendung');
+  });
+
+  it('mit schriftlicher Begruendung → 200, FINALIZED, Begruendung im Audit-Trail', async () => {
+    await allesAufraeumen();
+    await saetzeAnlegen(true);
+    await saldoabgleichHerstellen();
+
+    const id = await abschlussAnlegen();
+    const begruendung =
+      'Kapitalerhoehung vom 15.03. ueber 500 EUR, im Produkt nicht erfasst.';
+    const res = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ begruendung }),
+    });
+    const text = await res.text();
+    expect(res.status, `Freigabe mit Begruendung: ${text.slice(0, 200)}`).toBe(200);
+    const body = JSON.parse(text) as {
+      status: string;
+      warnungen: Array<{ meldung: string }>;
+      saldoabgleich: {
+        abweichung: number | null;
+        freigegeben: boolean;
+        begruendung?: string;
+      };
+    };
+    expect(body.status).toBe('FINALIZED');
+    expect(
+      body.saldoabgleich.freigegeben,
+      'die Antwort muss sagen, dass die Abweichung freigegeben wurde',
+    ).toBe(true);
+    expect(body.saldoabgleich.begruendung).toBe(begruendung);
+    expect(
+      body.warnungen.some((w) => w.meldung.includes('FREIGEGEBEN')),
+      'die Freigabe muss in den Warnungen stehen',
+    ).toBe(true);
+
+    // **Und der entscheidende Teil:** die Begruendung muss im Audit-Trail
+    // stehen. Ein Abschluss, der trotz einer Abweichung durchging, ist eine
+    // Ausnahme — fuer einen Auditor unsichtbar waere sie wertlos.
+    const eintraege = await prisma.auditLog.findMany({
+      where: { entityType: 'Jahresabschluss', entityId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+    const abschlussEintrag = eintraege.find(
+      (e) => (e.newState as { status?: string } | null)?.status === 'FINALIZED',
+    );
+    expect(abschlussEintrag, 'der Abschluss muss auditiert sein').toBeTruthy();
+    const newState = abschlussEintrag!.newState as {
+      saldoabgleichFreigegeben?: { abweichung?: number; begruendung?: string };
+    };
+    expect(
+      newState.saldoabgleichFreigegeben?.begruendung,
+      'die Begruendung muss im Audit-Trail stehen',
+    ).toBe(begruendung);
+  });
+
+  it('eine zu kurze Begruendung wird abgewiesen (Mindestlaenge)', async () => {
+    await allesAufraeumen();
+    await saetzeAnlegen(true);
+    await saldoabgleichHerstellen();
+    const id = await abschlussAnlegen();
+
+    const res = await fetch(`${BASE}/api/jahresabschluss/${id}/finalize?mandantId=${mid}`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ begruendung: 'kapital' }),
+    });
+    const text = await res.text();
+    expect(res.status, `zu kurze Begruendung: ${text.slice(0, 160)}`).toBe(400);
+    expect(text).toContain('begruendung');
   });
 });

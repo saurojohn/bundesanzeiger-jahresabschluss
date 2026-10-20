@@ -18,6 +18,8 @@ type BilanzSummary = {
   hinweise: string | null;
   updatedAt: string;
   wormObjectKey: string | null;
+  /** BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwurf oder Beweisobjekt? */
+  pdfIstEntwurf?: boolean;
   /**
    * Salden-Summen kommen serverseitig mit. Die Liste liefert die Positionen
    * bewusst NICHT mit (eine Bilanz hat 20+ Positionen) — `positionen` stand
@@ -285,6 +287,7 @@ export function BilanzListView() {
                       entityType="bilanz"
                       entityId={b.id}
                       wormObjectKey={b.wormObjectKey}
+                      pdfIstEntwurf={b.pdfIstEntwurf}
                       onGenerated={() => void loadList()}
                     />
                     {/* Bugfix 2026-10-05: Die qeS-Signatur war ueber die

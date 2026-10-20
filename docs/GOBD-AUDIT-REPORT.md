@@ -3338,7 +3338,7 @@ rot**, darunter exakt der aus der CI.
 | Signatur-Sichtbarkeit | ✅ `UNSIGNIERT`/`SIGNIERT`/`ABWEICHEND` + Badge — **Nachtrag 36: war für Entities mit Jahresabschluss-Bezug defekt (blieb auf `UNSIGNIERT`) und ist behoben; das grüne Häkchen galt nur für Entities ohne Bezug** |
 | Signatur-Record je Entität | ✅ `entityType`+`entityId`, `id` wird durchgereicht — **Nachtrag 36: Records tragen genau EINE Achse (`jahresabschlussId` ODER `entityType`+`entityId`); beide werden jetzt gelesen** |
 | Konflikt bei belegtem GJ | ✅ 409 (RFC 9110 §15.5.10) in 5 Stellen, 4 Tests |
-| Jahresabschluss-Aggregat | 🟡 **anlegen, lesen, abschließen und signieren** (Nachtrag 28/30/35: POST + GET, `POST :id/finalize`, `signAbschluss` mit `FINALIZED`-Sperre). Offen: Saldoabgleich A.V.↔GuV **warnt** statt zu sperren (Entscheidung 1); `SIGNED → SUBMITTED → PUBLISHED` haben keinen Schreibpfad (TODO-8.10); Entwurfs-PDF landet im 10-Jahres-WORM (TODO-8.9, vor dem Pilot zu entscheiden) |
+| Jahresabschluss-Aggregat | 🟡 **anlegen, lesen, abschließen und signieren** (Nachtrag 28/30/35: POST + GET, `POST :id/finalize`, `signAbschluss` mit `FINALIZED`-Sperre). Saldoabgleich A.V.↔GuV **sperrt** jetzt, mit schriftlich begruendetem Ausweg (Nachtrag 59, Entscheidung 1); `SIGNED → SUBMITTED → PUBLISHED` haben keinen Schreibpfad (TODO-8.10); Entwurfs-PDF landet im 10-Jahres-WORM (TODO-8.9, vor dem Pilot zu entscheiden) |
 | Anhang-Platzhalter | ✅ `offenePlatzhalter` in der Detailantwort, 5 Unit + 1 e2e |
 | Cursor-Pagination | ✅ `id`-Tiebreaker in 6 Stellen zentral, Decoder strikt, 2 e2e |
 | Betragsgrenzen | ✅ schema-abgeleitet (`Decimal(18,2)`, `Int4`), 6 e2e |
@@ -3370,14 +3370,14 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.6 | Automatisierter monatlicher Restore-Test in CI | DevOps | Sprint 5+ |
 | ~~TODO-8.7~~ | ~~`assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code?~~ — **erledigt in Nachtrag 58**: es war **weder** Tiefenschutz **noch** toter Code, sondern **zwoelfmal derselbe Code** (12 Kopien in 12 Services). Die Antwort auf die gestellte Frage ist damit eine dritte: *ungenutzter Tiefenschutz*. Jetzt gibt es **eine** Implementierung (`common/utils/mandant-zugriff.ts`), und ein Test beweist, dass sie greift, wenn der Guard umgangen wird | — | erledigt |
 | ~~TODO-8.8~~ | ~~Audit-Trail "fire and forget" (51 Stellen)~~ — **erledigt in Nachtrag 56**: gemessen über die öffentliche API fehlte der Audit-Eintrag in **80 %** der Fälle, wenn die Antwort beim Client war; weitere 15 % hatten noch keinen Hash. Behoben: alle 51 Aufrufstellen warten jetzt, die Hash-Kette wartet auf den eigenen Eintrag, und `/health/ready` meldet das Alter des ältesten ungehashten Eintrags. Die in Nachtrag 31 vorgeschlagene **Transaktion** (Fachvorgang + Audit atomar) bleibt als Restidee dokumentiert — sie widerspricht der Reihenfolge der Hash-Kette | — | erledigt |
-| TODO-8.9 | **Entwurfs-PDF des Jahresabschlusses**: darf `generateAbschlussPdf` einen `DRAFT` rendern, der mit 10-Jahres-Object-Lock im Beweis-Archiv landet? Varianten a/b/c in Nachtrag 35 (Nachtrag 35, Befund 4) | Produkt + Compliance | **vor dem Pilot** |
+| ~~TODO-8.9~~ | ~~Entwurfs-PDF: darf ein DRAFT mit 10-Jahres-Object-Lock im Beweis-Archiv landen?~~ — **erledigt in Nachtrag 61**: **Variante b** (vom Nutzer bestaetigt): Entwuerfe bekommen einen eigenen `entityType` (`*_PDF_ENTWURF`), einen eigenen Key-Praefix (`entwuerfe/mandant/…`) und **keinen** Object-Lock. Ein Entwurf ist ein Arbeitsstand — er wird geaendert, verworfen, neu erzeugt; unwiderruflich archiviert waere er ein „Beweis" fuer einen Stand, den niemand freigegeben hat. Die Gegenprobe (VALIDATED) geht unveraendert ins Beweis-Archiv | — | erledigt |
 | TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | ~~TODO-8.12~~ | ~~Der Signier-Knopf war an 5 Stellen ohne Rollenprüfung sichtbar~~ — **erledigt in Nachtrag 57**: die Sichtbarkeit hängt jetzt an **einer** Stelle (`lib/session.ts`) und bildet den `RolesGuard` mandantenbezogen ab. Die TODO-Formulierung war dabei ungenau: `sign-bilanz/guv/anhang` erlauben **auch** `STEUERBERATER`, nur `sign-abschluss` ist WP-only — gemessen am Controller, nicht angenommen | — | erledigt |
 | TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
 | TODO-8.14 | **Ungeklärt, eingegrenzt (Nachtrag 43):** Der Eintrag `seq=249` wurde **einmal** gehasht, mit `mandantId="074e…"` und einem before/after-`newState`. In der Datenbank steht `mandantId = null` und ein **Mandant-Schnappschuss** als `newState`. Die Anwendung hat **genau eine** `auditLog.update`-Stelle (die Hash-Schreibung selbst). Die Zeile wurde also von außerhalb dieser Anwendung verändert — Beleg unten | Dev + Compliance | Sprint 5 |
 | ~~TODO-8.14~~ | ~~Zweiter Schreiber auf der Audit-Kette identifizieren~~ — **erledigt in Nachtrag 54**: es war die **Datenbank** (Prisma `SetNull` auf `AuditLog.mandantId` beim Löschen eines Mandanten), nicht ein fremder Prozess. Der Hash schützt jetzt den Inhalt, nicht die veränderbaren Fremdschlüssel | — | erledigt |
-| TODO-8.15 | **Komponentensignatur am offenen Aggregat**: `sign-guv` / `sign-anhang` hängen ohne Statusprüfung an den Jahresabschluss — gemessen 2 Signaturen + 5 WORM-Objekte bei `status: DRAFT`. Entscheidung: zulässig (Modell braucht ein trennendes Feld) oder unzulässig (Sperre analog `sign-abschluss`) (Nachtrag 42) | Fachbereich + Compliance | **vor dem Pilot** |
+| ~~TODO-8.15~~ | ~~Komponentensignatur am offenen Aggregat: zulaessig oder unzulaessig?~~ — **erledigt in Nachtrag 60**: **zulaessig, aber mit trennendem Modellfeld** (vom Nutzer bestaetigt): `signature.signaturEbene` = `ABSCHLUSS` (Endabnahme) oder `BESTANDTEIL` (gepruefter Bestandteil). Vorher lag eine Komponentensignatur auf der `jahresabschlussId`-Achse und war damit von einer Abschluss-Signatur **nicht unterscheidbar** — ein Auditor las „der Jahresabschluss ist signiert", obwohl nur die GuV geprueft war | — | erledigt |
 
 ---
 
@@ -5730,6 +5730,282 @@ x assertMandantAccess > weist einen Mandanten ab, zu dem der User gar keine
 
 Drei Tests rot, **die Gegenprobe gruen** — sie schlaegt genau dann nicht
 an, wenn die Sperre ehrlich arbeitet.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 59): Der Saldoabgleich **sperrt** jetzt — mit schriftlich begruendetem Ausweg
+
+**Entscheidung 1 (vom Nutzer bestaetigt): Sperre, aber mit begruendeter Freigabe.**
+
+#### Die Ausgangslage
+
+Der Saldoabgleich zwischen `A.V.` (Jahresueberschuss in der Bilanz) und dem
+GuV-Ergebnis war eine **Meldung**: die Abweichung wurde angezeigt, und der
+Abschluss ging trotzdem durch. Der Kommentar im Code begruendete das so
+(woertlich):
+
+> Warum die Abweichung NICHT sperrt: `A.V.` ist nicht zwangslaeufig das
+> Jahresergebnis — Kapitalerhoehungen und Entnahmen verschieben den Saldo,
+> ohne in der GuV zu erscheinen, und solche Eigenkapitalbewegungen
+> modelliert das Produkt nicht. Eine Sperre wuerde berechtigte Abschluesse
+> blockieren.
+
+**Die Begruendung war richtig — und die Konsequenz falsch.** „Blockiert
+berechtigte Abschluesse" ist kein Grund, den Fehler *stumm* zu lassen. Ein
+Abschluss, dessen Bilanz nicht auf die GuV aufgeht, ist keine Bilanzaussage;
+er darf nicht unbemerkt in die Veroeffentlichung gehen.
+
+#### Die Regel jetzt
+
+**Sperre** — ohne Begruendung `409`:
+
+```
+Der Saldoabgleich zwischen Bilanz und GuV weicht ab: Die Bilanz weist
+999.00 EUR als Jahresueberschuss aus, die GuV dagegen 1000.00 EUR —
+Abweichung -1.00 EUR. Das kann an Eigenkapitalbewegungen liegen
+(Kapitalerhoehung, Entnahme), die das Produkt nicht erfasst. Wenn das der
+Fall ist, kann der Abschluss mit einer schriftlichen Begruendung
+(mindestens 20 Zeichen) freigegeben werden — sie geht in den Audit-Trail.
+```
+
+**Freigabe** — mit `begruendung` (mindestens 20 Zeichen) geht der Abschluss
+durch, und die Begruendung steht im Audit-Trail:
+
+```json
+{
+  "status": "FINALIZED",
+  "saldoabgleich": {
+    "abweichung": -1,
+    "freigegeben": true,
+    "begruendung": "Kapitalerhoehung vom 15.03. ueber 500 EUR, im Produkt nicht erfasst."
+  }
+}
+```
+
+**Die Begruendung gilt ausschliesslich fuer den Saldoabgleich.** Die
+anderen Sperren (Bilanz geht nicht auf, GuV fehlt, Anhang mit Platzhaltern,
+Saetze in Bearbeitung) sind unabhaengig davon und lassen sich nicht
+begruenden — eine Begruendung, die alles freigibt, waere keine Sperre.
+
+#### Die Oberflaeche
+
+Bei der Ablehnung erscheint im Pruefpanel ein **Begruendungsfeld** mit dem
+Knopf „Mit Begruendung freigeben". Der Knopf ist erst ab 20 Zeichen aktiv.
+
+#### Die Negativprobe
+
+Die Sperre zur Nicht-Funktion gemacht (die Abweichung wieder nur gemeldet):
+
+```
+x Saldoabgleich: eine Abweichung SPERRRT — ohne Begruendung 409
+```
+
+Die beiden anderen Tests des Falls (Freigabe mit Begruendung, Mindestlaenge)
+bleiben gruen — sie pruefen den Ausweg, nicht die Sperre.
+
+**Ein Detail, das beim Schreiben des Tests auffiel:** die Abweichung ist
+**-1**, nicht +1 (A.V. 999 minus GuV 1000). Der erste Testentwurf erwartete
++1 — die Vorzeichen waren vertauscht, nicht der Code.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 60): Eine GuV-Signatur war von einer Abschluss-Signatur **nicht unterscheidbar**
+
+**TODO-8.15 (vom Nutzer bestaetigt): zulaessig, aber mit trennendem Modellfeld.**
+
+#### Der Fund, der hinter der Frage steckte
+
+Die Frage lautete: duerfen `sign-guv` / `sign-anhang` am offenen Aggregat
+signieren? Gemessen: 2 Signaturen + 5 WORM-Objekte bei `status: DRAFT`.
+
+Die Frage war richtig — aber der eigentliche Befund lag eine Ebene tiefer und
+wurde erst beim Nachsehen der Daten sichtbar:
+
+`resolveJahresabschlussId()` legt **auch** eine Komponentensignatur auf die
+`jahresabschlussId`-Achse, wenn der Bestandteil zu einem Jahresabschluss
+gehoert. Und dann setzt der Schreibpfad die andere Achse auf `null`:
+
+```ts
+jahresabschlussId: abschlussId,
+entityType: abschlussId ? null : entityType,   // <- null!
+entityId: abschlussId ? null : entityId,       // <- null!
+```
+
+**Ergebnis:** in der Tabelle `signature` sah eine GuV-Signatur **exakt aus
+wie eine Abschluss-Signatur**. Ein Auditor, der die Signaturliste des
+Jahresabschlusses las, musste „der Jahresabschluss ist signiert" verstehen —
+obwohl nur die GuV geprueft war.
+
+Das ist keine theoretische Verwechslung: die Vier-Augen-Kontrolle fuer den
+**Abschluss** haengt genau an dieser Unterscheidung. Und es war genau die
+Frage, die das Modellfeld beantworten sollte.
+
+#### Die Regel jetzt
+
+**Komponentensignaturen bleiben zulaessig.** In der Praxis prueft ein
+Wirtschaftspruefer die GuV, *bevor* der Abschluss final ist — eine Sperre
+wuerde den Arbeitsablauf behindern.
+
+**Und sie werden getrennt ausgewiesen.** Neu: `signature.signaturEbene`
+
+| Wert | Bedeutung |
+|---|---|
+| `ABSCHLUSS` | der Jahresabschluss selbst wurde signiert (Endabnahme) |
+| `BESTANDTEIL` | ein Bestandteil wurde geprueft |
+
+Der **Default** ist `BESTANDTEIL` — das ist der sichere Default: eine
+Komponentensignatur wird nicht versehentlich als Endabnahme gelesen.
+
+**Und beide Bezugsachsen werden belegt:** `entityType`/`entityId` sagen, was
+signiert wurde, `jahresabschlussId` sagt, zu welchem Aggregat es gehoert.
+Vorher war das nicht unterscheidbar.
+
+#### Die Status-API
+
+Fuer einen Jahresabschluss zaehlt jetzt **nur** die Abschluss-Signatur als
+„signiert":
+
+```json
+{
+  "status": "UNSIGNIERT",
+  "anzahlSignaturen": 0,
+  "anzahlBestandteilPruefungen": 1,
+  "signaturEbene": "BESTANDTEIL",
+  "hinweis": "Der Jahresabschluss ist NICHT signiert. Geprueft wurden bisher 1
+              Bestandteil(e) — eine Bestandteilpruefung ist keine Endabnahme
+              (§ 146 AO, Vier-Augen-Kontrolle)."
+}
+```
+
+#### Die Oberflaeche
+
+Das Badge unterscheidet jetzt zwei Zustaende, die vorher derselbe waren:
+
+* `✓ Signiert` — der Jahresabschluss selbst ist signiert
+* `⚠ 1× Bestandteil geprüft — nicht signiert` — es wurden Bestandteile
+  geprueft, die Endabnahme fehlt
+
+#### Die Negativprobe
+
+Die Ebenen-Trennung ausgeschaltet (alle Signaturen des Aggregats zaehlen
+wieder als Endabnahme):
+
+```
+x der Jahresabschluss gilt NICHT als signiert, wenn nur die Bilanz geprueft wurde
+```
+
+#### Die Migration
+
+```sql
+ALTER TABLE "signature" ADD COLUMN "signaturEbene" TEXT NOT NULL DEFAULT 'BESTANDTEIL';
+```
+
+Die Altbestandszeilen werden **nicht** geraten: als `ABSCHLUSS` gilt nur,
+was selbst ein WORM-Objekt vom Typ `ABSCHLUSS_PDF_SIGNED` mit derselben ID
+traegt. Alles andere bleibt `BESTANDTEIL` — im Zweifel die niedrigere Stufe.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 61): Ein Entwurf war ein **10 Jahre unwiderruflicher Beweis**
+
+**TODO-8.9 (vom Nutzer bestaetigt): Variante b — eigener EntityType, eigener Prefix, kein Object-Lock.**
+
+#### Der Befund
+
+Vier Routen (`pdf/{bilanz,guv,anhang,abschluss}/:id/generate`) legten ihr
+Ergebnis im Beweis-Archiv ab — mit 10-Jahres-Object-Lock COMPLIANCE — **ohne
+jede Statuspruefung**. Das gilt fuer Entwuerfe genauso wie fuer abgeschlossene
+Saetze.
+
+Fachlich ist das falsch. Ein Entwurf ist ein Arbeitsstand: er wird geaendert,
+verworfen, neu erzeugt. Unwiderruflich archiviert waere er danach ein
+„Beweis" fuer einen Stand, den niemand freigegeben hat — und er waere nach
+zehn Jahren **nicht mehr loeschbar**, auch nicht von einem Administrator.
+
+#### Die Regel jetzt
+
+| | Entwurf (DRAFT) | Beweisobjekt (VALIDATED / FINALIZED) |
+|---|---|---|
+| `entityType` | `BILANZ_PDF_ENTWURF` u. a. | `BILANZ_PDF` u. a. |
+| Key-Praefix | `entwuerfe/mandant/…` | `mandant/…` |
+| Object-Lock | **keiner** | COMPLIANCE |
+| Retention | 0 Tage | 3650 Tage (10 Jahre) |
+| Legal Hold | nein | ja |
+| Dateiname | `entwurf-bilanz-…pdf` | `bilanz-…pdf` |
+
+**Der Dateiname traegt die Unterscheidung mit.** Er ist Teil der Ablage: wer
+die Datei aus dem Archiv zieht, muss sehen, dass sie kein Beweis ist.
+
+**Der Download liefert den Entwurf aus** (zuerst wird das Beweisobjekt
+gesucht, dann der Entwurf) — der Entwurf ist ein Arbeitsstand, an dem man
+arbeiten muss.
+
+#### Der Wächter, der sonst fehlgeschlagen wäre
+
+`audit-worm-retention.sh` prueft **jede** Zeile der `worm_object`-Tabelle auf
+COMPLIANCE + mindestens 3650 Tage. Ein Entwurf darin waere als **Fehlalarm**
+in einem Compliance-Bericht gelandet — zwei Fehlalarme pro Entwurf.
+
+Das Skript ueberspringt die Zeilen mit `object_lock_mode = 'NONE'` — und
+**zaehlt sie**:
+
+```
+Entwuerfe (kein Object-Lock, nicht auditierbar): 3
+-> Entwuerfe sind Arbeitsstaende (Nachtrag 61, TODO-8.9) und gehoeren
+   nicht in den 10-Jahres-Nachweis. Gezaehlt, nicht stillschweigend ignoriert.
+```
+
+Eine stillschweigende Ausnahme waere eine Ausnahmeliste, die veralten kann;
+eine gezaehlte ist nachvollziehbar.
+
+#### Die Folge, die zuerst auffiel: die Liste fand den Entwurf nicht
+
+Die erste Umsetzung brach **einen** bestehenden Test: `pdf-strecke.spec.ts`
+("nach dem Erzeugen muss ‚Ansehen' verfügbar sein") wurde rot.
+
+Ursache: die Listen holen den PDF-Schluessel ueber den WORM-Objekt-Register
+mit einem **festen** EntityType:
+
+```ts
+entityType: 'BILANZ_PDF',    // <- der Entwurf heisst BILANZ_PDF_ENTWURF
+```
+
+Der Entwurf wurde also abgelegt, aber in der Liste **nicht gefunden** — der
+Anwender konnte sein gerade erzeugtes PDF weder ansehen noch herunterladen.
+Der Knopf verschwand, weil die Liste `null` lieferte.
+
+**Behoben:** alle sechs Listen-Lookups (Bilanz/GuV/Anhang, je mit und ohne
+Jahresfilter) beruecksichtigen jetzt **beide** EntityTypes:
+
+```ts
+entityType: { in: ['BILANZ_PDF', 'BILANZ_PDF_ENTWURF'] },
+```
+
+**Und die Liste sagt jetzt, ob es ein Entwurf ist** (`pdfIstEntwurf`).
+Das ist nicht Kosmetik: der Hinweis unter den Knöpfen lautete bisher
+*"WORM-archiviert (10 Jahre, § 147 AO)"*. Fuer einen Entwurf waere das eine
+**falsche Aussage** — er liegt gerade **nicht** im Beweis-Archiv. Er lautet
+jetzt: *"Entwurf – nicht im Beweis-Archiv, nicht aufbewahrt"*.
+
+Das ist der Grund, warum der Durchbruch hier so sichtbar war: die Oberflaeche
+hat einen vorhandenen Test, der genau diese Zusage prueft. Ein Test, der die
+falsche Zusage **festgeschrieben** haette, waere bei einer Aenderung der
+Regel still geblieben.
+
+#### Die Negativprobe
+
+Der Entwurf wieder ins WORM-Archiv geschickt:
+
+```
+x eine Bilanz auf DRAFT: eigener EntityType, eigener Prefix, KEIN Object-Lock
+```
+
+Die **Gegenprobe** (eine VALIDATED-Bilanz geht unveraendert ins Beweis-Archiv)
+und der Download-Test bleiben gruen.
+
+Der Test prueft **beide** Seiten: das Manifest in der Datenbank **und** das
+Objekt im Speicher (HEAD gegen den S3-Mock). Eine DB-Zeile kann behaupten,
+was sie will — am Objekt im Speicher steht, ob es wirklich gesperrt ist.
 
 ---
 

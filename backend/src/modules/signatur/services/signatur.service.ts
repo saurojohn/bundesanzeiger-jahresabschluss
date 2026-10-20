@@ -238,7 +238,24 @@ export class SignaturService {
       entityType,
       entityId,
     );
-    const letzte = signaturen[0] ?? null;
+
+    // BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Fuer einen
+    // **Jahresabschluss** entscheidet nur die Abschluss-Signatur ueber den
+    // Status. Eine gepruefte GuV ist keine Endabnahme.
+    //
+    // Vorher war das nicht unterscheidbar: die Signatur eines gebundenen
+    // Bestandteils lag auf der Abschluss-Achse und wurde damit als
+    // Abschluss-Signatur gelesen — der Abschluss zeigte "SIGNIERT", obwohl
+    // nur die GuV geprueft war.
+    const istAbschluss = entityType === 'Abschluss';
+    const abschlussSignaturen = istAbschluss
+      ? signaturen.filter((s) => s.signaturEbene === 'ABSCHLUSS')
+      : signaturen;
+    const bestandteilPruefungen = istAbschluss
+      ? signaturen.filter((s) => s.signaturEbene !== 'ABSCHLUSS')
+      : [];
+
+    const letzte = abschlussSignaturen[0] ?? null;
 
     const basis: SignaturStatusDto = {
       entityType,
@@ -251,11 +268,24 @@ export class SignaturService {
       signedPdfWormKey: null,
       entitaetGeaendertAm: null,
       geaendertNachSignatur: false,
-      anzahlSignaturen: signaturen.length,
+      anzahlSignaturen: abschlussSignaturen.length,
+      signaturEbene: letzte?.signaturEbene === 'ABSCHLUSS' ? 'ABSCHLUSS' : 'BESTANDTEIL',
+      anzahlBestandteilPruefungen: bestandteilPruefungen.length,
       hinweis: 'Dieses Dokument wurde noch nicht signiert.',
     };
 
-    if (!letzte) return basis;
+    if (!letzte) {
+      if (bestandteilPruefungen.length > 0) {
+        return {
+          ...basis,
+          hinweis:
+            `Der Jahresabschluss ist NICHT signiert. Geprueft wurden bisher ` +
+            `${bestandteilPruefungen.length} Bestandteil(e) — eine Bestandteilpruefung ` +
+            'ist keine Endabnahme (§ 146 AO, Vier-Augen-Kontrolle).',
+        };
+      }
+      return basis;
+    }
 
     // `updatedAt` der Entitaet mandanten-filtert laden.
     const geaendertAm = await this.entitaetUpdatedAt(entityType, entityId, mandantId);
@@ -333,6 +363,7 @@ export class SignaturService {
       entityType: s.entityType,
       entityId: s.entityId,
       jahresabschlussId: s.jahresabschlussId,
+      signaturEbene: s.signaturEbene,
       signaturTyp: s.signaturTyp,
       zeitstempel: s.zeitstempel.toISOString(),
       zeitstempelIssuer: s.zeitstempelIssuer,
@@ -929,9 +960,23 @@ export class SignaturService {
       await this.signatureRepository.create(
         {
           id: signatureId,
+          // BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): **Beide** Achsen
+          // werden belegt. Vorher landete eine Komponentensignatur auf der
+          // Abschluss-Achse (`entityType`/`entityId` = null) und war damit
+          // von einer Abschluss-Signatur nicht unterscheidbar — ein Auditor
+          // las „der Jahresabschluss ist signiert", obwohl nur die GuV
+          // geprueft war.
+          //
+          // `jahresabschlussId` sagt, zu welchem Aggregat der Bestandteil
+          // gehoert; `entityType`/`entityId` sagen, was tatsaechlich signiert
+          // wurde. Beides together gehoert.
           jahresabschlussId: abschlussId,
-          entityType: abschlussId ? null : entityType,
-          entityId: abschlussId ? null : entityId,
+          entityType,
+          entityId,
+          // Und die Ebene sagt, was die Signatur **bescheinigt**:
+          // die Endabnahme des Abschlusses oder die Pruefung eines
+          // Bestandteils.
+          signaturEbene: entityType === 'Abschluss' ? 'ABSCHLUSS' : 'BESTANDTEIL',
           userId: user.id,
           rolle: userRolle,
           signaturTyp: signatureType,

@@ -41,6 +41,15 @@ import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
  */
 export type BilanzSummaryWithWorm = BilanzListEntry & {
   wormObjectKey: string | null;
+  /**
+   * Ist das PDF ein Entwurf (Arbeitsstand) oder ein Beweisobjekt?
+   *
+   * BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwuerfe liegen nicht im
+   * Beweis-Archiv, sondern unter eigenem EntityType und eigenem Praefix.
+   * Die Liste muss das unterscheiden — sonst waere der WORM-Hinweis in der
+   * Oberflaeche fuer einen Entwurf eine falsche Aussage.
+   */
+  pdfIstEntwurf: boolean;
 };
 
 export interface BilanzServiceContext {

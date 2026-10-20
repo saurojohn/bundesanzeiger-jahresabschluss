@@ -40,6 +40,14 @@ export interface CreateSignatureInput {
   jahresabschlussId?: string | null;
   entityType?: string | null;
   entityId?: string | null;
+  /**
+   * Was die Signatur bescheinigt: "ABSCHLUSS" (Endabnahme) oder
+   * "BESTANDTEIL" (gepruefter Bestandteil).
+   *
+   * BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Ohne dieses Feld war eine
+   * Komponentensignatur von einer Abschluss-Signatur nicht unterscheidbar.
+   */
+  signaturEbene?: string | null;
   userId: string;
   rolle: string;
   signaturTyp: string;
@@ -91,7 +99,7 @@ export class SignatureRepository {
     const hatEntitaet = Boolean(input.entityType && input.entityId);
     if (!hatAbschluss && !hatEntitaet) {
       throw new Error(
-        'Signature braucht genau eine Bezugsachse: jahresabschlussId ODER entityType+entityId',
+        'Signature braucht mindestens eine Bezugsachse: jahresabschlussId ODER entityType+entityId',
       );
     }
 
@@ -101,6 +109,7 @@ export class SignatureRepository {
         jahresabschlussId: input.jahresabschlussId ?? null,
         entityType: input.entityType ?? null,
         entityId: input.entityId ?? null,
+        signaturEbene: input.signaturEbene ?? 'BESTANDTEIL',
         userId: input.userId,
         rolle: input.rolle,
         signaturTyp: input.signaturTyp,

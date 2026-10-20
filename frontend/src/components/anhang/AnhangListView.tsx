@@ -25,6 +25,8 @@ type Anhang = {
   bewertungsMethoden: string | null;
   sonstigePflichtangaben: string | null;
   wormObjectKey: string | null;
+  /** BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Entwurf oder Beweisobjekt? */
+  pdfIstEntwurf?: boolean;
   /**
    * Listenansicht liefert NUR die Anzahl der Abschnitte (`_count`), nicht die
    * Inhalte — ein Mandant mit 50 Anhängen soll nicht 50 vollständige Anhänge
@@ -214,6 +216,7 @@ export function AnhangListView() {
                 entityType="anhang"
                 entityId={a.id}
                 wormObjectKey={a.wormObjectKey}
+                pdfIstEntwurf={a.pdfIstEntwurf}
                 onGenerated={() => void loadList()}
               />
               {/* Bugfix 2026-10-05: Der Anhang war über die Oberfläche nicht

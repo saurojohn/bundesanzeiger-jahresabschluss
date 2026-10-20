@@ -140,6 +140,34 @@ describe('Signature: Bezugsachse wird gefunden', () => {
     };
   }
 
+  /**
+   * Signaturstatus eines **Jahresabschlusses**.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Ein Jahresabschluss, dessen
+   * Bilanz geprueft (signiert) wurde, ist **nicht** signiert. Die
+   * Endabnahme ist die Vier-Augen-Kontrolle ueber den Abschluss.
+   */
+  async function abschlussStatus(abschlussId: string): Promise<{
+    status: string;
+    anzahlSignaturen: number;
+    anzahlBestandteilPruefungen: number;
+    signaturEbene: string;
+    hinweis: string;
+  }> {
+    const r = await fetch(
+      `${BASE}/api/signatur/status?entityType=Abschluss&entityId=${abschlussId}`,
+      { headers: { authorization: `Bearer ${wpToken}`, 'x-mandant-id': mandantId } },
+    );
+    expect(r.status, `Abschluss-Signaturstatus ${abschlussId}`).toBe(200);
+    return (await r.json()) as {
+      status: string;
+      anzahlSignaturen: number;
+      anzahlBestandteilPruefungen: number;
+      signaturEbene: string;
+      hinweis: string;
+    };
+  }
+
   async function bilanzSignieren(bilanzId: string): Promise<void> {
     const r = await fetch(`${BASE}/api/signatur/sign-bilanz?mandantId=${mandantId}`, {
       method: 'POST',
@@ -235,17 +263,50 @@ describe('Signature: Bezugsachse wird gefunden', () => {
     expect(s.signiertAm).not.toBeNull();
   });
 
-  it('der Record liegt nachweislich auf der jahresabschlussId-Achse', async () => {
+  it('der Record liegt auf BEIDEN Achsen und traegt die Ebene BESTANDTEIL', async () => {
     // Voraussetzung des Fehlers festhalten: ohne diese Zeile waere der
     // Test oben auch dann gruen, wenn der Record auf der entityType-Achse
     // laege — und der Test pruefte dann nichts Besonderes.
+    //
+    // BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Vorher lag der Record
+    // einer **Bilanz**-Signatur auf der jahresabschlussId-Achse, mit
+    // `entityType`/`entityId` = null — er war damit von einer
+    // Abschluss-Signatur nicht unterscheidbar. Ein Auditor las „der
+    // Jahresabschluss ist signiert", obwohl nur die Bilanz geprueft war.
+    //
+    // Jetzt: beide Achsen (was signiert wurde + zu welchem Aggregat es
+    // gehoert) und die Ebene (was die Signatur bescheinigt).
     const record = await prisma.signature.findFirst({
       where: { jahresabschlussId: abschlussId },
-      select: { entityType: true, entityId: true },
+      select: { entityType: true, entityId: true, signaturEbene: true },
     });
     expect(record, 'der Record muss auf der Abschluss-Achse liegen').not.toBeNull();
-    expect(record!.entityType, 'und entityType muss null sein').toBeNull();
-    expect(record!.entityId).toBeNull();
+    expect(
+      record!.entityType,
+      'der Record muss sagen, WAS signiert wurde',
+    ).toBe('Bilanz');
+    expect(record!.entityId).toBe(bilanzGebunden);
+    expect(
+      record!.signaturEbene,
+      'eine Bilanz-Signatur ist eine Bestandteilpruefung, keine Endabnahme',
+    ).toBe('BESTANDTEIL');
+  });
+
+  it('der Jahresabschluss gilt NICHT als signiert, wenn nur die Bilanz geprueft wurde', async () => {
+    // Das ist der Kern der Entscheidung: eine Bestandteilpruefung ist
+    // keine Endabnahme. Vorher zeigte der Abschluss "SIGNIERT", weil die
+    // Bilanz-Signatur auf seiner Achse lag.
+    const s = await abschlussStatus(abschlussId);
+    expect(
+      s.status,
+      'eine Bilanzpruefung darf den Jahresabschluss nicht als signiert ausweisen',
+    ).toBe('UNSIGNIERT');
+    expect(s.anzahlSignaturen, 'als Endabnahme zaehlt keine Bilanz-Signatur').toBe(0);
+    expect(
+      s.anzahlBestandteilPruefungen,
+      'die Bilanzpruefung muss aber als Bestandteilpruefung sichtbar sein',
+    ).toBe(1);
+    expect(s.hinweis).toContain('keine Endabnahme');
   });
 
   it('listSignaturen findet die gebundene Bilanz ebenfalls', async () => {

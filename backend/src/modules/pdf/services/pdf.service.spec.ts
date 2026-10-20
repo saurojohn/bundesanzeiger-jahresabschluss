@@ -47,6 +47,12 @@ function buildService(positionen: Pos[]) {
   };
   const storageService = {
     uploadToWorm: vi.fn().mockResolvedValue({ objectKey: 'k', sha256: 'h' }),
+    // BEFUND 2026-10-20 (Nachtrag 61, TODO-8.9): Die Fixture-Bilanz steht
+    // auf DRAFT — sie ist damit ein **Entwurf** und geht ueber den Weg
+    // OHNE Object-Lock. Beide Wege muessen im Stub existieren, sonst
+    // scheitert der Test an einem unvollstaendigen Stub statt an der
+    // eigentlichen Aussage.
+    uploadOhneSperre: vi.fn().mockResolvedValue({ objectKey: 'k', sha256: 'h' }),
     getConfig: vi.fn().mockReturnValue({ retentionDays: 3650 }),
     downloadFromWorm: vi.fn().mockResolvedValue(Buffer.from('')),
   };
@@ -125,7 +131,14 @@ describe('PdfService: Saldo-Gate und Integritätsangabe', () => {
     await expect(
       service.generateBilanzPdf('b1', 'm1', USER, CTX),
     ).resolves.toBeDefined();
-    expect(storageService.uploadToWorm).toHaveBeenCalled();
+    // Die Fixture-Bilanz steht auf DRAFT -> Entwurf -> **ohne** Object-Lock.
+    // (Nachtrag 61, TODO-8.9. Der WORM-Weg fuer VALIDATED-Bestandteile ist
+    // in `e2e/pdf-entwurf.e2e.spec.ts` als Gegenprobe abgesichert.)
+    expect(storageService.uploadOhneSperre).toHaveBeenCalled();
+    expect(
+      storageService.uploadToWorm,
+      'ein Entwurf darf nicht im Beweis-Archiv landen',
+    ).not.toHaveBeenCalled();
   });
 
   it('lehnt eine nicht saldostimmende Bilanz ab', async () => {
@@ -136,8 +149,10 @@ describe('PdfService: Saldo-Gate und Integritätsangabe', () => {
     await expect(
       service.generateBilanzPdf('b1', 'm1', USER, CTX),
     ).rejects.toBeInstanceOf(BadRequestException);
-    // Vor allem anderen: nichts darf archiviert werden.
+    // Vor allem anderen: nichts darf archiviert werden — auf **keinem** der
+    // beiden Wege.
     expect(storageService.uploadToWorm).not.toHaveBeenCalled();
+    expect(storageService.uploadOhneSperre).not.toHaveBeenCalled();
   });
 
   it('lehnt eine leere Bilanz ab (0,00 war als Aussage gewertet)', async () => {

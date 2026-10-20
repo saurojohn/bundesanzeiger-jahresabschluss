@@ -492,6 +492,25 @@ model Signature {
   entityType             String? // "Bilanz" | "GuV" | "Anhang" | "Abschluss"
   entityId               String? @db.Uuid
 
+  // BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15): Die Bezugsachsen allein
+  // sagten NICHT, WAS die Signatur bescheinigt. Eine GuV-Signatur, deren
+  // GuV zu einem Jahresabschluss gehoert, wurde auf die
+  // `jahresabschlussId`-Achse gelegt — der Datensatz war damit von einer
+  // Abschluss-Signatur nicht unterscheidbar.
+  //
+  // Das ist der Unterschied zwischen „der Jahresabschluss ist signiert"
+  // (Endabnahme, Vier-Augen-Kontrolle) und „die GuV ist geprueft"
+  // (Bestandteil). Beides wird getrennt festgehalten:
+  //
+  //   * "ABSCHLUSS"   — der Jahresabschluss selbst wurde signiert
+  //   * "BESTANDTEIL" — ein Bestandteil (Bilanz/GuV/Anhang) wurde geprueft
+  //
+  // ENTSCHEIDUNG 2026-10-20: Komponentensignaturen sind zulaessig — in der
+  // Praxis prueft ein Wirtschaftspruefer die GuV, BEVOR der Abschluss
+  // final ist. Sie duerfen nur nie so aussehen, als sei der Abschluss
+  // signiert.
+  signaturEbene          String   @default("BESTANDTEIL") // "ABSCHLUSS" | "BESTANDTEIL"
+
   jahresabschluss Jahresabschluss? @relation(fields: [jahresabschlussId], references: [id], onDelete: Cascade)
 
   @@index([jahresabschlussId])

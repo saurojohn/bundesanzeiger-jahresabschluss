@@ -183,6 +183,27 @@ Guard-Pattern: `@Roles('Steuerberater', 'GF')` Decorators an Controller-Methoden
 | XML/XBRL | xmllint + BAnz-Schemas | Validierung gegen Schema-Definitionen |
 | PDF | pdf-parse + Visuelle Inspektion | Text-Layer-Extraktion, Layout-Check |
 
+### 6.1 Der Restore-Test läuft monatlich — und bei Änderungen an sich selbst
+
+`.github/workflows/restore-test.yml` läuft **monatlich** (1. um 02:17 UTC)
+und auf Zuruf. Er prüft, dass eine Wiederherstellung **prozedural** trägt:
+vollständiges Schema, vollständige Daten, intakte Audit-Hash-Kette im
+wiederhergestellten Bestand.
+
+Zusätzlich läuft er bei jeder Änderung an `backend/scripts/restore-test.sh`,
+`audit-worm-retention.sh`, dem Workflow selbst oder den Migrationen. Ohne
+diesen Trigger fiele ein Fehler im Test erst beim nächsten Monatslauf auf —
+vier Wochen nach der Änderung.
+
+**Merksatz:** Ein Test, den man nur lokal fährt, prüft nicht die
+Schnittstelle, die in der CI benutzt wird. Der erste Lauf des neuen
+Workflows war **rot** (`SOURCE_DATABASE_URL` vs. `DATABASE_URL`) — lokal
+war er grün, weil dort beide Variablen identisch gesetzt waren.
+
+Was der Test **nicht** beweist: dass das *Produktions*-Backup existiert.
+Das prüft der Produktionslauf (Hetzner-Snapshot, `docs/DISASTER-RECOVERY.md`
+§ 4).
+
 **Pflicht**: Jeder neue Endpoint hat einen e2e-Test **vor** dem ersten Commit.
 
 ## 7. Datenmodell (Überblick)

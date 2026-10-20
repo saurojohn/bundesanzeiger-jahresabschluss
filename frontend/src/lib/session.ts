@@ -207,6 +207,26 @@ export function useAktiverMandantId(user: SessionUser | null): string | null {
 }
 
 /**
+ * Darf der angemeldete Benutzer auf dem **aktiven** Mandanten eine der
+ * erlaubten Rollen ausueben?
+ *
+ * BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): Die Einreichungs-Knoepfe
+ * duerfen nur erscheinen, wenn die Rolle sie auch traegt. Der Server
+ * beantwortet einen unerlaubten Aufruf mit 403 — der Anwender waere nach
+ * dem Klick genau so weit wie vorher (Nachtrag 57: ein Knopf, der in einen
+ * 403 fuehrt, ist schlimmer als kein Knopf).
+ *
+ * @param erlaubt Die Rollen, die den Vorgang ausloesen duerfen.
+ */
+export function useMandantBerechtigung(
+  erlaubt: readonly MandantRolle[],
+): boolean {
+  const { user } = useSessionUser();
+  const mandantId = useAktiverMandantId(user);
+  return hatRolle(user, mandantId, erlaubt);
+}
+
+/**
  * Darf der angemeldete Benutzer auf dem **aktiven** Mandanten signieren?
  *
  * `ziel` unterscheidet die beiden Signaturarten:

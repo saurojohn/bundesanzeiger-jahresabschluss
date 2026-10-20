@@ -443,6 +443,8 @@
       "geschaeftsjahr": "Geschäftsjahr",
       "status": "Status",
       "abschlussdatum": "Erstellt am",
+      "bestellnummer": "BAnz-Bestellnummer (Vorgangsnummer)",
+      "vorgang": "Vorgang",
       "bilanzSumme": "Bilanzsumme",
       "guvErgebnis": "Jahresergebnis",
       "actions": "Aktionen"
@@ -461,7 +463,10 @@
       "delete": "Löschen",
       "finalize": "Abschluss prüfen und abschließen",
       "createHint": "Bilanz, GuV und Anhang dieses Jahres werden benötigt.",
-      "alreadySigned": "Bereits signiert"
+      "alreadySigned": "Bereits signiert",
+      "submit": "Einreichung melden",
+      "submitConfirm": "Einreichung bestätigen",
+      "publish": "Als veröffentlicht melden"
     },
     "pruefung": {
       "ok": "Alle Pflichtangaben erfüllt.",

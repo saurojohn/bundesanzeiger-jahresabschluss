@@ -3371,7 +3371,7 @@ rot**, darunter exakt der aus der CI.
 | ~~TODO-8.7~~ | ~~`assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code?~~ — **erledigt in Nachtrag 58**: es war **weder** Tiefenschutz **noch** toter Code, sondern **zwoelfmal derselbe Code** (12 Kopien in 12 Services). Die Antwort auf die gestellte Frage ist damit eine dritte: *ungenutzter Tiefenschutz*. Jetzt gibt es **eine** Implementierung (`common/utils/mandant-zugriff.ts`), und ein Test beweist, dass sie greift, wenn der Guard umgangen wird | — | erledigt |
 | ~~TODO-8.8~~ | ~~Audit-Trail "fire and forget" (51 Stellen)~~ — **erledigt in Nachtrag 56**: gemessen über die öffentliche API fehlte der Audit-Eintrag in **80 %** der Fälle, wenn die Antwort beim Client war; weitere 15 % hatten noch keinen Hash. Behoben: alle 51 Aufrufstellen warten jetzt, die Hash-Kette wartet auf den eigenen Eintrag, und `/health/ready` meldet das Alter des ältesten ungehashten Eintrags. Die in Nachtrag 31 vorgeschlagene **Transaktion** (Fachvorgang + Audit atomar) bleibt als Restidee dokumentiert — sie widerspricht der Reihenfolge der Hash-Kette | — | erledigt |
 | ~~TODO-8.9~~ | ~~Entwurfs-PDF: darf ein DRAFT mit 10-Jahres-Object-Lock im Beweis-Archiv landen?~~ — **erledigt in Nachtrag 61**: **Variante b** (vom Nutzer bestaetigt): Entwuerfe bekommen einen eigenen `entityType` (`*_PDF_ENTWURF`), einen eigenen Key-Praefix (`entwuerfe/mandant/…`) und **keinen** Object-Lock. Ein Entwurf ist ein Arbeitsstand — er wird geaendert, verworfen, neu erzeugt; unwiderruflich archiviert waere er ein „Beweis" fuer einen Stand, den niemand freigegeben hat. Die Gegenprobe (VALIDATED) geht unveraendert ins Beweis-Archiv | — | erledigt |
-| TODO-8.10 | `SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind unbeschrieben (Nachtrag 35, Befund 3) | Dev | M4 |
+| ~~TODO-8.10~~ | ~~`SIGNED → SUBMITTED → PUBLISHED` haben keinen Schreibpfad~~ — **erledigt in Nachtrag 62**: die Zustandsmaschine hat jetzt einen Schreibpfad (`POST :id/einreichen`, `POST :id/veroeffentlichen`). Die Bestellnummer ist **Pflicht** (sie ist der einzige Beleg fuer die Einreichung) und **eindeutig** (`@unique` in der Datenbank — der Kommentar versprach es, das Schema erzwingte es nicht). Die Anwendung reicht weiterhin **nicht selbst ein** (es gibt keine Submission-API des Verlags); sie protokolliert, was die Kanzlei draussen getan hat | — | erledigt |
 | ~~TODO-8.11~~ | ~~Kein Wächter für tote Knöpfe~~ — **erledigt in Nachtrag 39**: `tote-knopfe.spec.ts` prüft den gesamten Quellbaum, ohne Ausnahmeliste | — | erledigt |
 | ~~TODO-8.12~~ | ~~Der Signier-Knopf war an 5 Stellen ohne Rollenprüfung sichtbar~~ — **erledigt in Nachtrag 57**: die Sichtbarkeit hängt jetzt an **einer** Stelle (`lib/session.ts`) und bildet den `RolesGuard` mandantenbezogen ab. Die TODO-Formulierung war dabei ungenau: `sign-bilanz/guv/anhang` erlauben **auch** `STEUERBERATER`, nur `sign-abschluss` ist WP-only — gemessen am Controller, nicht angenommen | — | erledigt |
 | TODO-8.13 | **Gegenprobe negativ — vorerst keine Änderung.** Zwei echte Instanzen auf derselben Datenbank, 60 Schreibvorgänge abwechselnd auf beide verteilt: `integrity` → **OK**. Die Selbstsortierung aus Nachtrag 41 deckt auch den Mehrinstanzfall, weil die Reihenfolge aus der Datenbank kommt und die Berechnung idempotent ist. Restrisiko: ein schmales Fenster (siehe Nachtrag 45), nicht beobachtet | Dev | beobachten, M4 |
@@ -6006,6 +6006,105 @@ und der Download-Test bleiben gruen.
 Der Test prueft **beide** Seiten: das Manifest in der Datenbank **und** das
 Objekt im Speicher (HEAD gegen den S3-Mock). Eine DB-Zeile kann behaupten,
 was sie will — am Objekt im Speicher steht, ob es wirklich gesperrt ist.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 62): Die Zustandsmaschine existierte — nur ohne Schreibpfad
+
+#### Der Befund
+
+TODO-8.10: *„`SIGNED → SUBMITTED → PUBLISHED` haben Beschriftung und Typ, aber
+keinen Schreibpfad; `banzBestellnummer` und `veroeffentlichtAm` sind
+unbeschrieben."*
+
+Das Schema versprach eine vollstaendige Maschine:
+
+```
+status            String    @default("DRAFT") // DRAFT | FINALIZED | SIGNED | SUBMITTED | PUBLISHED
+finalisiertAm     DateTime?
+signiertAm        DateTime?
+eingereichtAm     DateTime?
+veroeffentlichtAm DateTime?
+banzBestellnummer String?   // @unique
+```
+
+Und der Public-API-Service dokumentierte den Zustand selbst:
+
+> *(Praktisch entschaerft: `prisma.banzSubmission` wird im Repository an KEINER
+> Stelle geschrieben — die Tabelle ist bislang leer. Der Weg zu echter
+> Paginierung ist, **zuerst die Submission-Erzeugung zu implementieren**, dann das
+> Repository um `findByMandantPaginated` zu erweitern.)*
+
+Das war die Wegbeschreibung, die im Repo lag. Der Schreibpfad fehlte komplett:
+`eingereichtAm`, `veroeffentlichtAm` und `banzBestellnummer` blieben `null`, die
+Tabelle `banz_submission` war leer.
+
+#### Was hier gebaut wurde — und was ausdruecklich nicht
+
+**Nicht gebaut: die Einreichung beim Bundesanzeiger.** Es gibt keine
+oeffentliche Submission-API des Verlags:
+
+- `MILESTONE-4.md`: „Bundesanzeiger-Verlag (Submission via eBilanz-Online +
+  DATEV, **nicht direkt**)"
+- `JAHRESABSCHLUSS-MODUL-PLAN.md`, Schritt 4: „Hier wird die Einreichung an
+  den Bundesanzeiger angeschlossen … das haengt an **externen Bedingungen,
+  die lokal nicht herstellbar sind** (Portal-Zugang, Vorgangsnummer, Gebuehren)"
+
+**Gebaut: der Schreibpfad fuer das, was draussen passiert.** Die Kanzlei
+importiert die Datei in ERiC/eBilanz-Online, das Portal gibt eine
+**Bestellnummer** zurueck, und die Kanzlei traegt sie hier ein. Der
+Jahresabschluss steht danach auf `SUBMITTED`, und ein `BanzSubmission`-Beleg
+haelt fest, **was** eingereicht wurde (Nutzlast + SHA-256), **unter welcher
+Vorgangsnummer** und **ueber welchen Kanal**.
+
+#### Die Regeln — alle fail-closed
+
+| Regel | Verhalten | Begruendung |
+|---|---|---|
+| Ohne Signatur kein `einreichen` | 409 | Ohne qeS-bescheinigte Fassung gibt es nichts, was eingereicht werden koennte |
+| Ohne signiertes PDF im WORM kein `einreichen` | 409 | Sonst gaelte der Beleg eine Einreichung ohne Einreichungsgegenstand |
+| Bestellnummer **Pflicht** (min. 5 Zeichen) | 400 | Sie ist der einzige Beleg fuer die Einreichung; ohne sie waere der Statuswechsel eine Behauptung |
+| Bestellnummer **eindeutig** | 409 | Zwei Abschluesse auf denselben Vorgang waeren ein Datenfehler |
+| `veroeffentlichen` nur nach `einreichen` | 409 | Ohne Einreichung gibt es nichts zu veroeffentlichen |
+| **Nur** STEUERBERATER und KANZLEI_ADMIN | 403 | Der WP **bescheinigt** (qeS), die Kanzlei **reicht ein**. Ein WP, der ohne Kanzlei-Beteiligung veroeffentlichen koennte, waere die Vier-Augen-Kontrolle ausgehebelt. |
+
+#### Der Fund im Fund: die Eindeutigkeit war nur behauptet
+
+Das Schema-Kommentar sagte `@unique` — das Schema **erzwang es nicht**:
+
+```
+banzBestellnummer String? // @unique - BAnz-Vorgangsnummer nach Submission
+```
+
+Der Service prueft die Eindeutigkeit zwar, aber **Pruefen, dann Schreiben** hat
+eine Luecke dazwischen: zwei gleichzeitige Einreichungen mit derselben Nummer
+laufen an der Pruefung vorbei. Die Eindeutigkeit ist eine Eigenschaft der
+**Daten**, nicht des Anwendungscodes — sie gehoert in die Datenbank.
+
+Behoben: `banzBestellnummer String? @unique` plus Migration. Nullable bleibt
+sie: `NULL` heisst „nicht eingereicht", und mehrere Abschluesse ohne
+Einreichung vertragen sich (Postgres erlaubt mehrere NULLs im UNIQUE-Index).
+
+Der Service faengt die verbleibende Konkurrenz (P2002) und gibt **409** statt
+500.
+
+#### Die Negativprobe
+
+Die Zustandspruefung entfernt (ein `DRAFT`-/`FINALIZED`-Abschluss haette
+eingereicht werden koennen):
+
+```
+x einreichen auf einem nicht signierten Abschluss -> 409
+```
+
+Die anderen sechs Tests bleiben gruen — sie pruefen den Ausweg, nicht die
+Sperre.
+
+#### Und was jetzt nicht mehr leer ist
+
+Die Tabelle `banz_submission` wird geschrieben. Damit liefert die Public API
+erstmals echte Einreichungsdaten — und der Weg zur echten Cursor-Paginierung,
+den der Public-API-Service als Voraussetzung benannt hat, ist geebnet.
 
 ---
 

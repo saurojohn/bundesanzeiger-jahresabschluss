@@ -4,13 +4,15 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { apiFetch, getAccessToken, getActiveMandantId } from '@/lib/api';
 import { P12UploadDialog } from '@/components/signatur/P12UploadDialog';
-import { useSignaturBerechtigung } from '@/lib/session';
+import { useSignaturBerechtigung, useMandantBerechtigung } from '@/lib/session';
 import { SignaturStatusBadge } from '@/components/signatur/SignaturStatusBadge';
 
 type JahresabschlussSummary = {
   id: string;
   geschaeftsjahr: number;
   status: 'DRAFT' | 'FINALIZED' | 'SIGNED' | 'SUBMITTED' | 'PUBLISHED';
+  /** BAnz-Bestellnummer nach der Einreichung (Nachtrag 62). */
+  banzBestellnummer: string | null;
   bilanzsumme: number;
   guvErgebnis: number;
   abgeschlossenAm: string | null;
@@ -55,6 +57,25 @@ export function JahresabschlussView() {
    */
   const [begruendungZiel, setBegruendungZiel] = useState<string | null>(null);
   const [begruendung, setBegruendung] = useState('');
+  /**
+   * BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): `SIGNED -> SUBMITTED ->
+   * PUBLISHED` hatten keinen Bedienweg. Die Anwendung reicht nicht selbst
+   * ein (es gibt keine Submission-API des Bundesanzeiger-Verlags) — die
+   * Kanzlei meldet hier, was **draussen** passiert ist: die
+   * BAnz-Bestellnummer und spaeter die Veroeffentlichung.
+   */
+  const [einreichenZiel, setEinreichenZiel] = useState<string | null>(null);
+  const [bestellnummer, setBestellnummer] = useState('');
+  /**
+   * Wer darf einreichen? Die Kanzlei-Seite: STEUERBERATER und
+   * KANZLEI_ADMIN. Der Wirtschaftspruefer bescheinigt (qeS), die Kanzlei
+   * reicht ein — ein WP, der ohne Kanzlei-Beteiligung veroeffentlichen
+   * koennte, waere die Vier-Augen-Kontrolle ausgehebelt.
+   */
+  const darfEinreichen = useMandantBerechtigung([
+    'STEUERBERATER',
+    'KANZLEI_ADMIN',
+  ]);
 
   // BEFUND 2026-10-20 (Nachtrag 57, TODO-8.12): Die Signatur des
   // **Jahresabschlusses** ist die Endabnahme — sie ist ausschliesslich dem
@@ -111,6 +132,53 @@ export function JahresabschlussView() {
    * Der Server meldet, wenn einer der drei Bestandteile fehlt — der
    * Anwender muss nicht raten, welcher.
    */
+  /**
+   * Meldet die Einreichung beim Bundesanzeiger.
+   *
+   * Die Bestellnummer ist Pflicht: sie ist der einzige Beleg fuer die
+   * Einreichung. Der Server weist eine leere oder zu kurze Nummer mit 400
+   * und eine doppelt vergebene mit 409 ab.
+   */
+  async function einreichen(id: string) {
+    const token = getAccessToken();
+    const mandantId = getActiveMandantId();
+    if (!token || !mandantId) return;
+    setError(null);
+    try {
+      await apiFetch(`/jahresabschluss/${id}/einreichen`, {
+        method: 'POST',
+        accessToken: token,
+        // Kein `mandantId` im Body: der DTO verbietet unbekannte Felder
+        // (`forbidNonWhitelisted`), und der Mandantenkontext kommt aus dem
+        // Guard. Die anderen Routen machen es genauso.
+        body: JSON.stringify({ banzBestellnummer: bestellnummer.trim() }),
+      });
+      setEinreichenZiel(null);
+      setBestellnummer('');
+      await loadList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    }
+  }
+
+  /** Meldet, dass der Bundesanzeiger den Abschluss veroeffentlicht hat. */
+  async function veroeffentlichen(id: string) {
+    const token = getAccessToken();
+    const mandantId = getActiveMandantId();
+    if (!token || !mandantId) return;
+    setError(null);
+    try {
+      await apiFetch(`/jahresabschluss/${id}/veroeffentlichen`, {
+        method: 'POST',
+        accessToken: token,
+        body: JSON.stringify({}),
+      });
+      await loadList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.network.message'));
+    }
+  }
+
   async function anlegen() {
     const token = getAccessToken();
     const mandantId = getActiveMandantId();
@@ -327,6 +395,63 @@ export function JahresabschlussView() {
                       {j.status === 'SIGNED' && (
                         <span className="text-xs text-slate-400">
                           {t('jahresabschluss.actions.alreadySigned')}
+                        </span>
+                      )}
+                      {/* BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): der
+                          Einreichungs- und der Veroeffentlichungsweg. */}
+                      {j.status === 'SIGNED' && darfEinreichen && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEinreichenZiel(j.id);
+                            setBestellnummer('');
+                          }}
+                          data-testid="jahresabschluss-einreichen"
+                          className="text-sm text-brand-600 hover:text-brand-700"
+                        >
+                          {t('jahresabschluss.actions.submit')}
+                        </button>
+                      )}
+                      {j.status === 'SUBMITTED' && darfEinreichen && (
+                        <button
+                          type="button"
+                          onClick={() => void veroeffentlichen(j.id)}
+                          data-testid="jahresabschluss-veroeffentlichen"
+                          className="text-sm text-brand-600 hover:text-brand-700"
+                        >
+                          {t('jahresabschluss.actions.publish')}
+                        </button>
+                      )}
+                      {einreichenZiel === j.id && (
+                        <div className="mt-1 flex flex-col items-end gap-1">
+                          <label
+                            htmlFor={`bestellnummer-${j.id}`}
+                            className="text-[10px] text-slate-500"
+                          >
+                            {t('jahresabschluss.fields.bestellnummer')}
+                          </label>
+                          <input
+                            id={`bestellnummer-${j.id}`}
+                            data-testid="jahresabschluss-bestellnummer"
+                            value={bestellnummer}
+                            onChange={(e) => setBestellnummer(e.target.value)}
+                            className="w-44 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void einreichen(j.id)}
+                            disabled={bestellnummer.trim().length < 5}
+                            data-testid="jahresabschluss-einreichen-bestaetigen"
+                            className="rounded-md bg-brand-600 px-2 py-1 text-xs text-white hover:bg-brand-700 disabled:opacity-50"
+                          >
+                            {t('jahresabschluss.actions.submitConfirm')}
+                          </button>
+                        </div>
+                      )}
+                      {j.banzBestellnummer && (
+                        <span className="text-[10px] text-slate-500">
+                          {t('jahresabschluss.fields.vorgang')}:{' '}
+                          {j.banzBestellnummer}
                         </span>
                       )}
                       {/* BEFUND 2026-10-20 (Nachtrag 60, TODO-8.15):

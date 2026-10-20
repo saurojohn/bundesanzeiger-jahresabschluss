@@ -20,6 +20,8 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import { AbschlussService } from '../services/abschluss.service';
 import { CreateJahresabschlussDto } from '../dto/create-jahresabschluss.dto';
 import { FinalizeJahresabschlussDto } from '../dto/finalize-jahresabschluss.dto';
+import { EinreichenJahresabschlussDto } from '../dto/einreichen-jahresabschluss.dto';
+import { Roles } from '../../auth/decorators/roles.decorator';
 
 /**
  * Jahresabschluss (§ 314 HGB).
@@ -61,6 +63,60 @@ export class AbschlussController {
       );
     }
     return this.abschlussService.create(dto, user, {
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string) ?? null,
+    });
+  }
+
+  /**
+   * POST /api/jahresabschluss/:id/einreichen
+   *
+   * Meldet die **externe** Einreichung beim Bundesanzeiger: die Kanzlei hat
+   * die Datei in ERiC/eBilanz-Online importiert und das Portal hat eine
+   * Bestellnummer zurueckgegeben.
+   *
+   * Die Anwendung reicht **nicht** selbst ein — es gibt keine oeffentliche
+   * Submission-API des Verlags. Hier wird protokolliert, was draussen
+   * passiert ist.
+   *
+   * Rollen: STEUERBERATER und KANZLEI_ADMIN (die Kanzlei-Seite). **Nicht**
+   * der Wirtschaftspruefer: der bescheinigt, die Kanzlei reicht ein.
+   */
+  @Post(':id/einreichen')
+  @HttpCode(HttpStatus.OK)
+  @RequireMandant()
+  @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
+  async einreichen(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: EinreichenJahresabschlussDto,
+    @MandantId() mandantId: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ) {
+    return this.abschlussService.einreichen(id, mandantId, dto, user, {
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string) ?? null,
+    });
+  }
+
+  /**
+   * POST /api/jahresabschluss/:id/veroeffentlichen
+   *
+   * Meldet, dass der Bundesanzeiger den Abschluss veroeffentlicht hat.
+   *
+   * Rollen: wie `einreichen` — die Kanzlei-Seite.
+   */
+  @Post(':id/veroeffentlichen')
+  @HttpCode(HttpStatus.OK)
+  @RequireMandant()
+  @Roles('STEUERBERATER', 'KANZLEI_ADMIN')
+  async veroeffentlichen(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @MandantId() mandantId: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ) {
+    return this.abschlussService.veroeffentlichen(id, mandantId, user, {
       ip: req.ip ?? null,
       userAgent: (req.headers['user-agent'] as string) ?? null,
     });

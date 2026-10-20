@@ -435,7 +435,15 @@ model Jahresabschluss {
   signiertAm        DateTime?
   eingereichtAm     DateTime?
   veroeffentlichtAm DateTime?
-  banzBestellnummer String? // @unique - BAnz-Vorgangsnummer nach Submission
+  // BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): Der Kommentar versprach
+  // `@unique` — das Schema erzwingte es aber NICHT. Zwei Jahresabschluesse
+  // koennten dieselbe BAnz-Vorgangsnummer tragen: der Service prueft das,
+  // die Datenbank nicht (und der Service prueft es nebenbei — zwei
+  // gleichzeitige Einreichungen laufen an seiner Pruefung vorbei).
+  //
+  // Die Eindeutigkeit gehoert in die Datenbank. Nullable bleibt sie: mehrere
+  // Abschluesse ohne Einreichung (NULL) vertragen sich.
+  banzBestellnummer String? @unique // BAnz-Vorgangsnummer nach Submission
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

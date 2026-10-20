@@ -14,10 +14,16 @@ import {
   FinalizeJahresabschlussDto,
   VollstaendigkeitsPruefung,
 } from '../dto/finalize-jahresabschluss.dto';
+import {
+  EinreichenJahresabschlussDto,
+  type EinreichenErgebnisDto,
+  type VeroeffentlichenErgebnisDto,
+} from '../dto/einreichen-jahresabschluss.dto';
 import { BilanzService } from '../../bilanz/services/bilanz.service';
 import { GuVService } from '../../guv/services/guv.service';
 import { AnhangService } from '../../anhang/services/anhang.service';
 import { WormObjectRepository } from '../../storage/repositories/worm-object.repository';
+import { StorageService } from '../../storage/services/storage.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
@@ -61,6 +67,10 @@ export class AbschlussService {
     private readonly guvService: GuVService,
     private readonly anhangService: AnhangService,
     private readonly wormObjectRepository: WormObjectRepository,
+    // BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): Fuer die
+    // Einreichungs-Datensaetze braucht es die **Nutzlast** selbst — das
+    // signierte PDF aus dem WORM-Speicher.
+    private readonly storageService: StorageService,
   ) {}
 
   /**
@@ -470,6 +480,258 @@ export class AbschlussService {
         freigegeben: saldoFreigegeben,
         ...(saldoFreigegeben ? { begruendung } : {}),
       },
+    };
+  }
+
+  /**
+   * Meldet die **externe** Einreichung beim Bundesanzeiger.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): `SIGNED -> SUBMITTED ->
+   * PUBLISHED` hatten keinen Schreibpfad — das Modell versprach eine
+   * Zustandsmaschine, die es nicht gab.
+   *
+   * ## Was hier passiert — und was ausdruecklich nicht
+   *
+   * Die Anwendung **reicht nichts beim Bundesanzeiger ein.** Es gibt keine
+   * oeffentliche Submission-API des Verlags (siehe `MILESTONE-4.md`:
+   * „Submission via eBilanz-Online + DATEV, **nicht direkt**"), und der
+   * Portalzugang mit Vorgangsnummer und Gebuehren ist extern
+   * (`JAHRESABSCHLUSS-MODUL-PLAN.md`, Schritt 4).
+   *
+   * Was hier passiert: die Kanzlei hat **drauessen** etwas getan (Datei in
+   * ERiC/eBilanz-Online importiert und an das Finanzamt gesendet) und
+   * traegt hier die **Bestellnummer** nach, die das Portal zurueckgegeben
+   * hat. Der Datensatz macht damit belegbar, **was** eingereicht wurde und
+   * **unter welcher Vorgangsnummer**.
+   *
+   * Ohne die Bestellnummer waere der Statuswechsel eine Behauptung — deshalb
+   * ist sie Pflicht (DTO) und muss eindeutig sein (UNIQUE + 409).
+   *
+   * ## Wer darf das
+   *
+   * Die Kanzlei-Seite: STEUERBERATER und KANZLEI_ADMIN. **Nicht** der
+   * Wirtschaftspruefer: der bescheinigt (qeS-Signatur), die Kanzlei reicht
+   * ein. Ein WP, der einen Abschluss ohne Kanzlei-Beteiligung
+   * veroeffentlichen koennte, waere die Vier-Augen-Kontrolle ausgehebelt.
+   *
+   * ## Fail-closed
+   *
+   * 1. Nur ein **signierter** Abschluss kann eingereicht werden (409).
+   * 2. Es muss ein signiertes PDF im WORM liegen (409) — sonst gaelte der
+   *    Datensatz eine Einreichung ohne Einreichungsgegenstand.
+   * 3. Die Bestellnummer muss eindeutig sein (409).
+   */
+  async einreichen(
+    id: string,
+    mandantId: string,
+    dto: EinreichenJahresabschlussDto,
+    user: AuthUser,
+    context: { ip?: string | null; userAgent?: string | null },
+  ): Promise<EinreichenErgebnisDto> {
+    assertMandantAccess(mandantId, user);
+
+    const abschluss = await this.prisma.jahresabschluss.findFirst({
+      where: { id, mandantId },
+      select: { id: true, status: true, geschaeftsjahr: true },
+    });
+    if (!abschluss) throw new NotFoundException('Jahresabschluss nicht gefunden');
+
+    // 1) Zustand: nur ein signierter Abschluss.
+    if (abschluss.status !== 'SIGNED') {
+      throw new ConflictException(
+        'Nur ein signierter Jahresabschluss kann eingereicht werden. ' +
+          `Dieser steht auf ${abschluss.status}.`,
+      );
+    }
+
+    // 2) Die Bestellnummer muss eindeutig sein.
+    const doppelt = await this.prisma.jahresabschluss.findFirst({
+      where: { banzBestellnummer: dto.banzBestellnummer, NOT: { id } },
+      select: { id: true, geschaeftsjahr: true },
+    });
+    if (doppelt) {
+      throw new ConflictException(
+        `Die BAnz-Bestellnummer ${dto.banzBestellnummer} ist bereits einem ` +
+          `anderen Jahresabschluss zugeordnet (Geschaeftsjahr ` +
+          `${doppelt.geschaeftsjahr}).`,
+      );
+    }
+
+    // 3) Das signierte PDF ist die Einreichungsgrundlage.
+    const signiertesPdf = await this.wormObjectRepository.findActiveByEntity(
+      'ABSCHLUSS_PDF_SIGNED',
+      id,
+    );
+    if (!signiertesPdf) {
+      throw new ConflictException(
+        'Es existiert kein signiertes Jahresabschluss-PDF. Ohne signierte ' +
+          'Fassung gibt es nichts, was eingereicht werden koennte.',
+      );
+    }
+
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { publishChannel: true, firmenname: true },
+    });
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+
+    const payload = await this.storageService.downloadFromWorm(
+      signiertesPdf.objectKey,
+    );
+
+    const jetzt = new Date();
+    let submissionId: string;
+    try {
+      // Der Submission-Datensatz und der Statuswechsel gehoeren zusammen:
+      // entweder existiert der Einreichungsbeleg **und** der Abschluss steht
+      // auf SUBMITTED — oder nichts von beidem.
+      const ergebnis = await this.prisma.$transaction(async (tx) => {
+        const submission = await tx.banzSubmission.create({
+          data: {
+            jahresabschlussId: id,
+            mandantId,
+            channel: mandant.publishChannel,
+            status: 'SUBMITTED',
+            submittedAt: jetzt,
+            banzBestellnummer: dto.banzBestellnummer,
+            rawPayload: payload,
+            payloadFormat: 'PDF',
+            payloadHash: signiertesPdf.sha256Hash,
+            createdById: user.id,
+          },
+          select: { id: true },
+        });
+        await tx.jahresabschluss.update({
+          where: { id },
+          data: {
+            status: 'SUBMITTED',
+            eingereichtAm: jetzt,
+            banzBestellnummer: dto.banzBestellnummer,
+          },
+        });
+        return submission;
+      });
+      submissionId = ergebnis.id;
+    } catch (err) {
+      // Die Datenbank erzwingt die Eindeutigkeit der Bestellnummer. Wer
+      // gleichzeitig einreicht, bekommt einen 409 — kein 500.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          `Diese BAnz-Bestellnummer ist bereits vergeben: ${dto.banzBestellnummer}`,
+        );
+      }
+      throw err;
+    }
+
+    await this.auditService.record({
+      userId: user.id,
+      mandantId,
+      jahresabschlussId: id,
+      action: 'UPDATE',
+      entityType: AbschlussService.entityName,
+      entityId: id,
+      previousState: { status: abschluss.status },
+      newState: {
+        status: 'SUBMITTED',
+        eingereichtAm: jetzt.toISOString(),
+        banzBestellnummer: dto.banzBestellnummer,
+        channel: mandant.publishChannel,
+        submissionId,
+        payloadHash: signiertesPdf.sha256Hash,
+        payloadGroesse: payload.length,
+      } as unknown as Prisma.JsonValue,
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+
+    this.logger.log(
+      `Jahresabschluss eingereicht: ${mandant.firmenname} GJ ` +
+        `${abschluss.geschaeftsjahr} -> ${id} (Vorgang ${dto.banzBestellnummer})`,
+    );
+
+    return {
+      id,
+      status: 'SUBMITTED',
+      eingereichtAm: jetzt.toISOString(),
+      banzBestellnummer: dto.banzBestellnummer,
+      channel: mandant.publishChannel,
+      submissionId,
+      payloadHash: signiertesPdf.sha256Hash,
+    };
+  }
+
+  /**
+   * Meldet die Veroeffentlichung im Bundesanzeiger.
+   *
+   * BEFUND 2026-10-20 (Nachtrag 62, TODO-8.10): `veroeffentlichtAm` war
+   * unbeschrieben — der letzte Schritt der Zustandsmaschine fehlte.
+   *
+   * Wie bei `einreichen()`: Die Anwendung veroeffentlicht **nicht** selbst.
+   * Sie protokolliert, dass der Bundesanzeiger veroeffentlicht hat — der
+   * Kanzlei sieht das im Portal und meldet es hier.
+   *
+   * Fail-closed: Nur ein **eingereichter** Abschluss kann veroeffentlicht
+   * werden (409). Ohne Einreichung gibt es nichts zu veroeffentlichen.
+   */
+  async veroeffentlichen(
+    id: string,
+    mandantId: string,
+    user: AuthUser,
+    context: { ip?: string | null; userAgent?: string | null },
+  ): Promise<VeroeffentlichenErgebnisDto> {
+    assertMandantAccess(mandantId, user);
+
+    const abschluss = await this.prisma.jahresabschluss.findFirst({
+      where: { id, mandantId },
+      select: { id: true, status: true, geschaeftsjahr: true, banzBestellnummer: true },
+    });
+    if (!abschluss) throw new NotFoundException('Jahresabschluss nicht gefunden');
+
+    if (abschluss.status !== 'SUBMITTED') {
+      throw new ConflictException(
+        'Nur ein eingereichter Jahresabschluss kann als veroeffentlicht ' +
+          `gemeldet werden. Dieser steht auf ${abschluss.status}.`,
+      );
+    }
+
+    const jetzt = new Date();
+    const aktualisiert = await this.prisma.$transaction(async (tx) => {
+      await tx.banzSubmission.updateMany({
+        where: { jahresabschlussId: id, status: 'SUBMITTED' },
+        data: { status: 'PUBLISHED' },
+      });
+      return tx.jahresabschluss.update({
+        where: { id },
+        data: { status: 'PUBLISHED', veroeffentlichtAm: jetzt },
+        select: { status: true, veroeffentlichtAm: true },
+      });
+    });
+
+    await this.auditService.record({
+      userId: user.id,
+      mandantId,
+      jahresabschlussId: id,
+      action: 'UPDATE',
+      entityType: AbschlussService.entityName,
+      entityId: id,
+      previousState: { status: abschluss.status },
+      newState: {
+        status: aktualisiert.status,
+        veroeffentlichtAm: aktualisiert.veroeffentlichtAm?.toISOString(),
+        banzBestellnummer: abschluss.banzBestellnummer,
+      } as unknown as Prisma.JsonValue,
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+
+    return {
+      id,
+      status: aktualisiert.status,
+      veroeffentlichtAm: aktualisiert.veroeffentlichtAm?.toISOString() ?? null,
+      banzBestellnummer: abschluss.banzBestellnummer,
     };
   }
 

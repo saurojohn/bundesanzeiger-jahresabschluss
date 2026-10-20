@@ -1,0 +1,167 @@
+# =============================================================================
+# Restore-Test — monatlich automatisiert (TODO-8.6)
+#
+# Der DR-Plan (docs/DISASTER-RECOVERY.md, Abschnitt 4) beschrieb einen
+# monatlichen Restore-Test als **Handskript auf dem Produktionshost**
+# (`/opt/banz/scripts/monthly-restore-test.sh`, Hetzner-CLI). Das ist weder
+# automatisiert noch versioniert: es laeuft nicht von allein, und ein Fehler
+# darin faellt erst im Ernstfall auf — also genau dann, wenn er teuer ist.
+#
+# Dieser Job automatisiert den **portablen Teil** der Prozedur:
+# Dump -> Restore -> Pruefung. Er laeuft monatlich und zusaetzlich auf
+# Zuruf.
+#
+# **Was er beweist und was nicht:**
+#   beweist       : die Prozedur laeuft, das Schema ist vollstaendig, die
+#                   Daten sind vollstaendig, die Audit-Hash-Kette im
+#                   wiederhergestellten Bestand ist intakt
+#   beweist NICHT : dass das *Produktions*-Backup existiert oder brauchbar
+#                   ist. Das prueft der Produktionslauf (Hetzner-Snapshot,
+#                   DR-Plan Abschnitt 4) — die CI hat kein Produktions-Backup.
+#
+# Der Test darf nicht stillschweigend gruen werden: deshalb laeuft er als
+# **eigener Workflow** mit eigenem Zeitplan, nicht als Schritt im normalen
+# CI. Ein Schritt im normalen CI wuerde bei jedem Push laufen und damit
+# seinen Zweck (monatliche Wiederholung) verlieren.
+# =============================================================================
+name: Restore-Test (monatlich)
+
+on:
+  schedule:
+    # Monatlich, 1. um 02:17 UTC. Die Minute 17 statt 0: die grossen
+    # Cron-Zeiten am Monatsanfang sind die meistgefahrensten Slots auf
+    # GitHub — dort ist der Runner ausgebucht, und ein Job, der wartet,
+    # laeuft nicht.
+    - cron: '17 2 1 * *'
+  workflow_dispatch:
+  # **Zusaetzlich bei Aenderungen an dem, was der Test prueft.** Ohne diesen
+  # Trigger faellt ein Fehler im Skript erst beim naechsten Monatslauf auf —
+  # also vier Wochen nach der Aenderung. Das ist genau die Art von Test,
+  # die "gruen" aussieht und nie gelaufen ist.
+  push:
+    branches: [main]
+    paths:
+      - 'backend/scripts/restore-test.sh'
+      - 'backend/scripts/audit-worm-retention.sh'
+      - '.github/workflows/restore-test.yml'
+      - 'backend/prisma/migrations/**'
+
+concurrency:
+  group: restore-test
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    name: Dump -> Restore -> Pruefung
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: banz
+          POSTGRES_PASSWORD: banz_ci_pw
+          POSTGRES_DB: bundesanzeiger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U banz"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_VERSION: '22'
+      # Quelle: die migrierte und geseedete Datenbank
+      DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger?schema=public
+      # Ziel: die wiederhergestellte Datenbank (siehe unten)
+      TARGET_DATABASE_URL: postgresql://banz:banz_ci_pw@localhost:5432/bundesanzeiger_restore?schema=public
+      JWT_SECRET: ci-only-not-a-real-secret-0000000000000000000000000000
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: eu-central-1
+      S3_ACCESS_KEY: ciaccesskey
+      S3_SECRET_KEY: cisecretkey
+      S3_BUCKET: banz-worm
+      S3_OBJECT_LOCK_MODE: COMPLIANCE
+      S3_OBJECT_LOCK_RETENTION_DAYS: '3650'
+      CACHE_PROVIDER: memory
+      TSA_URL: ''
+      BILLING_MOCK_ENABLED: 'true'
+      NODE_ENV: test
+      PORT: '3200'
+      API_PORT: '3200'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # Der PostgreSQL-Client wird **explizit** installiert.
+      #
+      # BEFUND 2026-10-20: Der Runner bringt ihn mit, aber das ist eine
+      # Annahme ueber ein Image, das sich ohne Vorwarnung aendern kann.
+      # Ein fehlender `pg_dump` wuerde den Job mit einer Meldung beenden,
+      # die wie ein Datenbank-Problem aussieht — nicht wie ein fehlendes
+      # Werkzeug.
+      - name: PostgreSQL-Client installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+
+      - name: Abhaengigkeiten installieren
+        working-directory: backend
+        run: npm ci
+
+      - name: Prisma Client generieren
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Quelldatenbank migrieren und seeden
+        working-directory: backend
+        run: |
+          npx prisma migrate deploy
+          npx prisma db seed
+
+      - name: S3-Mock starten
+        working-directory: backend
+        run: |
+          node ../s3-mock/server.js &
+          for i in $(seq 1 20); do
+            curl -sf -o /dev/null http://127.0.0.1:9000/ && break
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:9000/ || { echo "::error::S3-Mock nicht bereit"; exit 1; }
+
+      - name: Zieldatenbank anlegen
+        run: |
+          PGPASSWORD=banz_ci_pw createdb -h localhost -U banz bundesanzeiger_restore
+          echo "Zieldatenbank angelegt"
+
+      # Der Restore-Test startet das Backend selbst gegen die
+      # **wiederhergestellte** Datenbank und fragt danach die echte
+      # Integritaetsroute ab. Der Token gehoert zu einem
+      # Wirtschaftspruefer (die Route ist WP-/Admin-only).
+      - name: Restore-Test
+        working-directory: backend
+        env:
+          START_BACKEND: '1'
+          INTEGRITY_EMAIL: wp@kanzlei.de
+          INTEGRITY_PASSWORD: Demo123!
+        run: bash scripts/restore-test.sh
+
+      - name: Log als Artefakt sichern
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: restore-test-log
+          path: |
+            /tmp/banz-restore-backend.log
+            /tmp/banz-restore-worm.log
+          if-no-files-found: ignore
+          retention-days: 30

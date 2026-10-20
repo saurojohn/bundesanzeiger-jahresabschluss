@@ -173,6 +173,39 @@ bash infra/nginx/blue-green-switch.sh blue
 
 ## 4. Restore-Tests
 
+### 4.0 Der monatliche Restore-Test — jetzt automatisiert (TODO-8.6)
+
+BEFUND 2026-10-20 (Nachtrag 65): Dieser Abschnitt beschrieb den Restore-Test
+als **Handskript auf dem Produktionshost**. Ein Handskript laeuft nicht von
+allein — und ein Fehler darin faellt erst im Ernstfall auf, also genau dann,
+wenn er teuer ist.
+
+**Jetzt gibt es zwei Ebenen:**
+
+| Ebene | Was | Wie oft | Beweist |
+|---|---|---|---|
+| **A — CI** (`.github/workflows/restore-test.yml`) | die **Prozedur**: Dump → Restore → Pruefung. Versioniert, monatlich (1. um 02:17 UTC), zusaetzlich auf Zuruf | monatlich, automatisch | dass Dump/Restore/Pruefung funktionieren, das Schema vollstaendig ist, die Daten vollstaendig sind, die Audit-Hash-Kette im wiederhergestellten Bestand intakt ist, und der WORM-Audit gruen laeuft |
+| **B — Produktion** (unten, Hetzner-Snapshot) | das **Produktions-Backup** selbst | nach DR-Plan, manuell durch Ops | dass das konkrete Snapshot existiert und brauchbar ist |
+
+**Die CI kann Ebene B nicht beweisen** — sie hat kein Produktions-Backup. Das
+ist keine Luecke im Test, sondern seine Grenze, und sie steht als solche im
+Skript (`backend/scripts/restore-test.sh`, Kopfkommentar) und in der
+Audit-Dokumentation.
+
+Der Test laeuft lokal genauso:
+
+```bash
+cd backend
+SOURCE_DATABASE_URL=... TARGET_DATABASE_URL=... \
+  START_BACKEND=1 INTEGRITY_EMAIL=... INTEGRITY_PASSWORD=... \
+  bash scripts/restore-test.sh
+```
+
+Er ist **portabel**: der PostgreSQL-Client muss nicht installiert sein
+(`PG_CLIENT="docker exec -i <container>"`).
+
+### 4.1 Produktionslauf (Hetzner-Snapshot) — Ebene B
+
 **Monatlicher Test-Plan** (1. Sonntag im Monat, 02:00 UTC):
 
 ```bash

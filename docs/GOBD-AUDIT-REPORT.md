@@ -3367,7 +3367,7 @@ rot**, darunter exakt der aus der CI.
 | TODO-8.3 | Externer GoBD-Auditor beauftragen | Geschäftsführung | Q4/2026 |
 | TODO-8.4 | Schema-Migration für Audit-Hash-Chain ausführen | DevOps | nach Pilot-Phase-2-Ende |
 | TODO-8.5 | Cross-Region-Replikation (S3 + DB) | DevOps | Sprint 5+ |
-| TODO-8.6 | Automatisierter monatlicher Restore-Test in CI | DevOps | Sprint 5+ |
+| ~~TODO-8.6~~ | ~~Automatischer monatlicher Restore-Test in CI~~ — **erledigt in Nachtrag 65**: `.github/workflows/restore-test.yml` laeuft **monatlich** (1. um 02:17 UTC) und auf Zuruf: Dump → Restore → Pruefung (alle Migrationen angewendet, Zeilenzahlen aller 28 Tabellen, Audit-Hash-Kette im wiederhergestellten Bestand **intakt**, WORM-Audit gruen). Das Skript `backend/scripts/restore-test.sh` ist versioniert und lokal lauffaehig. **Die Grenze ist ausdruecklich:** die CI beweist die **Prozedur**, nicht das Produktions-Backup — das prueft der Produktionslauf (Hetzner-Snapshot, DR-Plan Abschnitt 4) | DevOps | erledigt (Produktionslauf bleibt Ops) |
 | ~~TODO-8.7~~ | ~~`assertMandantAccess` in 10 Services — Tiefenschutz oder toter Code?~~ — **erledigt in Nachtrag 58**: es war **weder** Tiefenschutz **noch** toter Code, sondern **zwoelfmal derselbe Code** (12 Kopien in 12 Services). Die Antwort auf die gestellte Frage ist damit eine dritte: *ungenutzter Tiefenschutz*. Jetzt gibt es **eine** Implementierung (`common/utils/mandant-zugriff.ts`), und ein Test beweist, dass sie greift, wenn der Guard umgangen wird | — | erledigt |
 | ~~TODO-8.8~~ | ~~Audit-Trail "fire and forget" (51 Stellen)~~ — **erledigt in Nachtrag 56**: gemessen über die öffentliche API fehlte der Audit-Eintrag in **80 %** der Fälle, wenn die Antwort beim Client war; weitere 15 % hatten noch keinen Hash. Behoben: alle 51 Aufrufstellen warten jetzt, die Hash-Kette wartet auf den eigenen Eintrag, und `/health/ready` meldet das Alter des ältesten ungehashten Eintrags. Die in Nachtrag 31 vorgeschlagene **Transaktion** (Fachvorgang + Audit atomar) bleibt als Restidee dokumentiert — sie widerspricht der Reihenfolge der Hash-Kette | — | erledigt |
 | ~~TODO-8.9~~ | ~~Entwurfs-PDF: darf ein DRAFT mit 10-Jahres-Object-Lock im Beweis-Archiv landen?~~ — **erledigt in Nachtrag 61**: **Variante b** (vom Nutzer bestaetigt): Entwuerfe bekommen einen eigenen `entityType` (`*_PDF_ENTWURF`), einen eigenen Key-Praefix (`entwuerfe/mandant/…`) und **keinen** Object-Lock. Ein Entwurf ist ein Arbeitsstand — er wird geaendert, verworfen, neu erzeugt; unwiderruflich archiviert waere er ein „Beweis" fuer einen Stand, den niemand freigegeben hat. Die Gegenprobe (VALIDATED) geht unveraendert ins Beweis-Archiv | — | erledigt |
@@ -6222,6 +6222,107 @@ Datenbank, 60 abwechselnde Schreibvorgaenge je Lauf, vier Laeufe,
 
 Die Aussage ist damit keine mehr ueber einen Codestand, den es nicht mehr
 gibt.
+
+---
+
+### Nachtrag 2026-10-20 (Nachtrag 65): Der monatliche Restore-Test war ein **Handskript**, das niemand ausführte
+
+#### Der Befund
+
+TODO-8.6 verlangte einen *automatisierten* monatlichen Restore-Test in CI.
+Der DR-Plan (`docs/DISASTER-RECOVERY.md`, Abschnitt 4) beschrieb einen
+solchen Test — als **Handskript auf dem Produktionshost**:
+
+```bash
+#!/usr/bin/env bash
+# /opt/banz/scripts/monthly-restore-test.sh
+SNAPSHOT=$(hcloud snapshot list -o json | ...)
+hcloud volume create --name banz-restore-test-$RANDOM ...
+```
+
+Drei Eigenschaften, die zusammen den Befund ergeben:
+
+1. **Es liegt nicht im Repository.** Das Skript existierte nur auf einem
+   Host, dessen Inhalt niemand versioniert hat. Ein Fehler darin fiel erst
+   im Ernstfall auf — also genau dann, wenn er teuer ist.
+2. **Es läuft nicht von allein.** Ohne Cron-Eintrag auf dem Host wird es
+   nicht ausgeführt; und der Erfolg wird nur in
+   `/var/log/banz-restore-test.log` protokolliert — den niemand liest.
+3. **Der Erfolg war nicht prüfbar.** Ein „grün" gab es nur als Zeile in
+   einem Logfile auf einem fremden Rechner.
+
+Ein Aufbewahrungsnachweis, der von einem Handgriff auf einem Host abhängt,
+ist kein Nachweis.
+
+#### Die Behebung: zwei Ebenen, klar getrennt
+
+| Ebene | Was | Wie oft | Beweist |
+|---|---|---|---|
+| **A — CI** | die **Prozedur** | monatlich, automatisch | dass Dump/Restore/Prüfung funktionieren |
+| **B — Produktion** | das **Produktions-Backup** | nach DR-Plan, manuell durch Ops | dass das konkrete Snapshot existiert und brauchbar ist |
+
+**Ebene A** ist neu: `.github/workflows/restore-test.yml` — monatlich (1. um
+02:17 UTC) und auf Zuruf. Sie führt `backend/scripts/restore-test.sh` aus,
+das prüft:
+
+1. **Schema**: jede Migration aus `prisma/migrations/` ist im wiederhergestellten
+   Schema als angewendet vermerkt. Ein Schema, das einen Migrationsschritt
+   verpasst, ist bei einer Wiederherstellung der **schlimmste Fall**: Die
+   Anwendung startet, liest ein älteres Schema und schreibt in Spalten, die
+   es noch nicht gibt.
+2. **Daten**: die Zeilenzahlen aller Tabellen stimmen überein. Der Vergleich
+   läuft über das `information_schema` — **nicht** über eine handgepflegte
+   Tabellenliste; eine Liste veraltet, sobald jemand ein Modell einführt.
+3. **Audit-Hash-Kette**: der wiederhergestellte Bestand wird über die
+   **echte** Route `GET /api/audit/integrity` geprüft — mit dem Produktivcode,
+   nicht mit einer Nachbildung in SQL. (Nachtrag 54: „Wer eine Funktion zum
+   Vergleich nachbaut, misst die Nachbildung.")
+4. **Gegenprobe**: `entriesChecked` muss zur Zahl der Audit-Zeilen in der
+   Ziel-Datenbank passen. Ohne diese Prüfung könnte ein Backend, das die
+   *Quell*-Datenbank liest, ein grünes Ergebnis liefern — der Test würde
+   genau die Datenbank prüfen, die er nicht prüfen soll.
+5. **WORM-Audit**: `audit-worm-retention.sh` läuft gegen die wiederhergestellte
+   Datenbank.
+
+**Ebene B** bleibt der Handskript-Teil im DR-Plan — er braucht
+Hetzner-Zugangsdaten und ein echtes Produktions-Backup. Das kann die CI
+nicht leisten, und der Unterschied ist im Skript und in beiden Dokumenten
+**ausdrücklich** ausgewiesen.
+
+#### Lokal gemessen
+
+Der vollständige Lauf wurde lokal gefahren (Docker-Postgres auf :55432, ein
+zweiter Datenbank-Server als Ziel):
+
+```
+ OK Dump erstellt (810017 Bytes)
+ OK Restore abgeschlossen
+ OK alle Migrationen angewendet
+ OK alle Zeilenzahlen stimmen (28 Tabellen)
+ OK das Backend laeuft gegen die Ziel-Datenbank
+ OK Token geholt
+ OK die Kette ist intakt — {"status":"OK","entriesChecked":525, ...}
+ OK das Backend hat die Ziel-Datenbank gelesen (525 Eintraege)
+ OK der WORM-Audit ist gruen
+```
+
+**Und zwei Fehler, die der erste Lauf gefunden hat** (und die ein
+ungetestetes Skript nicht gefunden hätte):
+
+- `pg_dump: error: invalid URI query parameter: "schema"` — `?schema=public`
+  ist ein **Prisma**-Parameter; PostgreSQL kennt ihn nicht. Die URL wird
+  jetzt bereinigt.
+- Das Backend startete nicht: `JWT_SECRET nicht konfiguriert` — und in einem
+  zweiten Lauf `P1000: Authentication failed`, weil der pg-Client **im**
+  Container (Port 5432) und die Anwendung auf dem **Host** (Port 55432)
+  laufen. Dafür gibt es jetzt `APP_DATABASE_URL` — **plus** die Gegenprobe aus
+  Punkt 4, die genau diesen Fehler erkennt.
+
+#### Merksatz
+
+Ein Test, der von einem Handgriff auf einem Host abhängt, ist kein Test. Er
+ist ein Wunsch. Und ein grünes Ergebnis, das niemand liest, ist kein
+Nachweis.
 
 ---
 

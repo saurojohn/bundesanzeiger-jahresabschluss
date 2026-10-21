@@ -7303,6 +7303,17 @@ Zielmandanten gelten", sondern „**bei Schreibvorgängen** muss die Rolle
 gelten, die der Vorgang verlangt". Lesevorgänge brauchen Zugriff, keine
 Kanzleizustaendigkeit.
 
+#### Landkarte der Familie
+
+Die systematische Suche nach der Familie ergab: **entscheidend ist, woher
+eine Route ihre mandantId nimmt.**
+
+| Quelle der mandantId | Rolle geprueft auf | Status |
+|---|---|---|
+| Kontext (`@MandantId()`, Header/Query) | demselben Mandanten | korrekt — u. a. `einreichen`, `veroeffentlichen`, DATEV-Export, `bilanz`/`guv`/`anhang` (lehnen zusaetzlich eine abweichende Body-mandantId mit 400 ab) |
+| **Body** (`dto.mandantId`) | dem **Kontext**-Mandanten | **Bruch** — behoben in `signatur` (N73) und `datev-import` (N74) |
+| Body, aber **Lesevorgang** | dem Kontext-Mandanten | bewusst unveraendert: `pdf` — der WP eines Mandanten muss dessen PDF erzeugen koennen, um es zu pruefen und zu signieren |
+
 #### Die Negativprobe
 
 Alte Regel (Pruefung entfernt):

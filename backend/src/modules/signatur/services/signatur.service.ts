@@ -45,6 +45,7 @@ import type { LegalValidity } from '../interfaces/signature.types';
 import { TsaClientService } from './tsa-client.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
+import { assertRolleAufMandant } from '../../../common/utils/mandant-rolle';
 
 /**
  * Request-Context für Signatur-Endpoints.
@@ -754,6 +755,30 @@ export class SignaturService {
   // ===========================================================================
 
   /**
+   * Die Rolle muss auf dem **Ziel-Mandanten** gelten.
+   *
+   * BEFUND 2026-10-21 (Nachtrag 73): siehe die Begruendung in
+   * `signInternal`.
+   */
+  private assertSignaturRolle(
+    entityType: SignedEntityType,
+    mandantId: string,
+    user: AuthUser,
+  ): void {
+    const istAbschluss = entityType === 'Abschluss';
+    assertRolleAufMandant(
+      mandantId,
+      istAbschluss
+        ? ['WIRTSCHAFTSPRUEFER']
+        : ['WIRTSCHAFTSPRUEFER', 'STEUERBERATER'],
+      user,
+      istAbschluss
+        ? 'Den Jahresabschluss darf nur ein Wirtschaftsprüfer für diesen Mandanten signieren'
+        : 'Dieses Dokument darf nur von einem Wirtschaftsprüfer oder Steuerberater für diesen Mandanten signiert werden',
+    );
+  }
+
+  /**
    * Zentrale Signatur-Pipeline. PDF-Service generiert das PDF, dann
    * signieren wir es via @signpdf und legen das Ergebnis in WORM ab.
    */
@@ -777,6 +802,33 @@ export class SignaturService {
 
     // 1) Mandant-Trennung
     assertMandantAccess(args.mandantId, user);
+
+    // 1b) Rolle AUF DEM ZIEL-MANDANTEN.
+    //
+    // BEFUND 2026-10-21 (Nachtrag 73): Der `RolesGuard` prueft die Rolle auf
+    // dem **Kontext-Mandanten** (x-mandant-id) — nicht auf dem Ziel. Die
+    // Service-Ebene pruefte bisher nur den *Zugriff* auf das Ziel
+    // (`assertMandantAccess`: irgendeine Rolle genuegt). Die beiden Pruefungen
+    // zusammen belegten nicht „Rolle fuer diesen Mandanten".
+    //
+    // **Gemessen.** Ein User, der in Mandant A Wirtschaftspruefer und in
+    // Mandant B nur STEUERBERATER ist, hat den **Jahresabschluss** von
+    // Mandant B signiert:
+    //
+    //     POST /api/signatur/sign-abschluss (Kontext = A) -> HTTP 200
+    //     Signaturen am Abschluss: 1
+    //
+    // Eine qeS nach § 126 AO ersetzt die eigenhaendige Unterschrift. Sie
+    // bescheinigt eine Endabnahme durch einen fuer diesen Mandanten
+    // bestellten Wirtschaftspruefer (IDW PS 880). Ausgestellt wurde sie hier
+    // von jemandem, der fuer Mandant B der **Ersteller** ist.
+    //
+    // Die Ebenen unterscheiden sich (Nachtrag 60): der **Jahresabschluss**
+    // ist die Endabnahme — da darf nur ein Wirtschaftspruefer des Mandanten
+    // signieren. Ein **Bestandteil** (Bilanz/GuV/Anhang) darf auch vom
+    // Steuerberater des Mandanten signiert werden; die Signatur wird dann
+    // als `signaturEbene: BESTANDTEIL` erfasst und ist **keine** Endabnahme.
+    this.assertSignaturRolle(entityType, args.mandantId, user);
 
     // 2) P12-Parsing
     const p12Buffer = Buffer.from(args.p12Base64, 'base64');

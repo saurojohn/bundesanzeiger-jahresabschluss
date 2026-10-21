@@ -7171,6 +7171,89 @@ Mandanten zeigte).
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 73): Eine qeS nach § 126 AO auf den Jahresabschluss — ausgestellt von jemandem, der dort nur Berater ist
+
+#### Der Befund
+
+Der schwerste Fall derselben Familie. `POST /api/signatur/sign-abschluss`
+ist WP-only (Endabnahme). Aber:
+
+- der `RolesGuard` prueft die Rolle auf dem **Kontext-Mandanten**
+  (`x-mandant-id`) — nicht auf dem Ziel;
+- der `SignaturService` prueft `assertMandantAccess(args.mandantId, user)` —
+  den **Zugriff** auf das Ziel, nicht die Rolle.
+
+Der Kontext-Header steht in der Praezedenz **vor** dem Body. Ein Client darf
+ihn auf einen beliebigen Mandanten setzen. Damit war die Rollenpruefung des
+Guards am Kontext, das Ziel aber im Body — und die Service-Ebene pruefte
+nur den Zugriff.
+
+**Gemessen.** Ein User, der in Mandant A (Demo GmbH) Wirtschaftspruefer und
+in Mandant B (Beispiel GmbH) nur STEUERBERATER ist, signiert den
+**Jahresabschluss** von Mandant B:
+
+```
+POST /api/signatur/sign-abschluss (Kontext = A) -> HTTP 200
+  signatureId: 7579db83-…
+Signaturen am Abschluss: 1
+```
+
+Eine qeS nach § 126 AO **ersetzt die eigenhaendige Unterschrift**. Sie
+bescheinigt die Endabnahme durch einen fuer diesen Mandanten bestellten
+Wirtschaftspruefer (IDW PS 880). Ausgestellt wurde sie hier von jemandem,
+der fuer Mandant B der **Ersteller** ist — der Berater, der den Abschluss
+vorbereitet hat, bescheinigt ihn.
+
+#### Die Behebung
+
+`signInternal()` prueft jetzt die Rolle **auf dem Ziel-Mandanten** — und
+unterscheidet dabei die beiden Ebenen (Nachtrag 60):
+
+| Ebene | Signiert | Rolle auf dem Mandanten |
+|---|---|---|
+| `ABSCHLUSS` (Jahresabschluss) | Endabnahme | nur WIRTSCHAFTSPRUEFER |
+| `BESTANDTEIL` (Bilanz/GuV/Anhang) | Pruefung eines Bestandteils | WIRTSCHAFTSPRUEFER oder STEUERBERATER |
+
+Die Komponentensignatur durch den Steuerberater bleibt erlaubt — sie wird
+als `signaturEbene: BESTANDTEIL` erfasst und ist **keine** Endabnahme. Das
+ist die dokumentierte Produktentscheidung (Nachtrag 60), keine neue Regel.
+
+#### Die Negativprobe
+
+Alte Regel (Pruefung entfernt), dieselbe Messung wiederholt:
+
+```
+signiert keinen Jahresabschluss ... -> HTTP 200 mit signatureId   erwartet 403
+Gegenprobe: der WP des Mandanten darf signieren -> gruen
+```
+
+**Die Gegenprobe brauchte einen eigenen Jahresabschluss.** Das Signieren
+setzt den Abschluss auf `SIGNED` — mit einem gemeinsamen Abschluss lief die
+Gegenprobe im Negativproben-Lauf an einem bereits signierten Abschluss und
+scheiterte mit 409 „steht auf SIGNED": **rot, aber aus dem falschen Grund**.
+Zwei Tests, zwei Abschluesse.
+
+#### Der Test
+
+`e2e/signatur-mandantenrolle.e2e.spec.ts` (2 Tests): die Negativprobe
+(403, **keine** Signatur in der Datenbank) und die Gegenprobe (der
+Wirtschaftspruefer des Mandanten signiert, die Signatur existiert).
+
+**Merksatz:** Bei E2E-Tests, die einen Zustandsuebergang ausloesen
+(`DRAFT -> SIGNED`, `DRAFT -> APPROVED`, Loeschen), braucht jeder Test einen
+eigenen Datensatz. Sonst misst der zweite Test den Zustand des ersten.
+
+**Merksatz:** Ein *gerechnetes* Geschäftsjahr (`2050 + Date.now() % 40`) ist
+kein freies Jahr. Die anderen Specs raeumen ihre Daten erst im `afterAll` ab,
+und der Jahresabschluss hat einen Unique-Constraint auf
+(mandantId, geschaeftsjahr) — im Voll-Lauf kollidierte das zweite Jahr
+mit dem Rest eines anderen Specs (409), der Abschluss blieb leer, und der
+Test scheiterte an einer **leeren ID** statt an seiner eigentlichen
+Behauptung. Die beiden Specs suchen ihre Jahre jetzt aktiv (frei in
+Bilanz, GuV, Anhang **und** Jahresabschluss).
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

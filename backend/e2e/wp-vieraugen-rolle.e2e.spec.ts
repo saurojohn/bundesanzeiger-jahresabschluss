@@ -65,6 +65,37 @@ describe('Vier-Augen-Prinzip: der Pruefer muss WP des Mandanten sein (Nachtrag 7
    */
   const angelegteRollenIds: string[] = [];
 
+
+  /**
+   * Freie Geschaeftsjahre suchen.
+   *
+   * Die Belegung durch die anderen Specs ist nicht vorhersehbar — sie raeumen
+   * ihre Daten erst im `afterAll` ab, und der Jahresabschluss hat einen
+   * Unique-Constraint auf (mandantId, geschaeftsjahr). Ein gerechnetes Jahr
+   * (`2050 + Date.now() % 40`) ist deshalb **nicht** sicher: im Voll-Lauf
+   * kollidierte es mit dem Rest eines anderen Specs (409), der zweite
+   * Jahresabschluss blieb leer — und der Test scheiterte an einer leeren ID
+   * statt an der eigentlichen Behauptung.
+   *
+   * Gesucht wird deshalb ein Jahr, in dem **keiner** der vier Saetze liegt.
+   */
+  const freieJahre = async (anzahl: number): Promise<number[]> => {
+    const jahre: number[] = [];
+    for (let jahr = 2050; jahr <= 2099 && jahre.length < anzahl; jahr++) {
+      const [bilanzen, guvs, anhaenge, abschluesse] = await Promise.all([
+        prisma.bilanz.count({ where: { mandantId: mandantBId, geschaeftsjahr: jahr } }),
+        prisma.guV.count({ where: { mandantId: mandantBId, geschaeftsjahr: jahr } }),
+        prisma.anhang.count({ where: { mandantId: mandantBId, geschaeftsjahr: jahr } }),
+        prisma.jahresabschluss.count({ where: { mandantId: mandantBId, geschaeftsjahr: jahr } }),
+      ]);
+      if (bilanzen + guvs + anhaenge + abschluesse === 0) jahre.push(jahr);
+    }
+    if (jahre.length < anzahl) {
+      throw new Error(`keine ${anzahl} freien Geschaeftsjahre fuer den Test`);
+    }
+    return jahre;
+  };
+
   const login = async (email: string) => {
     const r = await fetch(`${BASE}/api/auth/login`, {
       method: 'POST',
@@ -134,7 +165,7 @@ describe('Vier-Augen-Prinzip: der Pruefer muss WP des Mandanten sein (Nachtrag 7
     );
 
     // Eine Bilanz in Mandant B (P1 ist dort STEUERBERATER und darf anlegen).
-    jahr = 2050 + (Date.now() % 40);
+    [jahr] = await freieJahre(1);
     const token = await login('steuerberater@kanzlei.de');
     const res = await fetch(`${BASE}/api/bilanz?mandantId=${mandantBId}`, {
       method: 'POST',

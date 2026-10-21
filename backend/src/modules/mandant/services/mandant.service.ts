@@ -202,9 +202,10 @@ export class MandantService {
     // "Mandant erstellt" meldete. Anlegen schien wirkungslos.
     //
     // Der Rest des Moduls behandelt KANZLEI_ADMIN als kanzleiweite Rolle
-    // (assertKanzleiAdminAccess, branding.service, subscription.service,
-    // domain-verification.service, api-key.service). Die Liste war die
-    // einzige Stelle mit der engeren Regel — sie wird jetzt angeglichen.
+    // (branding.service, subscription.service, domain-verification.service,
+    // api-key.service). Die Liste war die einzige Stelle mit der engeren
+    // Regel — sie wird jetzt angeglichen. Und: „kanzleiweit" heisst seit
+    // Nachtrag 71/70 **Admin in dieser Kanzlei**, nicht „Admin irgendwo".
     const istSystemAdmin = user.globalRole === 'SYSTEM_ADMIN';
     //
     // BEFUND 2026-10-20 (Nachtrag 68): „Admin IRGENDWO" und „Kanzlei des
@@ -395,7 +396,13 @@ export class MandantService {
   }
 
   /**
-   * Löscht einen Mandanten. Nur KANZLEI_ADMIN oder SYSTEM_ADMIN.
+   * Löscht einen Mandanten. Nur KANZLEI_ADMIN der **Kanzlei des Mandanten**
+   * oder SYSTEM_ADMIN.
+   *
+   * BEFUND 2026-10-21 (Nachtrag 71): Vorher genuegte „Admin IRGENDWO" —
+   * ein STEUERBERATER konnte einen eigenen Mandanten loeschen, weil er in
+   * einer anderen Kanzlei Admin ist. Siehe
+   * `assertKanzleiAdminFuerMandant()`.
    *
    * BEFUND 2026-10-09 — `prisma.mandant.delete()` ist ein HARD DELETE, und
    * das Schema haengt per `onDelete: Cascade` an:
@@ -440,12 +447,11 @@ export class MandantService {
    */
   async delete(id: string, user: AuthUser, context: MandantContext): Promise<void> {
     await this.assertMandantAccess(id, user);
-    if (user.globalRole !== 'SYSTEM_ADMIN') {
-      const isKanzleiAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
-      if (!isKanzleiAdmin) {
-        throw new ForbiddenException('Nur KANZLEI_ADMIN darf Mandanten löschen');
-      }
-    }
+    // BEFUND 2026-10-21 (Nachtrag 71): „Admin IRGENDWO" war hier eine
+    // Rolleneskalation — ein STEUERBERATER konnte einen eigenen Mandanten
+    // loeschen, weil er in einer anderen Kanzlei Admin ist. Jetzt zaehlt
+    // nur die Admin-Rolle in der **Kanzlei des Ziel-Mandanten**.
+    await this.assertKanzleiAdminFuerMandant(id, user);
     const before = await this.prisma.mandant.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Mandant nicht gefunden');
 
@@ -540,7 +546,8 @@ export class MandantService {
     context: MandantContext,
   ): Promise<Mandant> {
     await this.assertMandantAccess(id, user);
-    this.assertKanzleiAdmin(user);
+    // BEFUND 2026-10-21 (Nachtrag 71): siehe `assertKanzleiAdminFuerMandant`.
+    await this.assertKanzleiAdminFuerMandant(id, user);
 
     const before = await this.prisma.mandant.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Mandant nicht gefunden');
@@ -584,7 +591,8 @@ export class MandantService {
     context: MandantContext,
   ): Promise<Mandant> {
     await this.assertMandantAccess(id, user);
-    this.assertKanzleiAdmin(user);
+    // BEFUND 2026-10-21 (Nachtrag 71): siehe `assertKanzleiAdminFuerMandant`.
+    await this.assertKanzleiAdminFuerMandant(id, user);
 
     const before = await this.prisma.mandant.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Mandant nicht gefunden');
@@ -614,13 +622,54 @@ export class MandantService {
     return updated;
   }
 
-  /** KANZLEI_ADMIN oder SYSTEM_ADMIN — wie beim Loeschen. */
-  private assertKanzleiAdmin(user: AuthUser): void {
+  /**
+   * KANZLEI_ADMIN **dieser Kanzlei** — nicht "Admin irgendwo".
+   *
+   * BEFUND 2026-10-21 (Nachtrag 71): `delete()` und `archivieren()` prueften
+   * nach dem Zugriff nur noch „hat der User irgendwo KANZLEI_ADMIN?". Der
+   * Zugriffstest `assertMandantAccess()` laesst aber **eigene** Mandanten
+   * zu — mit jeder Rolle. Die Kombination war eine Rolleneskalation:
+   *
+   * **Gemessen.** Ein User, der in der Kanzlei B STEUERBERATER ist (eigener
+   * Mandant „Aaa GmbH") und in der Kanzlei A KANZLEI_ADMIN:
+   *
+   *     DELETE /api/mandant/<Aaa>  -> HTTP 204, der Mandant ist GELOESCHT
+   *
+   * Ein Loeschen ist eine KANZLEI_ADMIN-Aktion (§ 147 AO: Loeschpfad nur
+   * fuer Mandanten ohne Aufbewahrung). Hier hat sie ein STEUERBERATER
+   * ausgefuehrt — auf einem Mandanten, an dem er nur Berater ist.
+   *
+   * Der Kontext-Header war dabei nicht der Ausloeser: der `RolesGuard`
+   * laesst den User durch, wenn er die Rolle auf dem **Kontext-Mandanten**
+   * hat. Mit dem Kontext auf einen eigenen Admin-Mandanten ist diese
+   * Bedingung erfuellt, geprueft wurde aber der **Ziel**-Mandant.
+   *
+   * Die Regel jetzt: loeschen und archivieren darf nur, wer KANZLEI_ADMIN
+   * in der **Kanzlei des Ziel-Mandanten** ist. Das ist dieselbe Bindung
+   * wie beim Branding (Nachtrag 71) und wie bei Subscription, API-Keys,
+   * Webhooks und Custom-Domain.
+   */
+  private async assertKanzleiAdminFuerMandant(
+    mandantId: string,
+    user: AuthUser,
+  ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    if (user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN')) return;
-    throw new ForbiddenException(
-      'Nur KANZLEI_ADMIN darf einen Mandanten archivieren oder die Archivierung aufheben',
-    );
+    const { adminKanzleiIds } = await this.rollenBindung(user);
+    if (adminKanzleiIds.length === 0) {
+      throw new ForbiddenException(
+        'Nur KANZLEI_ADMIN dieser Kanzlei darf den Mandanten verwalten',
+      );
+    }
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { kanzleiId: true },
+    });
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+    if (!adminKanzleiIds.includes(mandant.kanzleiId)) {
+      throw new ForbiddenException(
+        'Nur KANZLEI_ADMIN dieser Kanzlei darf den Mandanten verwalten',
+      );
+    }
   }
 
   /**

@@ -6949,6 +6949,140 @@ entschied niemand. Der Beleg ist der Code, nicht der Kommentar.
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 71): Zwei weitere Stellen mit „Admin IRGENDWO" — fremdes Branding geaendert, fremder Mandant geloescht
+
+#### Der Befund
+
+Der Defekt vom 2026-10-11 („Admin **IRGENDWO**" statt „Admin **IN** dieser
+Kanzlei") war in vier Services behoben worden — Subscription, API-Keys,
+Webhooks, Custom-Domain — mit dem gemeinsamen Helfer
+`assertAdminInKanzlei()`. **Zwei Stellen blieben stehen.**
+
+**1. Branding.** `branding.service.ts` -> `assertKanzleiAccess()`:
+
+```ts
+const isKanzleiAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+// "Admin IRGENDWO"
+const mandant = await this.prisma.mandant.findFirst({
+  where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+});
+// "hat einen Mandanten in der Ziel-Kanzlei"
+```
+
+Zusammen belegen die beiden Pruefungen **nicht** „Admin in der
+Ziel-Kanzlei". Wer in Kanzlei A KANZLEI_ADMIN ist und in Kanzlei B nur
+STEUERBERATER (dort einen Mandanten hat), besteht beide fuer Kanzlei B.
+
+```
+PATCH /api/branding/<Kanzlei B>   -> HTTP 200
+primaryColor der Kanzlei B vorher : #123456
+primaryColor der Kanzlei B danach : #ff0000
+```
+
+Das Branding ist die **White-Label-Identitaet** der Kanzlei (Logo, Farben,
+Custom-Domain) — der fremde Mandant sieht sie auf seinen Abschluessen.
+
+**2. Loeschen und Archivieren.** `mandant.service.ts` ->
+`delete()` / `archivieren()`: `assertMandantAccess()` laesst **eigene**
+Mandanten zu (mit jeder Rolle), danach wurde nur noch „Admin IRGENDWO"
+geprueft. Das ist eine **Rolleneskalation**:
+
+```
+DELETE /api/mandant/<Aaa>   -> HTTP 204, der Mandant ist GELOESCHT
+```
+
+Ausgefuehrt von einem STEUERBERATER, der in der Kanzlei des Mandanten nur
+Berater ist (und in einer anderen Kanzlei Admin). Ein Loeschen ist eine
+KANZLEI_ADMIN-Aktion (§ 147 AO: Loeschpfad nur fuer Mandanten ohne
+Aufbewahrung).
+
+#### Die Messung, die fast falsch war
+
+Die erste Branding-Messung endete mit **HTTP 402** — „Tarif Pilot enthaelt
+white-label-branding nicht". Das **Tarif-Gate** stand vor der Rechtepruefung.
+Ohne eine PREMIUM-Kanzlei B waere der Befund **unbewiesen** geblieben — und
+die naheliegende Fehldeutung gewesen: „die Rechtepruefung greift".
+
+**Merksatz:** Ein Gate, das frueher greift, verdeckt das Gate dahinter.
+Wenn eine Messung an einem Gate (Tarif, Quota, Zustaendigkeit) haengen
+bleibt, ist das Ergebnis **kein** Befund — es ist eine nicht ausgefuehrte
+Messung. Erst das Gate aus dem Weg (PREMIUM-Kanzlei), dann messen.
+
+#### Die Behebung
+
+Beide Stellen benutzen jetzt **eine** Bindung:
+
+- Branding: `assertAdminInKanzlei()` aus `common/utils/kanzlei-rolle.ts` —
+  derselbe Helfer wie in den vier bereits gefixten Services.
+- Mandant: `assertKanzleiAdminFuerMandant()` — der User muss KANZLEI_ADMIN in
+  der **Kanzlei des Ziel-Mandanten** sein (`rollenBindung()`, dieselbe
+  Bindung wie die Liste seit Nachtrag 68).
+
+Die tote Methode `assertKanzleiAdmin()` („Admin IRGENDWO") ist entfernt.
+
+#### Die Negativprobe
+
+Beide Fixes zurueckgebaut, dieselbe Messung wiederholt:
+
+```
+aendert das Branding einer fremden Kanzlei nicht -> HTTP 200   (erwartet 403)
+loescht einen eigenen Mandanten nicht          -> HTTP 204   (erwartet 403)
+archiviert einen eigenen Mandanten nicht       -> HTTP 200   (erwartet 403)
+Gegenprobe Branding der eigenen Kanzlei         -> gruen
+Gegenprobe Loeschen in der eigenen Kanzlei      -> gruen
+```
+
+Die erste Fassung der Negativprobe hatte **einen** gemeinsamen Mandanten fuer
+Loeschen und Archivieren. Ergebnis: der Archiv-Test wurde „Mandant nicht
+gefunden" (404) statt 403 — **rot, aber aus dem falschen Grund**: der
+Loesch-Test hatte den Mandanten schon vernichtet. Jede Negativprobe hat jetzt
+ihren eigenen Mandanten.
+
+#### Der Test
+
+`e2e/kanzlei-admin-rolle.e2e.spec.ts` (5 Tests): drei Negativpruefungen
+(Branding, Loeschen, Archivieren — jeweils mit Zustandsbeleg) und **zwei
+Gegenproben** (Branding und Loeschen in der eigenen Admin-Kanzlei bleiben
+moeglich).
+
+**Merksatz:** Ein Fix, der eine Rolle an eine Kanzlei bindet, gehoert an
+**jede** Stelle, die diese Rolle prueft. Die Liste, das Anlegen, das
+Schreiben, das Loeschen, das Archivieren, das Branding — das sind sechs
+Stellen mit derselben Frage. Vier wurden 2026-10-11 gefixt, zwei blieben
+stehen. Die Zahl der bereits gefixten Stellen sagt nichts ueber die Zahl der
+noch offenen.
+
+#### Bekannte Einschraenkung: Arbeitsbereich statt Kanzlei-Kontext
+
+Bei den Modulen **Webhook, API-Keys, Custom-Domain und Subscription**
+bestimmt der Controller den Arbeitsbereich ueber `resolveKanzleiId(user)` —
+die Kanzlei des **ersten** Mandanten des Users (Sortierung: Firmenname).
+Der Service prueft die Admin-Rolle anschliessend korrekt **in dieser
+Kanzlei** (`assertAdminInKanzlei()`).
+
+**Gemessen.** Ein KANZLEI_ADMIN der Kanzlei A, dessen erster Mandant in der
+Kanzlei B liegt (dort STEUERBERATER):
+
+```
+GET /api/api-keys   -> HTTP 403 "Nur KANZLEI_ADMIN dieser Kanzlei darf API-Keys verwalten"
+```
+
+Er erreicht also seine **eigene** Admin-Kanzlei A nicht — der Arbeitsbereich
+zeigt auf B, und in B ist er kein Admin. Das ist **fail-closed** (keine
+Rechteausweitung), aber eine funktionale Luecke: wer Admin in mehreren
+Kanzleien ist, kann nur diejenige verwalten, in der sein erster Mandant
+liegt.
+
+**Bewusst nicht behoben.** Die Frage „welche Kanzlei ist gemeint?" ist eine
+Produktfrage: ein Kanzlei-Waehler in der Oberflaeche, oder der
+Mandanten-Kontext (`x-mandant-id`) als Quelle? Beides aendert das
+Datenmodell oder den API-Vertrag und ist damit eine Entscheidung der
+Kanzlei-/Compliance-Seite, keine Korrektur eines Fehlers. Der Bericht
+schreibt es als **offenen Punkt** fest, damit es bei der Pilotierung
+auffaellt und nicht erst bei einem Kunden.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

@@ -16,6 +16,7 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import type { UpdateBrandingDto } from '../dto/update-branding.dto';
 import { ALLOWED_LOGO_MIME_TYPES } from '../dto/upload-logo.dto';
 import { assertFeatureEntitled } from '../../../common/utils/entitlements';
+import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
 
 /**
  * Default-Branding (Backwards-Compat).
@@ -513,26 +514,48 @@ export class BrandingService {
     user: AuthUser,
   ): Promise<void> {
     if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const isKanzleiAdmin = user.mandanten.some(
-      (m) => m.rolle === 'KANZLEI_ADMIN',
-    );
-    if (!isKanzleiAdmin) {
-      throw new ForbiddenException(
-        'Nur KANZLEI_ADMIN oder SYSTEM_ADMIN darf Branding ändern',
-      );
-    }
-    // Gleiche Auflösung wie assertKanzleiReadAccess: hat der User einen
-    // Mandanten in dieser Kanzlei?
-    const mandant = await this.prisma.mandant.findFirst({
-      where: {
-        kanzleiId,
-        id: { in: user.mandanten.map((m) => m.id) },
-      },
+
+    //
+    // BEFUND 2026-10-21 (Nachtrag 71): Hier standen zwei Pruefungen, die
+    // getrennt geprueft wurden und zusammen etwas anderes behaupteten als
+    // das, was der Code tun sollte:
+    //
+    //     const isKanzleiAdmin = user.mandanten.some((m) => m.rolle === 'KANZLEI_ADMIN');
+    //     // "Admin IRGENDWO"
+    //     ...
+    //     const mandant = await this.prisma.mandant.findFirst({
+    //       where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
+    //     });
+    //     // "hat einen Mandanten in der Ziel-Kanzlei"
+    //
+    // Zusammen belegen sie **nicht** „Admin IN dieser Kanzlei". Wer in
+    // Kanzlei A KANZLEI_ADMIN ist und in Kanzlei B nur STEUERBERATER (dort
+    // einen Mandanten hat), besteht beide Pruefungen fuer Kanzlei B.
+    //
+    // **Gemessen:** PATCH /api/branding/<Kanzlei B> -> HTTP 200, die
+    // `primaryColor` der Kanzlei B wurde von #123456 auf #ff0000 gesetzt.
+    // Das Branding ist die **White-Label-Identitaet** der Kanzlei (Logo,
+    // Farben, Custom-Domain) — der fremde Mandant sieht sie auf seinen
+    // Abschluessen.
+    //
+    // Genau dieser Defekt war am 2026-10-11 in **vier** Services behoben
+    // worden (subscription, api-keys, webhooks, custom-domain) — mit dem
+    // gemeinsamen Helfer `assertAdminInKanzlei()`. Das Branding war die
+    // **fuenfte** Stelle.
+    //
+    // **Erst messen, dann behaupten:** die erste Messung dieses Falls endete
+    // mit HTTP 402 ("Tarif Pilot enthaelt white-label-branding nicht") —
+    // das **Tarif-Gate** stand vor der Rechtepruefung. Ohne eine
+    // PREMIUM-Kanzlei B waere der Befund unbewiesen geblieben.
+    const mandanten = await this.prisma.mandant.findMany({
+      where: { kanzleiId, id: { in: user.mandanten.map((m) => m.id) } },
       select: { id: true },
     });
-    if (!mandant) {
-      throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
-    }
+    assertAdminInKanzlei(
+      mandanten.map((m) => m.id),
+      user.mandanten,
+      'Nur KANZLEI_ADMIN dieser Kanzlei darf Branding ändern',
+    );
   }
 
   /**

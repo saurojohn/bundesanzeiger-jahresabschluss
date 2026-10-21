@@ -22,6 +22,18 @@
  * Diese Datei ist die einzige Stelle, die die Bindung herstellt. Wie bei
  * `status-transition.ts`: vorher gab es drei Kopien derselben Prüfung mit
  * drei verschiedenen Fehlermeldungen.
+ *
+ * BEFUND 2026-10-21 (Nachtrag 71): Es waren **fuenf** Services, nicht vier.
+ * Nach dem 2026-10-11 waren Subscription, API-Keys, Webhooks und
+ * Custom-Domain auf diesen Helfer umgestellt — das Branding (`branding.service.ts`)
+ * stand weiterhin auf der alten Logik („Admin IRGENDWO" + „Mandant in der
+ * Ziel-Kanzlei") und wurde erst am 2026-10-21 nachgezogen. Die Zahl der
+ * bereits gefixten Stellen sagt nichts ueber die Zahl der noch offenen.
+ *
+ * Auch im Mandant-Modul stand die Frage noch an zwei Stellen
+ * (`assertMandantAccess()`, `assertKanzleiAdminFuerMandant()`) — dort ist
+ * die Bindung ueber `rollenBindung()` hergestellt, weil der Kanzlei-Admin
+ * ueber Mandanten gebunden ist und nicht ueber eine Kanzlei-ID im Token.
  */
 import { ForbiddenException } from '@nestjs/common';
 

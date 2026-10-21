@@ -74,7 +74,16 @@ function buildService(bestand: {
   // wirklich loescht. Sonst scheitert die alte Fassung an einem TypeError
   // aus der Mock-Form und der Test sieht den Produktfehler nur indirekt.
   const prisma = {
-    mandant: { findUnique: vi.fn().mockResolvedValue(mandantRow), delete: mandantDelete },
+    mandant: {
+      findUnique: vi.fn().mockResolvedValue(mandantRow),
+      delete: mandantDelete,
+      // BEFUND 2026-10-21 (Nachtrag 71): `rollenBindung()` fragt die
+      // Kanzlei der Mandanten des Users ab. Fehlt der Mock, bricht der
+      // Test mit einem TypeError ab — und damit **aus dem falschen Grund**
+      // rot: nicht weil die Berechtigung fehlt, sondern weil der Mock die
+      // Frage nicht beantworten kann.
+      findMany: vi.fn().mockResolvedValue([{ id: MANDANT, kanzleiId: KANZLEI }]),
+    },
     $transaction,
   };
 
@@ -196,6 +205,12 @@ describe('Mandant-Archivierung', () => {
       mandant: {
         findUnique: vi.fn().mockResolvedValue({ ...mandantRow, archiviertAt, archiviertVonId: null }),
         update: mandantUpdate,
+        // BEFUND 2026-10-21 (Nachtrag 71): Die Rollenpruefung fragt jetzt
+        // ueber `rollenBindung()` die Kanzlei der Mandanten des Users ab —
+        // ohne diesen Mock bricht der Test mit einem TypeError ab, nicht
+        // mit dem erwarteten ForbiddenException. Die Antwort ist genau die
+        // Abfrage, die der Service stellt: der Mandant mit seiner Kanzlei.
+        findMany: vi.fn().mockResolvedValue([{ id: MANDANT, kanzleiId: KANZLEI }]),
       },
     };
     const audit = { record: vi.fn().mockResolvedValue(undefined) };

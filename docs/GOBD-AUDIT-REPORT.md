@@ -7254,6 +7254,77 @@ Bilanz, GuV, Anhang **und** Jahresabschluss).
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 74): Der DATEV-Import schrieb Bücher in einen Mandanten, für den die Person nur Wirtschaftsprüfer ist
+
+#### Der Befund
+
+Dieselbe Familie, jetzt bei einem **Schreibvorgang in die Bücher**.
+`POST /api/datev-import/execute` legt Bilanz **und** GuV an bzw. ersetzt die
+Positionen — das ist kein Lesen, das ist die Buchhaltung des Mandanten.
+
+- der `RolesGuard` prüft STEUERBERATER/KANZLEI_ADMIN auf dem
+  **Kontext-Mandanten** (`x-mandant-id`);
+- der `DatevImportService` prüft `assertMandantAccess(dto.mandantId, user)` —
+  den **Zugriff** auf den Mandanten der Datei.
+
+**Gemessen.** Eine Person, die in Mandant A (Demo GmbH) STEUERBERATER und in
+Mandant B (Beispiel GmbH) nur WIRTSCHAFTSPRUEFER ist:
+
+```
+POST /api/datev-import/execute (Kontext = A) -> HTTP 201
+  importedCount: 2, bilanzId: …, guvId: …
+Bilanzen in B / Jahr 2055: 1, GuV: 1
+```
+
+Die Bücher von Mandant B wurden geschrieben — durch dieselbe Person, die
+für Mandant B Wirtschaftsprüfer ist. Das bricht die Unabhängigkeit nach
+IDW PS 880: **wer die Bücher schreibt, prüft sie nicht.**
+
+Bemerkenswert: der Kommentar im Service beschrieb die Regel bereits —
+„Der Import läuft über den Mandanten der Datei, nicht über einen aktiven
+Mandanten-Kontext — die beiden Fragen sind unabhängig". Sie war nur nicht
+als **Prüfung** hinterlegt.
+
+#### Die Behebung
+
+`assertImportRolle()` im Service: STEUERBERATER oder KANZLEI_ADMIN auf dem
+Mandanten der Datei — für `preview` und `execute`.
+
+#### **Nicht** geändert: die PDF-Erzeugung
+
+`POST /api/pdf/...` hat dieselbe Struktur (Rolle am Kontext, Ziel im Body) —
+dort ist sie aber **korrekt**: die PDF-Erzeugung ist ein Lesevorgang, und
+der Wirtschaftsprüfer eines Mandanten muss das PDF des Mandanten
+erzeugen können, um es zu prüfen und zu signieren. Eine Rollenbindung auf
+dem Zielmandanten würde hier den legitimen Weg sperren.
+
+**Merksatz:** Die Regel lautet nicht „die Rolle muss immer auf dem
+Zielmandanten gelten", sondern „**bei Schreibvorgängen** muss die Rolle
+gelten, die der Vorgang verlangt". Lesevorgänge brauchen Zugriff, keine
+Kanzleizustaendigkeit.
+
+#### Die Negativprobe
+
+Alte Regel (Pruefung entfernt):
+
+```
+schreibt keine Buchhaltungsdaten ... -> HTTP 201 (importedCount 2)   erwartet 403
+Gegenprobe: der Steuerberater darf importieren -> gruen
+```
+
+Auch hier brauchte die Gegenprobe ein **eigenes Jahr**: der Import legt
+Bilanz und GuV an, und mit einem gemeinsamen Jahr lief die Gegenprobe im
+Negativproben-Lauf auf „existiert bereits Bilanz/GuV" (400) — rot, aber aus
+dem falschen Grund.
+
+#### Der Test
+
+`e2e/datev-import-rolle.e2e.spec.ts` (2 Tests): die Negativprobe (403 **und**
+keine Bilanz/GuV in der Datenbank) und die Gegenprobe (der Steuerberater des
+Mandanten importiert, die Bilanz existiert).
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

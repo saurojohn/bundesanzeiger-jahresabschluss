@@ -64,6 +64,7 @@ import type {
 } from '../dto/datev-import-response.dto';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
+import { assertRolleAufMandant } from '../../../common/utils/mandant-rolle';
 
 export interface DatevImportContext {
   ip?: string | null;
@@ -116,6 +117,39 @@ export class DatevImportService {
    * Der Import laeuft ueber den Mandanten der Datei, nicht ueber einen
    * aktiven Mandant-Kontext — die beiden Fragen sind unabhaengig.
    */
+  /**
+   * Der Import ist ein **Schreibvorgang** in die Buecher des Mandanten:
+   * `execute` legt Bilanz UND GuV an bzw. ersetzt die Positionen. Die
+   * STEUERBERATER/KANZLEI_ADMIN-Rolle muss deshalb auf dem Mandanten der
+   * Datei gelten — nicht auf dem Kontext-Mandanten.
+   *
+   * BEFUND 2026-10-21 (Nachtrag 74): Der `RolesGuard` prueft die Rolle auf
+   * dem Kontext-Mandanten, der Service nur den *Zugriff* auf den Mandanten
+   * der Datei. Zusammen belegten die beiden Pruefungen nicht „darf in
+   * diesen Buechern schreiben".
+   *
+   * **Gemessen.** Eine Person, die in Mandant A STEUERBERATER und in
+   * Mandant B nur WIRTSCHAFTSPRUEFER ist, hat per Import die Buecher von
+   * Mandant B geschrieben:
+   *
+   *     POST /api/datev-import/execute (Kontext = A) -> HTTP 201
+   *     importedCount: 2, bilanzId: …, guvId: …
+   *
+   * Das bricht die Unabhaengigkeit nach IDW PS 880: wer die Buecher
+   * schreibt, prueft sie nicht. Der MandantGuard-Bemerkung im Service
+   * ("Der Import laeuft ueber den Mandanten der Datei, nicht ueber einen
+   * aktiven Mandant-Kontext") beschreibt genau diese Unabhaengigkeit — sie
+   * war nur nicht als Pruefung hinterlegt.
+   */
+  private assertImportRolle(mandantId: string, user: AuthUser): void {
+    assertRolleAufMandant(
+      mandantId,
+      ['STEUERBERATER', 'KANZLEI_ADMIN'],
+      user,
+      'Nur Steuerberater oder Kanzlei-Admin dieses Mandanten koennen Buchhaltungsdaten importieren',
+    );
+  }
+
   private async assertMandantNichtArchiviert(mandantId: string): Promise<void> {
     const mandant = await this.prisma.mandant.findUnique({
       where: { id: mandantId },
@@ -135,6 +169,7 @@ export class DatevImportService {
     user: AuthUser,
   ): Promise<ImportPreviewDto> {
     assertMandantAccess(dto.mandantId, user);
+    this.assertImportRolle(dto.mandantId, user);
     await this.assertMandantNichtArchiviert(dto.mandantId);
 
     const parsed = this.parseCsv(dto.csvBase64);
@@ -177,6 +212,7 @@ export class DatevImportService {
     context: DatevImportContext,
   ): Promise<ImportResultDto> {
     assertMandantAccess(dto.mandantId, user);
+    this.assertImportRolle(dto.mandantId, user);
     await this.assertMandantNichtArchiviert(dto.mandantId);
 
     const parsed = this.parseCsv(dto.csvBase64);

@@ -15,6 +15,7 @@ import type { WPNotizEntity } from '../wp.repository';
 import { WPRepository } from '../wp.repository';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
+import { assertRolleAufMandant } from '../../../common/utils/mandant-rolle';
 
 export interface WPNotizServiceContext {
   ip?: string | null;
@@ -77,8 +78,6 @@ export class WPNotizService {
     user: AuthUser,
     context: WPNotizServiceContext,
   ): Promise<WPNotizEntity> {
-    this.assertWirtschaftsPrueferRole(user);
-
     const targets = [
       args.bilanzId,
       args.guvId,
@@ -107,6 +106,9 @@ export class WPNotizService {
     if (!mandantId) {
       throw new NotFoundException('Referenzierte Bilanz/GuV/Position nicht gefunden');
     }
+    // BEFUND 2026-10-21 (Nachtrag 72): Die Wirtschaftspruefer-Rolle muss auf
+    // dem Mandanten gelten, den die Notiz betrifft — nicht „WP irgendwo".
+    this.assertWirtschaftsPrueferRolle(mandantId, user);
     assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'WP-Notiz anlegen');
 
@@ -268,16 +270,18 @@ export class WPNotizService {
   // Private helpers
   // ===========================================================================
 
-  private assertWirtschaftsPrueferRole(user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const hasWPRole = user.mandanten.some(
-      (m) => m.rolle === 'WIRTSCHAFTSPRUEFER',
+  /**
+   * WIRTSCHAFTSPRUEFER **auf dem Mandanten** — nicht „irgendwo".
+   *
+   * BEFUND 2026-10-21 (Nachtrag 72): siehe `wp-pruefung.service.ts`.
+   */
+  private assertWirtschaftsPrueferRolle(mandantId: string, user: AuthUser): void {
+    assertRolleAufMandant(
+      mandantId,
+      ['WIRTSCHAFTSPRUEFER'],
+      user,
+      'Nur Wirtschaftsprüfer für diesen Mandanten dürfen WP-Notizen erstellen',
     );
-    if (!hasWPRole) {
-      throw new ForbiddenException(
-        'Nur Wirtschaftsprüfer dürfen WP-Notizen erstellen',
-      );
-    }
   }
 
 

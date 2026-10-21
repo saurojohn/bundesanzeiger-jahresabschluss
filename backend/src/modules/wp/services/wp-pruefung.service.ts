@@ -18,6 +18,7 @@ import { WPRepository } from '../wp.repository';
 import { IdwPruefungService } from './idw-pruefung.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
+import { assertRolleAufMandant } from '../../../common/utils/mandant-rolle';
 
 export interface WPPruefungServiceContext {
   ip?: string | null;
@@ -74,12 +75,15 @@ export class WPPruefungService {
     user: AuthUser,
     context: WPPruefungServiceContext,
   ): Promise<WPPruefungsAbschlussEntity> {
-    this.assertWirtschaftsPrueferRole(user);
-
     const mandantId = await this.wpRepository.findBilanzMandantId(args.bilanzId);
     if (!mandantId) {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
+    // BEFUND 2026-10-21 (Nachtrag 72): Die Rollenpruefung muss auf dem
+    // **Ziel-Mandanten** stehen, nicht „WP irgendwo" — und sie muss vor
+    // der Zugriffspruefung stehen, damit die Meldung zur Rolle passt
+    // (Reihenfolge: erst Mandant, dann Rolle — siehe `kanzlei-rolle.ts`).
+    this.assertWirtschaftsPrueferRolle(mandantId, user);
     assertMandantAccess(mandantId, user);
     await this.assertMandantBearbeitbar(mandantId, 'WP-Prüfung starten');
 
@@ -140,8 +144,6 @@ export class WPPruefungService {
     user: AuthUser,
     context: WPPruefungServiceContext,
   ): Promise<WPPruefungsAbschlussEntity> {
-    this.assertWirtschaftsPrueferRole(user);
-
     const existing = await this.wpRepository.findPruefungsAbschlussById(pruefungId);
     if (!existing) {
       throw new NotFoundException('WP-Prüfung nicht gefunden');
@@ -156,6 +158,10 @@ export class WPPruefungService {
     if (!mandantId) {
       throw new NotFoundException('Mandant für Prüfung nicht auflösbar');
     }
+    // BEFUND 2026-10-21 (Nachtrag 72): siehe `startPruefung` — die
+    // Wirtschaftspruefer-Rolle muss auf dem Mandanten der geprueften
+    // Bilanz gelten, den die Freigabe betrifft.
+    this.assertWirtschaftsPrueferRolle(mandantId, user);
 
     // Vier-Augen-Prinzip (IDW PS 880, § 11 Abs. 2 WPO) — JETZT
     // durchgesetzt.
@@ -299,16 +305,24 @@ export class WPPruefungService {
   // Private helpers
   // ===========================================================================
 
-  private assertWirtschaftsPrueferRole(user: AuthUser): void {
-    if (user.globalRole === 'SYSTEM_ADMIN') return;
-    const hasWPRole = user.mandanten.some(
-      (m) => m.rolle === 'WIRTSCHAFTSPRUEFER',
+  /**
+   * WIRTSCHAFTSPRUEFER **auf dem Mandanten** — nicht „irgendwo".
+   *
+   * BEFUND 2026-10-21 (Nachtrag 72): Vorher stand hier
+   * `user.mandanten.some((m) => m.rolle === 'WIRTSCHAFTSPRUEFER')` — das
+   * belegt nur „WP irgendwo". Zusammen mit dem Zugriffstest
+   * (`assertMandantAccess`, der nur *irgendeine* Rolle auf dem Ziel
+   * verlangt) konnten zwei Personen, die nur STEUERBERATER des geprueften
+   * Mandanten sind, dessen Bilanz pruefen und freigeben (Vier-Augen-
+   * Prinzip, IDW PS 880). Gemessen: 201 / 200 / Bilanz APPROVED.
+   */
+  private assertWirtschaftsPrueferRolle(mandantId: string, user: AuthUser): void {
+    assertRolleAufMandant(
+      mandantId,
+      ['WIRTSCHAFTSPRUEFER'],
+      user,
+      'Nur Wirtschaftsprüfer für diesen Mandanten dürfen WP-Prüfungen starten/finalisieren',
     );
-    if (!hasWPRole) {
-      throw new ForbiddenException(
-        'Nur Wirtschaftsprüfer dürfen WP-Prüfungen starten/finalisierten',
-      );
-    }
   }
 
 

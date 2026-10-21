@@ -7083,6 +7083,94 @@ auffaellt und nicht erst bei einem Kunden.
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 72): Das Vier-Augen-Prinzip pruefte „WP irgendwo" — zwei Personen durften einen fremden Mandanten freigeben
+
+#### Der Befund
+
+Das Vier-Augen-Prinzip (IDW PS 880) verlangt **zwei** Dinge: zwei
+verschiedene Personen **und** — so der Wortlaut der Unabhaengigkeit — der
+Pruefer muss fuer den Mandanten bestellt sein, den er prueft. Die zweite
+Bedingung war nicht erzwungen.
+
+`wp-pruefung.service.ts` und `wp-notiz.service.ts` prueften:
+
+```ts
+const hasWPRole = user.mandanten.some((m) => m.rolle === 'WIRTSCHAFTSPRUEFER');
+// "WP IRGENDWO"
+...
+assertMandantAccess(mandantId, user);
+// Zugriff — es genuegt IRGENDEINE Rolle auf dem Ziel-Mandanten
+```
+
+Zusammen belegen die beiden Pruefungen **nicht** „WP fuer diesen Mandanten".
+
+**Gemessen.** Zwei Personen, beide WP in Mandant A (Demo GmbH) und nur
+STEUERBERATER in Mandant B (Beispiel GmbH). Der Kontext-Header zeigt auf
+Mandant A — damit sind `MandantGuard` und `RolesGuard` zufrieden:
+
+```
+POST /api/wp/pruefungs                -> HTTP 201   (Pruefung fuer Mandant B angelegt)
+POST /api/wp/pruefungen/:id/finalize  -> HTTP 200   (status APPROVED)
+Status der Bilanz in Mandant B danach : APPROVED
+```
+
+Die Bilanz eines Mandanten wurde also von zwei Personen freigegeben, die
+fuer diesen Mandanten **nicht bestellte** Wirtschaftspruefer sind — dort
+sind sie die Ersteller. Das ist genau die Unabhaengigkeit, die IDW PS 880
+verlangt.
+
+#### Die Behebung
+
+Neue gemeinsame Hilfsfunktion `common/utils/mandant-rolle.ts`:
+
+```ts
+assertRolleAufMandant(mandantId, ['WIRTSCHAFTSPRUEFER'], user, meldung);
+```
+
+Sie beantwortet die Frage „hat der User die Rolle **auf diesem** Mandanten?"
+— getrennt von `common/utils/mandant-zugriff.ts` („hat der User **Zugriff**?").
+Beide WP-Services nutzen sie jetzt; die globale Variante („WP irgendwo")
+entfällt.
+
+Die Reihenfolge ist bewusst: erst der Mandant, dann die Rolle. Wer
+Zugriff auf den Mandanten hat, aber die Rolle nicht, bekommt die
+Rollenmeldung — nicht die Zugriffsmeldung.
+
+#### Die Negativprobe
+
+Alte Regel eingebaut, dieselbe Messung wiederholt:
+
+```
+startet keine WP-Pruefung ... -> HTTP 201 (Pruefung angelegt)   erwartet 403
+gibt keine Pruefung frei ...  -> HTTP 200 (status APPROVED)      erwartet 403
+Gegenprobe: echter WP des Mandanten darf freigeben -> gruen
+```
+
+#### Der Test
+
+`e2e/wp-vieraugen-rolle.e2e.spec.ts` (3 Tests): zwei Negativpruefungen
+(Start und Freigabe, jeweils mit Zustandsbeleg an der Bilanz) und **eine
+Gegenprobe** — ein echter WP des Mandanten muss weiterhin freigeben
+koennen, sonst waere die Kontrolle nur ein Produktschalter.
+
+**Merksatz:** Aufraeumen loescht genau das, was der Test angelegt hat —
+nichts sonst. Die erste Fassung raeumte mit
+`deleteMany({ mandantId: { in: [A, B] } })` auf und riss dabei die
+**Seed-Rollen** des `steuerberater@kanzlei.de` mit (er ist auf genau diesen
+Mandanten STEUERBERATER). Der Fehler war **nicht** im eigenen Test zu sehen:
+vier spaetere Specs fanden „Demo GmbH" nicht mehr in der Session, 16 Tests
+wurden uebersprungen. Ein zu breites Aufraeumen faellt erst dort auf, wo
+etwas anderes zufaellig stimmt.
+
+**Merksatz:** „Zugriff auf den Mandanten" und „Rolle auf dem Mandanten"
+sind zwei verschiedene Fragen. Die erste beantwortet `mandant-zugriff.ts`,
+die zweite `mandant-rolle.ts`. Wer beide verwechselt, bekommt entweder
+einen Benutzer, der zu viel darf (der Bruch von heute) — oder einen, der zu
+wenig darf (der Fehler vom 2026-10-05, wo die Liste nur zugewiesene
+Mandanten zeigte).
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

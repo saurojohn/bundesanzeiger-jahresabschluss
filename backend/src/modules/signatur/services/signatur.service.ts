@@ -46,6 +46,7 @@ import { TsaClientService } from './tsa-client.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 import { assertRolleAufMandant } from '../../../common/utils/mandant-rolle';
+import { ladeBestandteilZeitpunkt } from '../../../common/utils/signatur-abweichung';
 
 /**
  * Request-Context für Signatur-Endpoints.
@@ -313,7 +314,41 @@ export class SignaturService {
     };
   }
 
-  /** `updatedAt` der Entitaet, mandantengefiltert. */
+  /**
+   * `updatedAt` der Entitaet, mandantengefiltert.
+   *
+   * BEFUND 2026-10-21 (Nachtrag 77): Fuer den **Jahresabschluss** ist das
+   * eigene `updatedAt` das falsche Mass. Die Signatur setzt selbst den
+   * Status auf `SIGNED` (`jahresabschluss.update` in `signAbschluss`) —
+   * dieser Schreibvorgang liegt **nach** dem Anlegen des Signaturdatensatzes
+   * und damit **nach** `letzte.createdAt`. Der Vergleich
+   * `geaendertAm > letzte.createdAt` war deshalb bei **jedem** signierten
+   * Jahresabschluss wahr:
+   *
+   *     GET /api/signatur/status?entityType=Abschluss&entityId=…
+   *     -> status=ABWEICHEND, geaendertNachSignatur=true
+   *
+   * Gemessen unmittelbar nach der Signatur, **ohne jede Aenderung an den
+   * Daten**. Der Hinweis war damit falsch ("die hier angezeigten Daten
+   * entsprechen NICHT der signierten Fassung"), und der Indikator war
+   * dauerhaft rot. Ein dauerhaft roter Indikator traegt keine Information —
+   * eine echte Abweichung (Anhang nach der Signatur geaendert) faellt nicht
+   * mehr auf, weil sie neben dem Dauerfehler verschwindet. Damit war die
+   * Sichtbarkeitspflicht aus der Entscheidung vom 2026-10-14 ("es muss
+   * sichtbar sein, wenn die vorgelegten Daten nicht mehr der signierten
+   * Fassung entsprechen") **nicht erfuellbar**.
+   *
+   * **Die Regel jetzt:** der Jahresabschluss ist ein Aggregat; die signierte
+   * Fassung ist ein PDF ueber Bilanz + GuV + Anhang. Geprueft wird deshalb
+   * der Aktualisierungszeitpunkt der **Bestandteile** — das ist die
+   * Datenbasis der signierten Fassung. Der eigene `updatedAt` des
+   * Jahresabschlusses beschreibt seinen Arbeitsstatus
+   * (FINALIZED -> SIGNED -> SUBMITTED -> PUBLISHED), nicht die Daten.
+   *
+   * Die Bestandteile selbst sind unveraendert: ihr `updatedAt` bewegt sich
+   * nur durch echte Aenderungen (Positionen, Abschnitte, Methoden, Status) —
+   * die Signatur fasst sie nicht an.
+   */
   private async entitaetUpdatedAt(
     entityType: SignedEntityType,
     entityId: string,
@@ -327,8 +362,16 @@ export class SignaturService {
         return (await this.prisma.guV.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
       case 'Anhang':
         return (await this.prisma.anhang.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
-      case 'Abschluss':
-        return (await this.prisma.jahresabschluss.findFirst({ where, select: { updatedAt: true } }))?.updatedAt ?? null;
+      case 'Abschluss': {
+        const abschluss = await this.prisma.jahresabschluss.findFirst({
+          where,
+          select: { bilanzId: true, guvId: true, anhangId: true },
+        });
+        if (!abschluss) return null;
+        // Die Berechnung selbst liegt in `common/utils/signatur-abweichung.ts`
+        // — dieselbe, die die Einreichungssperre benutzt (Nachtrag 78).
+        return ladeBestandteilZeitpunkt(this.prisma, mandantId, abschluss);
+      }
       default:
         return null;
     }
@@ -495,7 +538,29 @@ export class SignaturService {
     if (!abschluss) {
       throw new NotFoundException('Jahresabschluss nicht gefunden');
     }
-    if (abschluss.status !== 'FINALIZED') {
+    // ENTSCHEIDUNG 2026-10-21 (Nachtrag 78): Ein Abschluss im Status
+    // SIGNED darf **erneut** signiert werden — das ist der Korrekturweg.
+    //
+    // Die Entscheidung der Fachverantwortlichen vom 2026-10-14 sagt:
+    // "Ein Korrekturvorgang erzeugt zwingend eine neue Signatur, und der alte
+    // WORM-Satz darf nicht gelöscht werden." Bis eben war das fuer den
+    // Jahresabschluss unmoeglich: das Status-Gate erlaubte nur FINALIZED,
+    // nach der ersten Signatur stand der Abschluss auf SIGNED — und der
+    // Ausweg ueber einen "neuen Abschluss als Korrektur" (so der Text im
+    // Finalize-Fehler) war durch den Unique-Constraint (mandantId,
+    // geschaeftsjahr) blockiert. Ein geaenderter Bestandteil nach der
+    // Signatur fuehrte damit in einen Zustand, aus dem man nicht mehr
+    // herauskam.
+    //
+    // Jetzt: SIGNED (erneute Signatur) und FINALIZED (Erstsignatur) sind
+    // zulaessig. Der WORM behaelt beide Fassungen — jede Signatur legt ein
+    // eigenes WORM-Objekt an — und die **juengste** gilt
+    // (`findActiveByEntity` sortiert nach `uploadedAt` desc).
+    //
+    // DRAFT bleibt gesperrt: "eine Signatur auf einen unfertigen Abschluss
+    // bescheinigt eine Vollstaendigkeit, die es nicht gibt". Ebenso
+    // SUBMITTED/PUBLISHED — ein eingereichter Abschluss ist veroeffentlicht.
+    if (abschluss.status !== 'FINALIZED' && abschluss.status !== 'SIGNED') {
       throw new ConflictException(
         `Ein Jahresabschluss kann erst nach dem Abschluss signiert werden. ` +
           `Dieser Abschluss steht auf ${abschluss.status}` +

@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/services/audit.service';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
+import { pruefeAbschlussAbweichung } from '../../../common/utils/signatur-abweichung';
 import { CreateJahresabschlussDto } from '../dto/create-jahresabschluss.dto';
 import {
   FinalizeErgebnisDto,
@@ -544,7 +545,36 @@ export class AbschlussService {
       );
     }
 
-    // 2) Die Bestellnummer muss eindeutig sein.
+    // 2) Die Daten muessen noch der **signierten Fassung** entsprechen.
+    //
+    // ENTSCHEIDUNG 2026-10-21 (Nachtrag 78, Frage 2 = "sperren"):
+    // Fail-closed. Bisher wurde eingereicht, was im WORM lag — die
+    // attestierte Fassung —, waehrend die Datenbank bereits die neuen Zahlen
+    // zeigte. Damit beantwortete die Frage "was wurde veroeffentlicht?" und
+    // die Frage "was steht im System?" unterschiedliche Dinge, und die
+    // Nachvollziehbarkeit (§ 147 AO) war nicht mehr gegeben.
+    //
+    // Der Weg aus diesem Zustand ist der Korrekturvorgang: der Jahresabschluss
+    // wird erneut signiert (Nachtrag 78, Frage 1 = A). Danach ist die
+    // Abweichung weg und die Einreichung wieder moeglich.
+    const abweichung = await pruefeAbschlussAbweichung(
+      this.prisma,
+      mandantId,
+      id,
+    );
+    if (abweichung.abweichend) {
+      throw new ConflictException(
+        'Die Daten des Jahresabschlusses wurden nach der Signatur geaendert ' +
+          `(zuletzt am ${abweichung.geaendertAm?.toISOString()}, ` +
+          `signiert am ${abweichung.signiertAm?.toISOString()}). ` +
+          'Eine Einreichung ist damit nicht zulaessig: veroeffentlicht wuerde ' +
+          'die signierte Fassung, waehrend das System die geaenderten Zahlen ' +
+          'zeigt (§ 147 AO). Bitte den Jahresabschluss erneut signieren — ' +
+          'danach kann er eingereicht werden.',
+      );
+    }
+
+    // 3) Die Bestellnummer muss eindeutig sein.
     const doppelt = await this.prisma.jahresabschluss.findFirst({
       where: { banzBestellnummer: dto.banzBestellnummer, NOT: { id } },
       select: { id: true, geschaeftsjahr: true },
@@ -557,7 +587,7 @@ export class AbschlussService {
       );
     }
 
-    // 3) Das signierte PDF ist die Einreichungsgrundlage.
+    // 4) Das signierte PDF ist die Einreichungsgrundlage.
     const signiertesPdf = await this.wormObjectRepository.findActiveByEntity(
       'ABSCHLUSS_PDF_SIGNED',
       id,

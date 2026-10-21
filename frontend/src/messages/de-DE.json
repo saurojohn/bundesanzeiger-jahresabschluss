@@ -459,6 +459,7 @@
     "actions": {
       "create": "Jahresabschluss anlegen",
       "signAbschluss": "Jahresabschluss signieren",
+      "resignAbschluss": "Jahresabschluss erneut signieren",
       "downloadAll": "Alle PDFs herunterladen",
       "delete": "Löschen",
       "finalize": "Abschluss prüfen und abschließen",

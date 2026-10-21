@@ -290,22 +290,33 @@ describe('Jahresabschluss signieren (qeS)', () => {
     ).toBe(1);
   });
 
-  it('ein bereits signierter Abschluss lässt sich nicht erneut signieren', async () => {
-    // Die Sperre lautet `status !== 'FINALIZED'`. Nach der ersten Signatur
-    // steht der Abschluss auf `SIGNED` — damit ist der zweite Versuch
-    // automatisch gesperrt.
+  it('ein bereits signierter Abschluss lässt sich erneut signieren (Korrekturweg)', async () => {
+    // ENTSCHEIDUNG 2026-10-21 (Nachtrag 78, Frage 1 = A): Ein Abschluss im
+    // Status SIGNED darf erneut signiert werden.
     //
-    // Das ist bewusst fail-closed. Man koennte einrufen: "mit dem falschen
-    // Zertifikat neu signieren". Aber das erste signierte PDF liegt bereits
-    // mit 10-Jahres-Object-Lock in WORM und laesst sich nicht entfernen —
-    // eine zweite Signatur wuerde zwei unvereinbare Nachweise erzeugen,
-    // ohne den ersten zu loeschen. Der korrekte Weg ist ein neuer
-    // Jahresabschluss, nicht eine zweite Signatur auf denselben.
+    // Bis eben galt hier eine harte Sperre (`status !== 'FINALIZED'`), mit
+    // der Begruendung: "eine zweite Signatur wuerde zwei unvereinbare
+    // Nachweise erzeugen, ohne den ersten zu loeschen. Der korrekte Weg ist
+    // ein neuer Jahresabschluss, nicht eine zweite Signatur auf denselben."
+    //
+    // Der Weg "neuer Jahresabschluss" war jedoch durch den
+    // Unique-Constraint (mandantId, geschaeftsjahr) blockiert — ein
+    // geaenderter Bestandteil nach der Signatur fuehrte damit in einen
+    // Zustand, aus dem man nicht mehr herauskam. Und die Entscheidung der
+    // Fachverantwortlichen vom 2026-10-14 sagt ausdruecklich: "Ein
+    // Korrekturvorgang erzeugt zwingend eine neue Signatur, und der alte
+    // WORM-Satz darf nicht geloescht werden."
+    //
+    // **Die unvereinbaren Nachweise gibt es nicht.** Der WORM behaelt beide
+    // Fassungen (jede Signatur legt ein eigenes WORM-Objekt an), und die
+    // **juengste** gilt — `findActiveByEntity` sortiert nach `uploadedAt`
+    // desc. Der erste Nachweis wird nicht geloescht, er wird ueberholt.
     const res = await signieren(finalizedId);
     expect(
       res.status,
-      'ein zweites Mal signieren: das erste signierte PDF ist fuer 10 Jahre gesperrt',
-    ).toBe(409);
+      'ein zweites Mal signieren: der Korrekturvorgang erzeugt eine neue ' +
+        'Signatur, der erste WORM-Satz bleibt unveraendert erhalten',
+    ).toBe(200);
 
     // Nicht `entityType: 'Abschluss'` — Jahresabschluss-Signaturen tragen
     // dort `null`. `jahresabschlussId` ist die Achse, die das Schema fuer
@@ -313,6 +324,24 @@ describe('Jahresabschluss signieren (qeS)', () => {
     const signaturen = await prisma.signature.count({
       where: { jahresabschlussId: finalizedId },
     });
-    expect(signaturen, 'es darf genau eine Signatur geben').toBe(1);
+    expect(signaturen, 'beide Signaturen bleiben im Trail erhalten').toBe(2);
+
+    // Und die **juengste** ist die massgebliche: die WORM-Suche liefert den
+    // zuletzt hochgeladenen Satz.
+    const worm = await prisma.wormObject.findFirst({
+      where: { entityType: 'ABSCHLUSS_PDF_SIGNED', entityId: finalizedId },
+      orderBy: { uploadedAt: 'desc' },
+      select: { uploadedAt: true, sha256Hash: true },
+    });
+    const neuesteSignatur = await prisma.signature.findFirst({
+      where: { jahresabschlussId: finalizedId },
+      orderBy: { createdAt: 'desc' },
+      select: { hashNachher: true },
+    });
+    expect(worm, 'es muss ein signiertes WORM-Objekt geben').toBeTruthy();
+    expect(
+      worm!.sha256Hash,
+      'das aktive WORM-Objekt ist die zuletzt signierte Fassung',
+    ).toBe(neuesteSignatur?.hashNachher);
   });
 });

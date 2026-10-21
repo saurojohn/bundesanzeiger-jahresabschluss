@@ -378,21 +378,35 @@ export function JahresabschlussView() {
                           `entityType="abschluss"` durch. Es fehlte nur der
                           Aufruf.
 
-                          Sichtbar nur bei `FINALIZED`: der Server lässt eine
-                          Signatur ausschließlich in diesem Zustand zu
-                          (Nachtrag 35) — bei `DRAFT` und bei `SIGNED` wäre der
-                          Knopf eine Einladung zu einer 409. */}
-                      {j.status === 'FINALIZED' && darfAbschlussSignieren && (
-                        <button
-                          type="button"
-                          onClick={() => setSignierZiel(j.id)}
-                          data-testid="jahresabschluss-signieren"
-                          className="text-sm text-brand-600 hover:text-brand-700"
-                        >
-                          {t('jahresabschluss.actions.signAbschluss')}
-                        </button>
-                      )}
-                      {j.status === 'SIGNED' && (
+                          Sichtbar bei `FINALIZED` **und** bei `SIGNED`:
+                          ENTSCHEIDUNG 2026-10-21 (Nachtrag 78, Frage 1 = A) —
+                          ein Abschluss im Status SIGNED darf erneut signiert
+                          werden. Das ist der Korrekturweg: die Entscheidung der
+                          Fachverantwortlichen vom 2026-10-14 sagt „Ein
+                          Korrekturvorgang erzeugt zwingend eine neue Signatur".
+                          Bis eben war der Knopf bei SIGNED unsichtbar — der
+                          Server haette es auch mit 409 abgewiesen (Nachtrag 35).
+
+                          `DRAFT` bleibt unsichtbar: der Server wuerde eine
+                          Signatur mit 409 abweisen („eine Signatur auf einen
+                          unfertigen Abschluss bescheinigt eine Vollstaendigkeit,
+                          die es nicht gibt") — der Knopf darf den Anwender nicht
+                          erst in einen Fehler laufen lassen, den er selbst nicht
+                          ausloesen kann. */}
+                      {(j.status === 'FINALIZED' || j.status === 'SIGNED') &&
+                        darfAbschlussSignieren && (
+                          <button
+                            type="button"
+                            onClick={() => setSignierZiel(j.id)}
+                            data-testid="jahresabschluss-signieren"
+                            className="text-sm text-brand-600 hover:text-brand-700"
+                          >
+                            {j.status === 'SIGNED'
+                              ? t('jahresabschluss.actions.resignAbschluss')
+                              : t('jahresabschluss.actions.signAbschluss')}
+                          </button>
+                        )}
+                      {j.status === 'SIGNED' && !darfAbschlussSignieren && (
                         <span className="text-xs text-slate-400">
                           {t('jahresabschluss.actions.alreadySigned')}
                         </span>
@@ -460,7 +474,15 @@ export function JahresabschlussView() {
                           geprueft". Ohne es war beides nicht unterscheidbar
                           — der Abschluss zeigte „Signiert", obwohl nur die
                           GuV geprueft war. */}
-                      {j.status !== 'SIGNED' && (
+                      {/* BEFUND 2026-10-21 (Nachtrag 77/78): Das Badge war
+                          bei `SIGNED` **ausgeblendet** — genau dort, wo die
+                          Abweichung sichtbar sein muss (Entscheidung
+                          2026-10-14: „es muss sichtbar sein, wenn die
+                          vorgelegten Daten nicht mehr der signierten Fassung
+                          entsprechen"). Es ist jetzt fuer FINALIZED und
+                          SIGNED sichtbar; der DRAFT-Zustand bleibt ohne
+                          Badge (dort gibt es nichts zu vergleichen). */}
+                      {(j.status === 'FINALIZED' || j.status === 'SIGNED') && (
                         <SignaturStatusBadge
                           entityType="abschluss"
                           entityId={j.id}

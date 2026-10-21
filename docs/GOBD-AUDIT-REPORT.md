@@ -7254,6 +7254,157 @@ Bilanz, GuV, Anhang **und** Jahresabschluss).
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 77): Der Abweichungsindikator war dauerhaft rot — und damit blind
+
+#### Der Befund
+
+Die Entscheidung der Fachverantwortlichen vom 2026-10-14 verlangt: „Soll
+das Signieren die Bilanz/GuV/Anhang gegen Änderung sperren?" → **Nein**.
+„Ein Korrekturvorgang erzeugt zwingend eine neue Signatur, und der alte
+WORM-Satz darf nicht gelöscht werden. Stattdessen muss **SICHTBAR** sein,
+wenn die vorgelegten Daten nicht mehr der signierten Fassung entsprechen."
+
+Die Umsetzung verglich `updatedAt` der Entitaet mit `letzte.createdAt` der
+Signatur. Fuer den **Jahresabschluss** ist das falsch — aus zwei Gruenden.
+
+**1. Falschpositiv.** Die Signatur setzt selbst den Status des
+Jahresabschlusses auf `SIGNED` (`jahresabschluss.update`). Dieser
+Schreibvorgang liegt **nach** dem Anlegen des Signaturdatensatzes und damit
+**nach** `letzte.createdAt`. Der Vergleich war deshalb bei **jedem**
+signierten Jahresabschluss wahr:
+
+```
+GET /api/signatur/status?entityType=Abschluss&entityId=…
+  -> status=ABWEICHEND, geaendertNachSignatur=true
+  -> hinweis: "ACHTUNG: … Die hier angezeigten Daten entsprechen NICHT der
+     signierten Fassung."
+```
+
+Gemessen unmittelbar nach der Signatur, **ohne eine einzige geaenderte
+Zahl**. Die Meldung war sachlich falsch.
+
+**2. Falschnegativ.** Der Jahresabschluss ist ein Aggregat; die signierte
+Fassung ist ein PDF ueber Bilanz + GuV + Anhang. Eine Aenderung an einem
+Bestandteil bewegt den `updatedAt` des Abschlusses **nicht** — sie war am
+Abschluss unsichtbar.
+
+Damit war die Sichtbarkeitspflicht **nicht erfuellbar**: der Indikator war
+immer rot, also sagte er nichts mehr. Eine echte Abweichung (Anhang-Methoden
+nach der Signatur geaendert) fiel neben dem Dauerfehler nicht mehr auf.
+
+#### Die Behebung
+
+Geprueft wird der Aenderungszeitpunkt der **Bestandteile** (die Datenbasis
+der signierten Fassung), nicht der eigene `updatedAt` des Abschlusses (der
+beschreibt seinen Arbeitsstatus FINALIZED -> SIGNED -> SUBMITTED ->
+PUBLISHED).
+
+Die Berechnung liegt jetzt **einmal** in
+`common/utils/signatur-abweichung.ts` — der Signatur-Service (Indikator)
+und der Abschluss-Service (Einreichungssperre) benutzen dieselbe Funktion.
+
+| | vorher | nachher |
+|---|---|---|
+| frisch signierter Jahresabschluss | ABWEICHEND (falsch) | **SIGNIERT** |
+| nach Aenderung eines Bestandteils | ABWEICHEND (aber immer) | **ABWEICHEND** (nur dann) |
+
+#### Die Negativprobe
+
+Alte Regel (eigenes `updatedAt`) → `expected 'ABWEICHEND' to be 'SIGNIERT'`,
+mit dem falschen Hinweis im Text.
+
+#### Der Test
+
+`e2e/signatur-abweichung.e2e.spec.ts`: der frisch signierte Abschluss ist
+SIGNIERT, eine Aenderung am Bestandteil macht auch den Abschluss zum
+ABWEICHEND, und eine neue Signatur nimmt sie wieder weg.
+
+---
+
+### Nachtrag 2026-10-21 (Nachtrag 78): Der Korrekturvorgang am Jahresabschluss war unmoeglich — und eine abweichende Fassung wurde trotzdem eingereicht
+
+#### Der Befund
+
+Nachtrag 77 hat sichtbar gemacht, dass ein Jahresabschluss von der
+signierten Fassung abweichen kann. Die Frage war: **wie kommt man wieder
+in einen sauberen Zustand?** Antwort: gar nicht.
+
+**Beide dokumentierten Korrekturwege waren blockiert.**
+
+1. *Erneute Signatur.* Das Status-Gate der Signatur erlaubte nur
+   `FINALIZED`; nach der ersten Signatur steht der Abschluss auf `SIGNED` →
+   409 „Dieser Abschluss steht auf SIGNED".
+2. *Neuer Jahresabschluss als Korrektur.* Der Finalize-Fehlertext sagt:
+   „ein korrigierter Abschluss wird als neuer Abschluss angelegt" — der
+   Unique-Constraint `(mandantId, geschaeftsjahr)` laesst das nicht zu
+   (409).
+
+Die **Bestandteile** dagegen sind mehrfach signierbar (`signBilanz` hat
+kein Status-Gate) — genau die Asymmetrie, die die Entscheidung vom
+2026-10-14 ausschliesst („Ein Korrekturvorgang erzeugt zwingend eine neue
+Signatur").
+
+**Zusaetzlich: eine abweichende Fassung wurde trotzdem eingereicht.** Die
+Einreichung nahm das signierte PDF aus dem WORM (die attestierte Fassung),
+während die Datenbank bereits die neuen Zahlen zeigte. Damit beantworteten
+„was wurde veroeffentlicht?" und „was steht im System?" unterschiedliche
+Dinge — die Nachvollziehbarkeit (§ 147 AO) war nicht mehr gegeben.
+
+#### Die Entscheidungen (2026-10-21, Fachverantwortliche)
+
+1. **Korrekturweg: Re-Signatur.** Ein Abschluss im Status `SIGNED` darf
+   erneut signiert werden. Der WORM behaelt beide Fassungen (jede Signatur
+   legt ein eigenes WORM-Objekt an), die **juengste** gilt
+   (`findActiveByEntity` sortiert nach `uploadedAt` desc). `DRAFT` bleibt
+   gesperrt (eine Signatur auf einen unfertigen Abschluss bescheinigt eine
+   Vollstaendigkeit, die es nicht gibt), ebenso `SUBMITTED`/`PUBLISHED`.
+2. **Einreichung: sperren (fail-closed).** Solange die Daten von der
+   signierten Fassung abweichen, wird nicht eingereicht. Der Ausweg ist
+   die Re-Signatur aus Entscheidung 1.
+
+#### Die Behebung
+
+- `signatur.service.ts`: das Status-Gate laesst `FINALIZED` **und**
+  `SIGNED` zu.
+- `abschluss.service.ts` -> `einreichen()`: vor der Einreichung wird
+  `pruefeAbschlussAbweichung()` geprueft; bei Abweichung 409 mit dem Weg
+  aus der Meldung heraus („bitte den Jahresabschluss erneut signieren").
+
+#### Gemessen (die vollstaendige Kette)
+
+```
+frisch signiert:            Abschluss status=SIGNIERT    geaendertNachSignatur=false
+Anhang geaendert:           Anhang   status=ABWEICHEND  geaendertNachSignatur=true
+                             Abschluss status=ABWEICHEND  geaendertNachSignatur=true
+Einreichung:                HTTP 409  "Die Daten des Jahresabschlusses wurden nach
+                                      der Signatur geaendert … Bitte den Jahresabschluss
+                                      erneut signieren"
+erneute Signatur:           HTTP 200
+Einreichung danach:         HTTP 200
+```
+
+#### Die Negativproben
+
+| zurueckgebaut | Ergebnis |
+|---|---|
+| Re-Signatur gesperrt | `expected 409 to be 200` — „Dieser Abschluss steht auf SIGNED" |
+| Einreichungssperre entfernt | `expected 200 to be 409` — der Abschluss stand auf SUBMITTED |
+
+#### Der Test
+
+`e2e/signatur-abweichung.e2e.spec.ts` (5 Tests): der frisch signierte
+Abschluss ist SIGNIERT, die Bestandteil-Aenderung macht ihn ABWEICHEND, die
+Einreichung mit Abweichung ist gesperrt (409, **kein** Einreichungsbeleg,
+keine Bestellnummer), die erneute Signatur nimmt die Abweichung weg und die
+Einreichung klappt wieder.
+
+**Merksatz:** Ein Dauerfehler ist schlimmer als kein Indikator — er macht
+den Indikator blind. Wer eine Warnung einfuehrt, muss sie **an einem
+Zustand pruefen, in dem sie nicht gilt** (hier: ein frisch signierter
+Abschluss muss SIGNIERT sein).
+
+---
+
 ### Nachtrag 2026-10-21 (Nachtrag 74): Der DATEV-Import schrieb Bücher in einen Mandanten, für den die Person nur Wirtschaftsprüfer ist
 
 #### Der Befund

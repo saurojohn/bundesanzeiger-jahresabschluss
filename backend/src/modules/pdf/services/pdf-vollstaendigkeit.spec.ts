@@ -64,6 +64,15 @@ function buildService(guvPositionen: unknown[], anhangAbschnitte: unknown[]) {
           firmenname: 'X GmbH',
           rechtsform: 'GmbH',
         }),
+        // BEFUND 2026-10-21 (Nachtrag 75): Der Archiv-Guard fragt den
+        // Archivzeitpunkt ab. Ohne diesen Mock bricht der Test mit einem
+        // TypeError ab — **aus dem falschen Grund**: nicht weil das leere
+        // Pflichtdokument abgelehnt wurde, sondern weil der Mock die Frage
+        // nicht beantworten kann.
+        findUnique: vi.fn().mockResolvedValue({
+          id: MANDANT,
+          archiviertAt: null,
+        }),
       },
     } as never,
     {} as never,

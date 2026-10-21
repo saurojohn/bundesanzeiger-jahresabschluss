@@ -7336,6 +7336,141 @@ Mandanten importiert, die Bilanz existiert).
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 75): Ein archivierter Mandant bekam weiterhin ein neues WORM-PDF
+
+#### Der Befund
+
+Die Archiv-Entscheidung (2026-10-09): „Der Bestand bleibt lesbar und
+nachvollziehbar (§ 147 AO), es entstehen **keine neuen Belege**." Gesperrt
+waren Bilanz, GuV, Anhang, Konsolidierung, DATEV-Import, WP-Strecke und die
+qeS-Signatur. Die **PDF-Erzeugung** war es nicht.
+
+**Gemessen.**
+
+```
+PATCH /api/mandant/<id>/archivierung      -> HTTP 200
+POST  /api/pdf/bilanz/<id>/generate       -> HTTP 200
+  wormObjectKey: mandant/…/bilanz/2094/….pdf
+WORM-Objekte vorher/nachher: 13 / 14
+Audit: {"action":"CREATE","entityType":"WormObject"}
+```
+
+Das WORM-PDF ist nicht bloß eine Darstellung — es ist das
+**Veroeffentlichungsobjekt** (zehn Jahre aufbewahrt) und damit ein neuer
+Beleg im Bestand eines Mandanten, der aus dem aktiven Bestand
+verschwunden ist.
+
+Der Kommentar im Signatur-Service behauptete: „Alle anderen Schreibpfade
+waren bereits über `assertMandantNichtArchiviert` gesperrt." Das war eine
+**Behauptung, kein Beleg** — dieselbe Falle wie in Nachtrag 67/70.
+
+#### Die Behebung
+
+`assertMandantBearbeitbar()` im PDF-Service, auf allen vier Generate-Pfaden
+(Bilanz, GuV, Anhang, Abschluss).
+
+**LESEN bleibt offen:** der Download (`downloadForEntity`) ist bewusst
+**nicht** gesperrt — der Bestand eines archivierten Mandanten muss zur
+Nachvollziehbarkeit abrufbar bleiben (§ 147 AO).
+
+**Bewusst nicht geändert:** der E-Bilanz-XBRL-Export. Er legt kein
+aufbewahrungspflichtiges Objekt an (die Datei wird zurückgegeben), sondern
+nur einen Audit-Eintrag — die Nachweisführung dokumentiert den Export. Ein
+Export ist Lesen, kein Fortschreiben.
+
+#### Die Negativprobe
+
+Alte Regel (Pruefung entfernt):
+
+```
+legt nach der Archivierung kein weiteres PDF an -> HTTP 200 (mit wormObjectKey)   erwartet 409
+Gegenprobe: Bestand bleibt abrufbar (Download)   -> gruen
+Gegenprobe: nach dem Aufheben klappt es wieder    -> gruen
+```
+
+#### Der Test
+
+`e2e/archiv-pdf-sperre.e2e.spec.ts` (4 Tests): die Vorbedingung (vor der
+Archivierung entsteht ein Beweis-PDF), die Negativprobe (409 **und** kein
+neues WORM-Objekt) und zwei Gegenproben (Download bleibt offen, nach dem
+Aufheben klappt es wieder).
+
+---
+
+### Nachtrag 2026-10-21 (Nachtrag 76): Zwei Befunde — ein archivierter Mandant wurde eingereicht, und ein Mehrfachrollen-Fall sperrte den Admin aus
+
+#### Befund 1: Ein archivierter Mandant wurde noch zum Bundesanzeiger eingereicht
+
+Die Einreichung legt einen neuen Datensatz an (`BanzSubmission`) und
+schreibt den Abschluss fort (`SIGNED -> SUBMITTED`).
+
+```
+PATCH /api/mandant/<id>/archivierung        -> HTTP 200
+POST  /api/jahresabschluss/<id>/einreichen  -> HTTP 200
+Status des Abschlusses: SUBMITTED (Bestellnummer: MESS-…)
+BanzSubmission-Eintraege: 1
+```
+
+Der Signaturpfad ist gesperrt (Nachtrag 60) — aber ein Abschluss, der **vor**
+der Archivierung signiert wurde, ist `SIGNED` und damit einreichbar. Ein
+Mandant, der aus dem aktiven Bestand verschwunden ist, konnte damit noch
+veroeffentlicht werden.
+
+**Behoben:** Archiv-Sperre in `einreichen()` und `veroeffentlichen()`.
+
+#### Befund 2: Ein Fehler aus Nachtrag 68 — mehrere Rollen auf einem Mandanten
+
+Bei der Messung stiess ich auf einen **Fehler in meinem eigenen Code
+aus Nachtrag 68**: `rollenBindung()` baute eine Map `mandantId -> rolle`.
+`UserMandantRole` hat aber `@@unique([userId, mandantId, rolle])` — ein User
+kann **mehrere** Rollen auf demselben Mandanten haben. Bei mehreren Rollen
+ueberschrieb der letzte Eintrag die anderen:
+
+```
+PATCH /api/mandant/<id>/archivierung
+-> 403 "Nur KANZLEI_ADMIN dieser Kanzlei darf den Mandanten verwalten"
+```
+
+Wer KANZLEI_ADMIN **und** STEUERBERATER auf einem Mandanten hat (eine ganz
+normale Kanzlei-Konstellation), galt als „kein Admin" — ein **berechtigter**
+Weg war gesperrt.
+
+**Behoben:** alle Rollen eines Mandanten sammeln — genau wie es der
+`RolesGuard` seit Nachtrag 40 tut („ALLE Eintraege sammeln, nicht den ersten
+nehmen"). Ich hatte dieselbe Falle an einer zweiten Stelle gebaut.
+
+#### Die Negativproben
+
+```
+Rollenbindung (alt): der Unit-Test "mit KANZLEI_ADMIN neben einer zweiten
+  Rolle" -> rot mit ForbiddenException
+Einreich-Sperre (alt): 200 + status SUBMITTED   erwartet 409
+  Gegenprobe (eigener Abschluss): bleibt gruen
+```
+
+**Die Gegenprobe brauchte einen eigenen Jahresabschluss:** die Einreichung
+setzt den Status auf `SUBMITTED`; mit einem gemeinsamen Abschluss lief sie im
+Negativproben-Lauf auf „steht auf SUBMITTED" — rot, aber aus dem falschen
+Grund.
+
+#### Die Tests
+
+- `e2e/archiv-einreichen-sperre.e2e.spec.ts` (2 Tests): die Negativprobe
+  (409, der Abschluss bleibt `SIGNED`, **kein** Einreichungsbeleg) und die
+  Gegenprobe (nach dem Aufheben klappt die Einreichung wieder).
+- `src/modules/mandant/services/mandant.service.spec.ts`: der
+  Mehrfachrollen-Fall (KANZLEI_ADMIN neben STEUERBERATER auf demselben
+  Mandanten → die Archivierung muss klappen).
+
+**Merksatz:** Eine Rolle je Mandant ist die Ausnahme, nicht die Regel —
+`@@unique([userId, mandantId, rolle])` erlaubt mehrere. Jede Stelle, die
+Rollen aus der Session liest, muss **alle** sammeln. Die erste Fassung
+dieser Zugriffsart stand an zwei Stellen (im `RolesGuard` und in der
+Rollenbindung) — die zweite ist erst beim Messen eines ganz anderen Befundes
+aufgefallen.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

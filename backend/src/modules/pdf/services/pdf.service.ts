@@ -29,6 +29,7 @@ import type {
   PdfGenerationResponse,
 } from '../interfaces/pdf-document.interface';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
+import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 
 export interface PdfServiceContext {
   ip?: string | null;
@@ -77,6 +78,7 @@ export class PdfService {
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
     assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'PDF erzeugen');
     const bilanz = await this.bilanzRepository.findWithPositionen(bilanzId, mandantId);
     if (!bilanz) throw new NotFoundException('Bilanz nicht gefunden');
 
@@ -131,6 +133,7 @@ export class PdfService {
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
     assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'PDF erzeugen');
     const guv = await this.guvRepository.findWithPositionen(guvId, mandantId);
     if (!guv) throw new NotFoundException('GuV nicht gefunden');
     // BEFUND 2026-10-11: Das Vollstaendigkeits-Gate war nur fuer die Bilanz
@@ -188,6 +191,7 @@ export class PdfService {
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
     assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'PDF erzeugen');
     const anhang = await this.anhangRepository.findWithAbschnitte(anhangId, mandantId);
     if (!anhang) throw new NotFoundException('Anhang nicht gefunden');
     // BEFUND 2026-10-11: wie beim GuV — ein Anhang ohne Abschnitte erzeugte
@@ -241,6 +245,7 @@ export class PdfService {
     context: PdfServiceContext,
   ): Promise<PdfGenerationResponse> {
     assertMandantAccess(mandantId, user);
+    await this.assertMandantBearbeitbar(mandantId, 'PDF erzeugen');
 
     // Repository-Zugriff via Prisma direkt — dieser Pfad ist eng
     // an die zentrale `Jahresabschluss`-Entity gekoppelt (kein
@@ -407,6 +412,42 @@ export class PdfService {
    * erzeugten ObjectKey + Hash. Wir berechnen den Hash VOR dem Render
    * nicht — der Render liefert den Buffer, dann wird gehasht.
    */
+  /**
+   * Archiv-Guard fuer die **Erzeugung** (§ 147 AO, Entscheidung 2026-10-14).
+   *
+   * BEFUND 2026-10-21 (Nachtrag 75): Ein archivierter Mandant bekam weiterhin
+   * ein neues **WORM-Objekt** (zehnjaehrige Aufbewahrung) und einen neuen
+   * Audit-Eintrag:
+   *
+   *     POST /api/pdf/bilanz/<id>/generate -> HTTP 200
+   *     WORM-Objekte vorher/nachher: 13 / 14
+   *     Audit: {"action":"CREATE","entityType":"WormObject"}
+   *
+   * Das ist genau das, was die Archiv-Entscheidung ausschliesst: „Der Bestand
+   * bleibt lesbar und nachvollziehbar (§ 147 AO), es entstehen **keine neuen
+   * Belege**." Das WORM-PDF ist kein blosse Darstellung — es ist das
+   * **Veroeffentlichungsobjekt** (zehn Jahre aufbewahrt) und damit ein neuer
+   * Beleg im Bestand.
+   *
+   * Der Kommentar im Signatur-Service behauptete, „alle anderen Schreibpfade
+   * waeren bereits ueber `assertMandantNichtArchiviert` gesperrt" — das war
+   * eine Behauptung, kein Beleg (siehe Nachtrag 67/70).
+   *
+   * **LESEN bleibt offen:** der Download (`downloadForEntity`) ist bewusst
+   * NICHT gesperrt — der Bestand eines archivierten Mandanten muss zur
+   * Nachvollziehbarkeit abrufbar bleiben (§ 147 AO).
+   */
+  private async assertMandantBearbeitbar(
+    mandantId: string,
+    aktion: string,
+  ): Promise<void> {
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { archiviertAt: true },
+    });
+    assertMandantNichtArchiviert(mandant?.archiviertAt, aktion);
+  }
+
   private async renderAndPersist(
     request: PdfGenerationRequest,
     user: AuthUser,

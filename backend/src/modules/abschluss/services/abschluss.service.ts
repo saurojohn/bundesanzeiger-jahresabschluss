@@ -571,9 +571,30 @@ export class AbschlussService {
 
     const mandant = await this.prisma.mandant.findUnique({
       where: { id: mandantId },
-      select: { publishChannel: true, firmenname: true },
+      select: { publishChannel: true, firmenname: true, archiviertAt: true },
     });
     if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+
+    //
+    // BEFUND 2026-10-21 (Nachtrag 76): Ein **archivierter** Mandant liess
+    // sich noch zum Bundesanzeiger einreichen:
+    //
+    //     PATCH /api/mandant/<id>/archivierung  -> HTTP 200
+    //     POST  /api/jahresabschluss/<id>/einreichen -> HTTP 200
+    //     Status des Abschlusses: SUBMITTED (Bestellnummer: MESS-…)
+    //     BanzSubmission-Eintraege: 1
+    //
+    // Die Einreichung legt einen neuen Datensatz an (BanzSubmission) und
+    // schreibt den Abschluss fort (SIGNED -> SUBMITTED). Das widerspricht
+    // der Archiv-Entscheidung: „Der Bestand bleibt lesbar und
+    // nachvollziehbar (§ 147 AO), es entstehen **keine neuen Belege**."
+    //
+    // Der Signaturpfad ist gesperrt (Nachtrag 60) — aber ein Abschluss, der
+    // VOR der Archivierung signiert wurde, ist SIGNED und damit einreichbar.
+    assertMandantNichtArchiviert(
+      mandant.archiviertAt,
+      'Jahresabschluss einreichen',
+    );
 
     const payload = await this.storageService.downloadFromWorm(
       signiertesPdf.objectKey,
@@ -696,6 +717,20 @@ export class AbschlussService {
           `gemeldet werden. Dieser steht auf ${abschluss.status}.`,
       );
     }
+
+    //
+    // BEFUND 2026-10-21 (Nachtrag 76): dieselbe Archiv-Sperre wie beim
+    // Einreichen — ein archivierter Mandant darf nicht veroeffentlicht
+    // werden (siehe dort die Messung).
+    const mandant = await this.prisma.mandant.findUnique({
+      where: { id: mandantId },
+      select: { archiviertAt: true },
+    });
+    if (!mandant) throw new NotFoundException('Mandant nicht gefunden');
+    assertMandantNichtArchiviert(
+      mandant.archiviertAt,
+      'Jahresabschluss als veroeffentlicht melden',
+    );
 
     const jetzt = new Date();
     const aktualisiert = await this.prisma.$transaction(async (tx) => {

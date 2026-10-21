@@ -306,6 +306,37 @@ describe('Mandant-Archivierung', () => {
     expect(mandantUpdate).not.toHaveBeenCalled();
   });
 
+  it('mit KANZLEI_ADMIN neben einer zweiten Rolle auf demselben Mandanten geht es', async () => {
+    // BEFUND 2026-10-21 (Nachtrag 76): `UserMandantRole` hat
+    // `@@unique([userId, mandantId, rolle])` — ein User kann **mehrere**
+    // Rollen auf demselben Mandanten haben. Die Rollenbindung baute eine
+    // Map `mandantId -> rolle`; bei mehreren Rollen ueberschrieb der
+    // letzte Eintrag die anderen, und wer KANZLEI_ADMIN **und**
+    // STEUERBERATER hatte, galt als „kein Admin":
+    //
+    //     PATCH /api/mandant/<id>/archivierung
+    //     -> 403 "Nur KANZLEI_ADMIN dieser Kanzlei darf den Mandanten verwalten"
+    //
+    // Das ist ein Ausfall eines **berechtigten** Wegs — keine Sicherheits-
+    // luecke, aber die gleiche Rolle-macht-Falle wie im `RolesGuard`
+    // (Nachtrag 40). Dort werden alle Rollen gesammelt; das muss hier
+    // genauso gelten.
+    const { service, mandantUpdate } = buildArchivService(null);
+    const adminUndBerater = {
+      id: '55555555-5555-4555-8555-555555555555',
+      globalRole: null,
+      mandanten: [
+        { id: MANDANT, rolle: 'KANZLEI_ADMIN' },
+        { id: MANDANT, rolle: 'STEUERBERATER' },
+      ],
+    } as unknown as AuthUser;
+
+    await expect(
+      service.archivieren(MANDANT, adminUndBerater, ctx),
+    ).resolves.toBeDefined();
+    expect(mandantUpdate).toHaveBeenCalled();
+  });
+
   it('die Loeschsperrt gilt auch bei archiviertem Mandanten', async () => {
     // Archivierung ist KEIN Weg an der Aufbewahrung vorbei: der Mandant
     // ist weiterhin nicht loeschbar, solange Bestand existiert.

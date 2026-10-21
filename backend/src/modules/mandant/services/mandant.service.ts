@@ -157,7 +157,29 @@ export class MandantService {
       return { adminKanzleiIds: [], eigeneKanzleiIds: [], eigeneMandantIds: [] };
     }
 
-    const rolleJeMandant = new Map(user.mandanten.map((m) => [m.id, m.rolle]));
+    // BEFUND 2026-10-21 (Nachtrag 76): **Alle** Rollen eines Mandanten
+    // sammeln, nicht nur eine.
+    //
+    // `UserMandantRole` hat `@@unique([userId, mandantId, rolle])` — ein User
+    // kann also **mehrere** Rollen auf demselben Mandanten haben. Der
+    // vorherige Code baute eine Map `mandantId -> rolle`; bei mehreren
+    // Rollen ueberschrieb der letzte Eintrag die anderen. Wer auf einem
+    // Mandanten KANZLEI_ADMIN **und** STEUERBERATER hat (eine ganz normale
+    // Kanzlei-Konstellation), galt damit als „kein Admin":
+    //
+    //     PATCH /api/mandant/<id>/archivierung
+    //     -> 403 "Nur KANZLEI_ADMIN dieser Kanzlei darf den Mandanten verwalten"
+    //
+    // Das ist genau der Fehler, den der `RolesGuard` seit Nachtrag 40
+    // **nicht** mehr macht (dort: "ALLE Eintraege sammeln, nicht den ersten
+    // nehmen"). Dieselbe Regel gehoert in beide Stellen.
+    const rollenJeMandant = new Map<string, string[]>();
+    for (const m of user.mandanten) {
+      const rollen = Array.isArray(m.rolle) ? m.rolle : [m.rolle];
+      const vorhanden = rollenJeMandant.get(m.id) ?? [];
+      rollenJeMandant.set(m.id, [...vorhanden, ...rollen]);
+    }
+
     const mandanten = await this.prisma.mandant.findMany({
       where: { id: { in: eigeneMandantIds } },
       select: { id: true, kanzleiId: true },
@@ -167,7 +189,7 @@ export class MandantService {
     const eigeneKanzleiIds = new Set<string>();
     for (const mandant of mandanten) {
       eigeneKanzleiIds.add(mandant.kanzleiId);
-      if (rolleJeMandant.get(mandant.id) === 'KANZLEI_ADMIN') {
+      if ((rollenJeMandant.get(mandant.id) ?? []).includes('KANZLEI_ADMIN')) {
         adminKanzleiIds.add(mandant.kanzleiId);
       }
     }

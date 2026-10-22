@@ -245,6 +245,21 @@ export class BrandingService {
   ): Promise<{ logoUrl: string; logoWormKey: string }> {
     await this.assertKanzleiAccess(kanzleiId, user);
 
+    // Tarifpruefung: das Logo ist Teil des **White-Label-Branding** und damit
+    // Premium.
+    //
+    // BEFUND 2026-10-22 (Nachtrag 80): `updateBranding()` pruefte den Tarif
+    // fuer die Farben (`white-label-branding`) und fuer die Custom-Domain
+    // (`custom-domain`) — der **Logo-Upload** pruefte gar nichts. Eine
+    // PILOT-Kanzlei konnte damit ein White-Label-Logo setzen:
+    //
+    //     PATCH /api/branding/:id  {primaryColor} -> HTTP 402  (Gate wirkt)
+    //     POST  /api/branding/:id/logo              -> HTTP 200  (kein Gate)
+    //
+    // Das Logo landet als WORM-Objekt (zehn Jahre Aufbewahrung) und wird
+    // ueber `GET /api/branding/:id/logo/blob` ausgeliefert.
+    await assertFeatureEntitled(this.prisma, kanzleiId, 'white-label-branding');
+
     // MIME-Type-Validierung (defensiv — DTO hat es schon validiert, aber
     // wenn jemand den Service direkt aufruft, ist dies die letzte Verteidigung).
     if (!ALLOWED_LOGO_MIME_TYPES.includes(args.mimeType as never)) {

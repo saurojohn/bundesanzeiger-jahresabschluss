@@ -7501,6 +7501,56 @@ und fragt, warum der Test rot wird.
 
 ---
 
+### Nachtrag 2026-10-22 (Nachtrag 80): Eine Tarifgrenze galt nur für den Schreibpfad, an dem sie zuerst eingebaut wurde
+
+#### Der Befund
+
+Die Tarifgrenzen sind an **drei** Stellen verdrahtet (API-Key anlegen,
+Domain verifizieren, Branding-Farben). Die Frage ist nicht „wo stehen sie",
+sondern **„welche Schreibpfade derselben Funktion sind noch ungesichert?"**
+
+**Gemessen.** Eine PILOT-Kanzlei:
+
+```
+PATCH /api/branding/:id  {primaryColor} -> HTTP 402   (Gate wirkt)
+POST  /api/branding/:id/logo              -> HTTP 200  (kein Gate)
+  -> logoUrl in der Datenbank gesetzt, WORM-Objekt angelegt
+```
+
+`updateBranding()` pruefte den Tarif fuer die **Farben**
+(`white-label-branding`) und fuer die **Custom-Domain** (`custom-domain`) —
+der **Logo-Upload** pruefte gar nichts. Das Logo ist aber Teil desselben
+White-Label-Branding und landet als WORM-Objekt (zehn Jahre Aufbewahrung);
+ausgeliefert wird es ueber `GET /api/branding/:id/logo/blob`.
+
+#### Die Behebung
+
+`uploadLogo()` prueft jetzt `assertFeatureEntitled(..., 'white-label-branding')`.
+
+**Die zwei bewusst offenen Wege** (sie sind keine Luecken):
+
+| Weg | offen | warum |
+|---|---|---|
+| `DELETE /api/branding/:id/logo` | ja | Entfernen muss moeglich bleiben — auch fuer eine Kanzlei, die von Premium heruntergestuft wurde |
+| `DELETE /api/api-keys/:id` | ja | ein Schluessel muss auch ohne Public-API-Tarif widerrufen werden koennen |
+
+#### Die Negativprobe
+
+Gate entfernt → `expected 200 to be 402` (die Antwort enthaelt die
+`logoUrl` — das Logo war gesetzt).
+
+#### Der Test
+
+`e2e/branding-tarif-gate.e2e.spec.ts` (3 Tests): PILOT → Farbe 402 (der
+Gate-Fall als Kontrollpunkt), PILOT → Logo 402 **und** kein Logo in der
+Datenbank, PREMIUM → Logo 200 (der erlaubte Weg bleibt offen).
+
+**Merksatz:** Eine Kontrolle, die an **einem** Pfad hängt, ist an allen
+anderen nicht vorhanden. Die Frage ist nie „ist die Kontrolle da?", sondern
+„welche Schreibpfade derselben Funktion umgehen sie?".
+
+---
+
 ### Nachtrag 2026-10-21 (Nachtrag 74): Der DATEV-Import schrieb Bücher in einen Mandanten, für den die Person nur Wirtschaftsprüfer ist
 
 #### Der Befund

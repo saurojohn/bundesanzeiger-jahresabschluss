@@ -24,7 +24,10 @@ import {
 } from '../constants/anhang.constants';
 import { CreateAnhangDto } from '../dto/create-anhang.dto';
 import { UpdateAnhangDto } from '../dto/update-anhang.dto';
-import { assertKeinZuruecksetzenInBearbeitung } from '../../../common/utils/status-transition';
+import {
+  assertFreigabemarkerUnveraendert,
+  assertKeinZuruecksetzenInBearbeitung,
+} from '../../../common/utils/status-transition';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
@@ -264,6 +267,10 @@ export class AnhangService {
     // Status kommt aus dem Request — ohne diese Pruefung war die
     // DRAFT-Sperre unten mit einem PATCH aufzuheben (Befund 2026-10-09).
     assertKeinZuruecksetzenInBearbeitung(previous.status, dto.status, 'Anhang');
+    // BEFUND 2026-10-22 (Nachtrag 81): der Vier-Augen-Freigabemarker
+    // (APPROVED) darf nicht weggeraeumt werden — er steht im signierten
+    // Dokument.
+    assertFreigabemarkerUnveraendert(previous.status, dto.status, 'Anhang');
     if (previous.status !== 'DRAFT' && dto.abschnitte !== undefined) {
       throw new BadRequestException(
         'Abschnitte können nur in DRAFT-Phase geändert werden',

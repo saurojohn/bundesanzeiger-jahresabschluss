@@ -7551,6 +7551,84 @@ anderen nicht vorhanden. Die Frage ist nie „ist die Kontrolle da?", sondern
 
 ---
 
+### Nachtrag 2026-10-22 (Nachtrag 81): Der Vier-Augen-Marker ließ sich aus dem veröffentlichten Dokument entfernen
+
+#### Der Befund
+
+Der Nachtrag-29-Bericht hatte den Angriff benannt: „setBilanzStatus() setzt
+nach einer WP-Freigabe den Status `APPROVED`. Von dort aus genügte derselbe
+PATCH: **Freigabe einer Wirtschaftsprüferin zurückrechnen**, anschließend
+Positionen ändern. Die Kontrolle war auf zwei Requests verteilt und damit
+keine."
+
+Behoben wurde damals **nur die zweite Hälfte** — die Datensperre. Das
+Wegrechnen des Markers blieb offen, weil die Statusregel ausschließlich den
+Übergang nach `DRAFT` sperrt. Jeder andere Übergang aus `APPROVED` war frei.
+
+**Gemessen.**
+
+```
+Vier-Augen-Freigabe            -> HTTP 200,  Status der Bilanz: APPROVED
+PATCH {status: VALIDATED}      -> HTTP 200,  Status der Bilanz: VALIDATED   <- Marker weg
+PATCH mit Positionen           -> HTTP 400  (die Daten bleiben geschützt)
+Vier-Augen-Datensatz           -> status=APPROVED, freigegebenVonId gesetzt (der Nachweis lebt)
+```
+
+Die **Daten** waren also gesperrt und der Prüfnachweis war vorhanden — aber
+das PDF-Template rendert `Status: ${bilanz.status}`. Im **signierten und
+veröffentlichten** Dokument stand danach „Status: VALIDATED" statt
+„Freigegeben (WP)". Der Audit-Trail (Prüfdatensatz) und das Dokument
+widersprachen sich.
+
+Die Richtung ist die konservative: untertrieben, nicht erfunden (`APPROVED`
+ist per API nicht setzbar — `BILANZ_STATUS` enthält es bewusst nicht). Aber
+ein rechtlich bindendes Dokument, das den eigenen Prüfstand anders ausweist
+als der Trail, ist ein Mangel.
+
+#### Die Entscheidung (2026-10-22, Fachverantwortliche)
+
+**Fail-closed.** Der Freigabestatus ist der Endzustand des Statusfelds: aus
+`APPROVED` ist kein Statuswechsel mehr möglich. (Die Alternative — die
+Freigabe als eigenes Feld `wpFreigegebenAt` — wäre die sauberere
+Ursachenbehebung, weil Arbeitsstatus und Audit-Freigabe zwei verschiedene
+Tatsachen sind; sie braucht aber eine Migration und wurde für diesen
+Durchgang nicht gewählt.)
+
+#### Die Behebung
+
+`common/utils/status-transition.ts` → `assertFreigabemarkerUnveraendert()`,
+aufgerufen im Bilanz-, GuV- und Anhang-Service (symmetrisch — der Marker
+kann heute nur auf der Bilanz entstehen, aber die Regel soll an keiner
+Stelle fehlen).
+
+**Die Freigabe selbst ist nicht betroffen:** sie schreibt den Status direkt
+(`setBilanzStatus`, nicht über den Update-Pfad) und setzt damit `APPROVED`.
+
+#### Die Negativprobe
+
+Schutz entfernt → `expected 200 to be 400` (die Antwort enthielt den
+Status `VALIDATED` bzw. `ARCHIVED` — der Marker war wirklich weg).
+
+#### Der Test
+
+`e2e/vier-augen-marker.e2e.spec.ts` (5 Tests): nach der Freigabe steht
+`APPROVED`; auf `VALIDATED` und auf `ARCHIVED` geht es nicht (400, der
+Marker bleibt); **Gegenproben**: ohne Freigabe bleibt der Weg auf
+`ARCHIVED` offen, und die Positionen einer freigegebenen Bilanz bleiben
+eingefroren.
+
+Dazu der Unit-Test an der Quelle der Wahrheit
+(`common/utils/status-transition.spec.ts`, 7 neue Fälle).
+
+**Merksatz:** Ein Befund, der zur Haelfte behoben wurde, ist nicht behoben.
+Der Nachtrag-29-Angriff nannte **beide** Haelften („zurückrechnen, anschließend
+Positionen ändern") — geschlossen wurde nur die zweite. Das war nur
+auffaellig, weil der Status am PDF **gedruckt** wird: der Marker war
+zunaechst nur ein Anzeigefeld und wurde erst durch den PDF-Befund zur
+Aussage.
+
+---
+
 ### Nachtrag 2026-10-21 (Nachtrag 74): Der DATEV-Import schrieb Bücher in einen Mandanten, für den die Person nur Wirtschaftsprüfer ist
 
 #### Der Befund

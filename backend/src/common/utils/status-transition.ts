@@ -68,6 +68,58 @@ export function assertKeinZuruecksetzenInBearbeitung(
 }
 
 /**
+ * Der **Freigabemarker** der Vier-Augen-Pruefung.
+ *
+ * Er wird von der WP-Freigabe gesetzt (`setBilanzStatus`); per API ist er
+ * nicht setzbar (`BILANZ_STATUS` enthaelt ihn bewusst nicht).
+ */
+export const FREIGABEMARKER = 'APPROVED';
+
+/**
+ * Wirft, wenn der Freigabemarker der Vier-Augen-Pruefung veraendert werden
+ * soll.
+ *
+ * BEFUND 2026-10-22 (Nachtrag 81): Die Regel blockierte bisher **nur** den
+ * Uebergang nach `DRAFT`. Jeder andere Uebergang aus `APPROVED` war frei —
+ * also liess sich der Marker mit einem PATCH wegraeumen:
+ *
+ *     Vier-Augen-Freigabe   -> HTTP 200, Status der Bilanz: APPROVED
+ *     PATCH {status:VALIDATED} -> HTTP 200, Status der Bilanz: VALIDATED
+ *
+ * Die Daten blieben dabei geschuetzt (die Positionen sind ab VALIDATED
+ * eingefroren) und der Pruefdatensatz lebte weiter. Aber das PDF druckt
+ * `Status: ${bilanz.status}` — im **signierten und veroeffentlichten**
+ * Dokument stand danach "VALIDATED" statt "Freigegeben (WP)". Der Audit-Trail
+ * (Pruefdatensatz) und das Dokument widersprachen sich.
+ *
+ * Der Nachtrag-29-Bericht hatte genau diesen Angriff benannt ("Freigabe einer
+ * Wirtschaftsprueferin zurueckrechnen"); behoben wurde damals nur die
+ * zweite Haelfte — die Datenaenderung. Das Wegrechnen des Markers blieb offen.
+ *
+ * ENTSCHEIDUNG der Fachverantwortlichen vom 2026-10-22: fail-closed. Der
+ * Freigabestatus ist der Endzustand des Statusfelds.
+ *
+ * Die Freigabe selbst ist davon **nicht** betroffen: sie schreibt den Status
+ * direkt (nicht ueber den Update-Pfad) und setzt damit `APPROVED`.
+ */
+export function assertFreigabemarkerUnveraendert(
+  aktuell: string,
+  angefordert: string | undefined,
+  bezeichnung: string,
+): void {
+  if (angefordert === undefined || angefordert === aktuell) return;
+  if (aktuell !== FREIGABEMARKER) return;
+
+  throw new BadRequestException(
+    `${bezeichnung} ist durch die Vier-Augen-Freigabe des Wirtschaftsprüfers ` +
+      `freigegeben (Status ${aktuell}). Dieser Freigabestatus darf nicht mehr ` +
+      `geaendert werden: Er weist die Prüfung im signierten und veroeffentlichten ` +
+      `Dokument aus (§ 146 AO, § 147 AO). Ein veraenderter Status wuerde im ` +
+      `Dokument einen anderen Prüfstand ausweisen als der Audit-Trail.`,
+  );
+}
+
+/**
  * Ist der Datensatz noch in Bearbeitung? Dann duerfen Positionen,
  * Abschnitte und Inhalte geaendert werden.
  */

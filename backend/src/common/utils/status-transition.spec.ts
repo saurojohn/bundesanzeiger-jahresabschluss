@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import {
   BEARBEITUNGSSTATUS,
+  FREIGABEMARKER,
+  assertFreigabemarkerUnveraendert,
   assertKeinZuruecksetzenInBearbeitung,
   istInBearbeitung,
 } from './status-transition';
@@ -76,5 +78,63 @@ describe('Statusübergang: Bearbeitung ist monoton', () => {
     expect(istInBearbeitung('VALIDATED')).toBe(false);
     expect(istInBearbeitung('ARCHIVED')).toBe(false);
     expect(istInBearbeitung('APPROVED')).toBe(false);
+  });
+});
+
+describe('Statusübergang: der Vier-Augen-Freigabemarker ist Endzustand', () => {
+  // BEFUND 2026-10-22 (Nachtrag 81): Die Regel blockierte nur den Uebergang
+  // nach DRAFT. Jeder andere Uebergang aus APPROVED war frei — der Marker
+  // liess sich also wegraeumen, und das PDF druckt `Status: ${status}`.
+  it('der Marker kann nicht auf VALIDATED gesetzt werden', () => {
+    expect(() =>
+      assertFreigabemarkerUnveraendert('APPROVED', 'VALIDATED', 'Bilanz'),
+    ).toThrow(BadRequestException);
+  });
+
+  it('der Marker kann auch nicht auf ARCHIVED gesetzt werden', () => {
+    expect(() =>
+      assertFreigabemarkerUnveraendert('APPROVED', 'ARCHIVED', 'Bilanz'),
+    ).toThrow(BadRequestException);
+  });
+
+  it('ohne Statusangabe passiert nichts', () => {
+    expect(() =>
+      assertFreigabemarkerUnveraendert('APPROVED', undefined, 'Bilanz'),
+    ).not.toThrow();
+  });
+
+  it('derselbe Status ist kein Wechsel', () => {
+    expect(() =>
+      assertFreigabemarkerUnveraendert('APPROVED', 'APPROVED', 'Bilanz'),
+    ).not.toThrow();
+  });
+
+  it('ohne Freigabe bleibt der Vorwaertsweg offen', () => {
+    // VALIDATED -> ARCHIVED ist ein vorwaertsgerichteter Schritt und bleibt
+    // erlaubt — die Regel schliesst nur den Freigabemarker aus.
+    expect(() =>
+      assertFreigabemarkerUnveraendert('VALIDATED', 'ARCHIVED', 'Bilanz'),
+    ).not.toThrow();
+    expect(() =>
+      assertFreigabemarkerUnveraendert('DRAFT', 'VALIDATED', 'Bilanz'),
+    ).not.toThrow();
+  });
+
+  it('die Meldung nennt den Freigabestatus und das Gesetz', () => {
+    const fehler = (() => {
+      try {
+        assertFreigabemarkerUnveraendert('APPROVED', 'VALIDATED', 'Bilanz');
+        return null;
+      } catch (e) {
+        return e as BadRequestException;
+      }
+    })();
+    expect(fehler).toBeInstanceOf(BadRequestException);
+    expect(fehler?.message).toContain('APPROVED');
+    expect(fehler?.message).toContain('146');
+  });
+
+  it('der Freigabemarker ist die bekannte Datenbank-Menge', () => {
+    expect(FREIGABEMARKER).toBe('APPROVED');
   });
 });

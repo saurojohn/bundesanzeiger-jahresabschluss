@@ -8396,6 +8396,13 @@ wie echte Stripe-IDs aus. Mit gesetztem Key, aber ohne gesetzte
 die Antwort war „No such price", also ein **Account-Problem** als Diagnose,
 obwohl es ein **Konfigurationsproblem** war.
 
+Und ein Nebenbefund, der dieselbe Klasse trifft: `.env.example` deklarierte
+schon lange `BILLING_PROVIDER=mock` — **der Code las die Variable nie.**
+Die Vorlage versprach einen Schalter, den es nicht gab; die Wahl hing
+ausschließlich an `STRIPE_SECRET_KEY`. Wer sich auf die Dokumentation
+verlassen hat, hat nicht das Verhalten bekommen, das dort beschrieben war.
+Mit dem Fix ist die Zusage wahr.
+
 #### Die Behebung
 
 1. **Der Mock-Checkout teilt die Schranke der Mock-Aktivierung.** Beide

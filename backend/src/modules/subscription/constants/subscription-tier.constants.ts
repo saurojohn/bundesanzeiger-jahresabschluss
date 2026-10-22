@@ -88,14 +88,18 @@ export const TIER_CONFIGS: Readonly<Record<SubscriptionTier, TierConfig>> = {
 };
 
 /**
- * Stripe-Price-IDs (in Stripe-Dashboard hinterlegt).
- * ENV-Variablen überschreiben diese Defaults zur Laufzeit.
+ * BEFUND 2026-10-22 (Nachtrag 85): Die Stripe-Price-IDs standen hier als
+ * Konstante mit **Platzhalter-Defaults** ("price_premium_149eur"). Die
+ * Platzhalter sehen wie echte Stripe-IDs aus — mit gesetztem
+ * STRIPE_SECRET_KEY, aber ohne gesetzte `STRIPE_PRICE_*`, schickte der
+ * Checkout genau diese Zeichenkette an Stripe; die Antwort lautete "No such
+ * price" (ein Account-Problem, obwohl es ein Konfigurationsproblem war).
+ *
+ * Die IDs werden jetzt direkt aus der Konfiguration gelesen
+ * (`STRIPE_PRICE_PILOT` / `_STANDARD` / `_PREMIUM`) und fehlen -> Abbruch
+ * mit einer Meldung, die die Ursache nennt. Platzhalter, die wie echte Werte
+ * aussehen, gehoeren nicht in den Code.
  */
-export const STRIPE_PRICE_IDS: Readonly<Record<SubscriptionTier, string>> = {
-  PILOT: process.env.STRIPE_PRICE_PILOT ?? 'price_pilot_free',
-  STANDARD: process.env.STRIPE_PRICE_STANDARD ?? 'price_standard_49eur',
-  PREMIUM: process.env.STRIPE_PRICE_PREMIUM ?? 'price_premium_149eur',
-};
 
 /**
  * Subscription-Status (Stripe-konform).

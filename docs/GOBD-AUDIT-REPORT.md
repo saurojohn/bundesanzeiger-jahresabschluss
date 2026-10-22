@@ -8344,6 +8344,134 @@ der Einzelfalltest schützt die eine Stelle, der Wächter die Regel.
 
 ---
 
+### Nachtrag 2026-10-22 (Nachtrag 85): Der bezahlte Tarifwechsel lief in der Produktion ins Leere
+
+#### Der Befund
+
+Die Billing-Konfiguration der Produktions-Vorlage war **unvollständig** — und
+die Lücken führten zu zwei verschiedenen, schwer verständlichen Fehlern.
+
+`infra/hetzner/.env.prod.example` enthielt **keinerlei** Billing-Konfiguration:
+kein `STRIPE_SECRET_KEY`, kein `STRIPE_WEBHOOK_SECRET`, kein `STRIPE_PRICE_*`,
+kein `BILLING_PROVIDER`, kein `BILLING_MOCK_ENABLED`.
+
+**Gemessen** mit genau dieser Konfiguration (Server ohne `STRIPE_SECRET_KEY`
+und ohne `BILLING_MOCK_ENABLED`):
+
+```
+[BillingProviderService] Billing-Provider: MOCK — STRIPE_SECRET_KEY nicht gesetzt
+
+POST /api/subscription/<id>/checkout {tier: 'PREMIUM'}
+  -> HTTP 200, providerName = 'mock',
+     url = …?upgrade=success&mock_session=mock_1792702755256_…&tier=PREMIUM&…
+POST /api/subscription/<id>/mock-activate {mockSession: 'mock_…'}
+  -> HTTP 404 "Nicht gefunden"
+SELECT "subscriptionTier" FROM kanzlei
+  -> PILOT          (unveraendert)
+```
+
+Die Kanzlei sah „Premium gebucht", der Tarif blieb PILOT. In der Produktion
+war damit **kein einziger bezahlter Tarifwechsel** möglich — und die
+Premium-Funktionen (`custom-domain`, `public-api`, `white-label-branding`)
+waren praktisch nicht erreichbar.
+
+#### Die Familie: eine Regel, an zwei Stellen nicht eingehalten
+
+Nachtrag 11 (2026-10-11) hatte genau diesen Fehler am **Mock-Activate**
+gefunden und behoben: „der Provider heißt *mock*, weil `STRIPE_SECRET_KEY`
+fehlt — das ist eine **Nebenwirkung** der Konfiguration, keine
+Entscheidung." Der Checkout war dieselbe Lücke, eine Ebene darüber:
+
+| Weg | Gate | Folge bei fehlender Konfiguration |
+|---|---|---|
+| `mock-activate` (Nachtrag 11) | `BILLING_MOCK_ENABLED` | 404 ✓ (geschlossen) |
+| `checkout` (Nachtrag 85) | **keins** | 200 mit einer Session, die **ins Leere** führt ✗ |
+| `BillingProviderService` (Nachtrag 85) | **Nebenwirkung** | Provider wird still zum Mock ✗ |
+| `STRIPE_PRICE_*` (Nachtrag 85) | Platzhalter-Default | Stripe antwortet „No such price" ✗ |
+
+Der dritte Punkt verdient eine eigene Notiz: die Preis-IDs standen als
+Konstante mit **Platzhalter** (`price_premium_149eur`). Die Platzhalter sehen
+wie echte Stripe-IDs aus. Mit gesetztem Key, aber ohne gesetzte
+`STRIPE_PRICE_*`, schickte der Checkout genau diese Zeichenkette an Stripe —
+die Antwort war „No such price", also ein **Account-Problem** als Diagnose,
+obwohl es ein **Konfigurationsproblem** war.
+
+#### Die Behebung
+
+1. **Der Mock-Checkout teilt die Schranke der Mock-Aktivierung.** Beide
+   greifen auf dieselbe Entscheidung zu (`BILLING_MOCK_ENABLED`, fail-closed
+   bei fehlender Variable) — jetzt über **eine** Helper-Methode, nicht über
+   zwei Kopien der Bedingung.
+2. **Die Provider-Wahl ist eine Entscheidung.** `BILLING_PROVIDER=stripe|mock`
+   wird ausgewertet:
+   - `stripe` ohne `STRIPE_SECRET_KEY` → der Dienst **startet nicht** (ein
+     unbeabsichtigter Mock im Produktivbetrieb ist ausgeschlossen);
+   - nicht gesetzt → Ableitung aus dem Key, aber mit einer **lauten**
+     Warnung, die die Ursache benennt (kein stiller Betrieb).
+3. **Die Preis-ID kommt aus der Konfiguration.** Fehlt `STRIPE_PRICE_<TIER>`,
+   bricht der Checkout mit einer Meldung ab, die die Variable nennt. Die
+   Platzhalter-Konstante ist entfernt — Platzhalter, die wie echte Werte
+   aussehen, gehören nicht in den Code.
+4. **Die Produktions-Vorlage enthält den Billing-Block** (mit
+   `CHANGE_ME`-Platzhaltern): `BILLING_PROVIDER`, `BILLING_MOCK_ENABLED`,
+   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_*`.
+
+#### Die Negativprobe
+
+Schranke entfernt, Server mit der Konfiguration der Prod-Vorlage → **drei**
+Tests rot, jeder aus dem richtigen Grund:
+
+```
+Unit   "ohne BILLING_MOCK_ENABLED gibt es keine Mock-Session":
+       promise resolved "{ …(3) }" instead of rejecting
+Unit   "BILLING_MOCK_ENABLED=false ebenfalls nicht":
+       promise resolved "{ …(3) }" instead of rejecting
+e2e    "Checkout und Aktivierung passen zusammen":
+       eine gelieferte Session muss einloesbar sein — sonst hat der
+       Checkout eine tote Session erzeugt: expected 404 to be 200
+```
+
+Die Gegenproben blieben grün: mit ausdrücklicher Freischaltung läuft der
+Mock-Checkout weiter (Pilot und Playwright brauchen ihn), und der echte
+Provider ist von der Mock-Schranke nicht betroffen.
+
+#### Der Test
+
+Der e2e-Test ist bewusst als **Invariante** formuliert und nicht als
+Statuscode-Test — er gilt in jeder Konfiguration:
+
+> *Der Checkout liefert niemals eine Session, die nicht aktiviert werden
+> kann.*
+
+Ist der Mock freigeschaltet, müssen Checkout **und** Aktivierung
+funktionieren; ist er es nicht, antwortet der Checkout 503 mit einer
+Meldung, die die Ursache nennt, **und erzeugt gar keine Session**.
+
+#### Verifikation (Nachtrag 85)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **914/918** (117 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+**Merksatz:** Eine Regel, die an **einer** Stelle einer Kette gilt, gilt an
+den anderen noch lange nicht. Nachtrag 11 hat die Mock-*Aktivierung*
+geschlossen — der Mock-*Checkout* blieb offen, und die Lücke fiel erst auf,
+als jemand die Produktions-Vorlage las statt den Pilot zu testen. Die
+beiden Wege gehoeren zur selben Regel („der Mock-Modus ist eine
+Entscheidung") und gehoeren damit in **eine** Pruefung.
+
+**Merksatz:** Eine Konfigurationsluecke ist nur zur Haelfte ein
+Konfigurationsproblem: zur anderen Haelfte ist sie ein **Fehlerbild**. Fehlt
+`STRIPE_SECRET_KEY`, war der Provider ein Mock (stiller Betrieb); fehlte die
+Price-ID, war es „No such price" (ein Account-Problem als Diagnose). Beide
+Male war die eigentliche Ursache eine fehlende Konfiguration.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

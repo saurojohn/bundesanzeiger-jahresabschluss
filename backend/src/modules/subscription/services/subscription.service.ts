@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -92,6 +93,35 @@ export class SubscriptionService {
   ): Promise<CheckoutResponseDto> {
     await this.assertKanzleiAdminAccess(kanzleiId, user);
 
+    // BEFUND 2026-10-22 (Nachtrag 85): Der **Mock-Checkout** war nicht von
+    // der Freischaltung abhaengig — nur die Mock-*Aktivierung* war es.
+    //
+    //     POST /api/subscription/<id>/checkout  {tier: 'PREMIUM'}
+    //       -> HTTP 200, providerName = 'mock',
+    //          url = …&mock_session=mock_…&tier=PREMIUM
+    //     POST /api/subscription/<id>/mock-activate  {mockSession: 'mock_…'}
+    //       -> HTTP 404 "Nicht gefunden"     (BILLING_MOCK_ENABLED fehlt)
+    //
+    // Der Checkout lieferte also eine Session, die **ins Leere** fuehrte:
+    // die Kanzlei sah "Premium gebucht", der Tarif blieb PILOT. In der
+    // Produktion (infra/hetzner/.env.prod.example enthaelt keine
+    // Billing-Konfiguration, also auch kein STRIPE_SECRET_KEY) war damit
+    // **kein einziger bezahlter Tarifwechsel** moeglich.
+    //
+    // Der Mock-Checkout teilt sich jetzt die Schranke der Mock-Aktivierung:
+    // der Mock-Modus ist eine **Entscheidung**, keine Nebenwirkung einer
+    // fehlenden Konfiguration.
+    if (
+      this.billingProvider.getProviderName() === 'mock' &&
+      !this.mockFreigeschaltet()
+    ) {
+      throw new ServiceUnavailableException(
+        'Billing ist nicht konfiguriert: STRIPE_SECRET_KEY fehlt und der ' +
+          'Mock-Modus ist nicht ausdrücklich freigeschaltet ' +
+          '(BILLING_MOCK_ENABLED). Der Checkout kann nicht erstellt werden.',
+      );
+    }
+
     const kanzlei = await this.kanzleiRepository.findById(kanzleiId);
     if (!kanzlei) throw new NotFoundException('Kanzlei nicht gefunden');
 
@@ -168,9 +198,9 @@ export class SubscriptionService {
     await this.assertKanzleiAdminAccess(kanzleiId, user);
 
     // Fail-closed: die Freischaltung ist eine Entscheidung, keine Folge.
-    const freigeschaltet =
-      (this.configService.get<string>('BILLING_MOCK_ENABLED') ?? 'false').toLowerCase() === 'true';
-    if (!freigeschaltet) {
+    // (Gemeinsam mit dem Checkout — Nachtrag 85: der Mock-Checkout war
+    // nicht geschlossen, der Mock-Activate schon.)
+    if (!this.mockFreigeschaltet()) {
       throw new NotFoundException('Nicht gefunden');
     }
 
@@ -451,6 +481,29 @@ export class SubscriptionService {
     if (!mandant) {
       throw new ForbiddenException('Kein Zugriff auf diese Kanzlei');
     }
+  }
+
+  /**
+   * Ist der Mock-Modus **ausdrücklich** freigeschaltet?
+   *
+   * BEFUND 2026-10-11 (Nachtrag 11): Die alte Bedingung war
+   *
+   *     if (this.billingProvider.getProviderName() !== 'mock') throw ...
+   *
+   * Der Provider heisst genau dann 'mock', wenn `STRIPE_SECRET_KEY` nicht
+   * gesetzt ist — das ist eine NEBENWIRKUNG der Konfiguration, keine
+   * Entscheidung. Der Mock-Modus ist deshalb eine **Entscheidung**, die
+   * ausdrücklich gesetzt wird (Nachtrag 85: dieselbe Schranke gilt jetzt
+   * fuer den Checkout — vorher lieferte der Checkout eine Session, die ins
+   * Leere fuehrte).
+   *
+   * Fehlt die Variable, gilt sie als **nicht** freigeschaltet (fail-closed).
+   */
+  private mockFreigeschaltet(): boolean {
+    return (
+      (this.configService.get<string>('BILLING_MOCK_ENABLED') ?? 'false')
+        .toLowerCase() === 'true'
+    );
   }
 
   /**

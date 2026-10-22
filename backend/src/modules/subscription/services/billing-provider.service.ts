@@ -1,10 +1,14 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
   SubscriptionTier,
   SubscriptionStatus,
 } from '../constants/subscription-tier.constants';
-import { STRIPE_PRICE_IDS } from '../constants/subscription-tier.constants';
 
 /**
  * Billing-Provider-Abstraktion (M4 Sprint 3).
@@ -67,15 +71,62 @@ export class BillingProviderService implements OnModuleInit {
   private provider: BillingProvider;
 
   constructor(private readonly configService: ConfigService) {
+    // BEFUND 2026-10-22 (Nachtrag 85): Die Provider-Wahl war eine
+    // NEBENWIRKUNG der Konfiguration — der Provider heisst genau dann
+    // 'mock', wenn `STRIPE_SECRET_KEY` nicht gesetzt ist. In der Produktion
+    // enthaelt `infra/hetzner/.env.prod.example` **keine** Billing-Konfiguration
+    // (gemessen: der Checkout lieferte eine Mock-Session, die Mock-Aktivierung
+    // war gesperrt — der bezahlte Pfad war tot).
+    //
+    // Jetzt ist die Wahl eine **Entscheidung**:
+    //   - `BILLING_PROVIDER=stripe` — Stripe (fehlt der Key, startet der
+    //     Dienst nicht: ein unbeabsichtigter Mock im Produktivbetrieb ist
+    //     ausgeschlossen)
+    //   - `BILLING_PROVIDER=mock`   — Mock, ausdruecklich gewollt
+    //   - nicht gesetzt             — Rueckfall auf die Ableitung aus dem
+    //     Key, mit einer lauten Warnung (nicht still)
+    const gewaehlt = (
+      this.configService.get<string>('BILLING_PROVIDER') ?? ''
+    ).toLowerCase();
     const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY');
-    if (stripeKey) {
-      // Production: StripeProvider
-      this.provider = new StripeProvider(this.configService);
-      this.logger.log('Billing-Provider: STRIPE (Live-Mode)');
-    } else {
-      // Dev/Pilot: MockProvider
+
+    if (gewaehlt === 'mock') {
       this.provider = new MockProvider();
-      this.logger.log('Billing-Provider: MOCK (Dev/Pilot) — STRIPE_SECRET_KEY nicht gesetzt');
+      this.logger.warn(
+        'Billing-Provider: MOCK (ausdrücklich gewählt via BILLING_PROVIDER=mock)',
+      );
+      return;
+    }
+    if (gewaehlt === 'stripe') {
+      if (!stripeKey) {
+        throw new Error(
+          'BILLING_PROVIDER=stripe, aber STRIPE_SECRET_KEY fehlt — der ' +
+            'Dienst startet nicht. Ein unbeabsichtigter Mock im ' +
+            'Produktivbetrieb ist ausgeschlossen.',
+        );
+      }
+      this.provider = new StripeProvider(this.configService);
+      this.logger.log('Billing-Provider: STRIPE (Live-Mode, ausdrücklich gewählt)');
+      return;
+    }
+
+    // Nicht gesetzt: Rueckfall auf die Ableitung — aber mit einer Warnung,
+    // die den Fehler der stillen Nebenwirkung benennt.
+    if (stripeKey) {
+      this.provider = new StripeProvider(this.configService);
+      this.logger.warn(
+        'Billing-Provider: BILLING_PROVIDER ist nicht gesetzt — der Provider ' +
+          'wurde aus STRIPE_SECRET_KEY abgeleitet. Bitte BILLING_PROVIDER ' +
+          'explizit setzen (stripe oder mock).',
+      );
+    } else {
+      this.provider = new MockProvider();
+      this.logger.warn(
+        'Billing-Provider: MOCK — BILLING_PROVIDER ist nicht gesetzt und ' +
+          'STRIPE_SECRET_KEY fehlt. In der Produktion ist damit kein ' +
+          'bezahlter Tarifwechsel möglich; BILLING_PROVIDER und ' +
+          'STRIPE_SECRET_KEY setzen.',
+      );
     }
   }
 
@@ -149,7 +200,7 @@ class MockProvider implements BillingProvider {
  * Damit der Code tsc-clean bleibt, ist die Stripe-SDK-Aufrufe in
  * Type-Guards gekapselt.
  */
-class StripeProvider implements BillingProvider {
+export class StripeProvider implements BillingProvider {
   readonly name = 'stripe' as const;
 
   constructor(private readonly configService: ConfigService) {
@@ -187,9 +238,28 @@ class StripeProvider implements BillingProvider {
     const stripe = new Stripe(this.configService.get<string>('STRIPE_SECRET_KEY') ?? '', {
       apiVersion: '2024-11-20.acacia',
     });
+    // BEFUND 2026-10-22 (Nachtrag 85): Der Preis kam aus einer Konstante mit
+    // **Platzhalter-Defaults** ("price_premium_149eur"). Die Placeholder sehen
+    // wie echte Stripe-IDs aus — und mit einem echten Key, aber ohne
+    // gesetzte `STRIPE_PRICE_*`, schickte der Checkout sie an Stripe. Die
+    // Antwort lautete dann "No such price": ein Stripe-Fehler, der nach
+    // einem Konfigurationsproblem aussieht, aber nach einem Account-Problem.
+    //
+    // Der Preis wird jetzt aus der Konfiguration gelesen; fehlt er, gibt es
+    // eine Meldung, die die Ursache nennt. Die Platzhalter-Konstante ist
+    // damit ueberfluessig (und entfernt).
+    const preisKey = `STRIPE_PRICE_${args.tier.toUpperCase()}`;
+    const preisId = this.configService.get<string>(preisKey);
+    if (!preisId) {
+      throw new ServiceUnavailableException(
+        `${preisKey} ist nicht gesetzt — der Checkout kann nicht erstellt werden. ` +
+          'Die Price-ID wird im Stripe-Dashboard hinterlegt und hier als ' +
+          'Umgebungsvariable eingetragen.',
+      );
+    }
     const session = (await stripe.checkout.sessions.create({
       mode: 'subscription',
-      line_items: [{ price: STRIPE_PRICE_IDS[args.tier], quantity: 1 }],
+      line_items: [{ price: preisId, quantity: 1 }],
       success_url: args.successUrl,
       cancel_url: args.cancelUrl,
       client_reference_id: args.kanzleiId,

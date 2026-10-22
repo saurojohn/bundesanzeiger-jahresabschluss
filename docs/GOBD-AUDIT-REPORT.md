@@ -8215,6 +8215,8 @@ Falschen. Im Mock muss die Umgebung so beschaffen sein, dass der alte Code
 sie tatsächlich akzeptiert — sonst wird der Fehlerzweig geprüft statt der
 Regel.
 
+---
+
 #### Verifikation (Nachtrag 83)
 
 | Prüfung | Ergebnis |
@@ -8224,6 +8226,121 @@ Regel.
 | `npx vitest run` | **897/901** (113 Dateien, 4 übersprungen, 0 Fehlschläge) |
 | `npx playwright test` | **80/80** |
 | `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+### Nachtrag 2026-10-22 (Nachtrag 84): Die DNS-Verifikation schrieb das Branding, ohne den Branding-Cache zu invalidieren
+
+#### Der Befund
+
+`GET /api/branding/:kanzleiId` liefert aus dem Cache (`branding:<kanzleiId>`,
+TTL **1 Stunde**). Die DNS-Verifikation schreibt `customDomain` und
+`customDomainVerified` — genau die Felder, die dieser Cache hält — und
+invalidierte den Cache nicht.
+
+**Gemessen** an der laufenden API:
+
+```
+POST /api/dns/<id>/start-verification  {customDomain: "mess-cache-…"}
+  -> HTTP 200
+SELECT "customDomain" FROM kanzlei
+  -> "mess-cache-….example.de"
+GET /api/branding/<id>
+  -> {"customDomain": null}          <- bis zu einer Stunde alt
+```
+
+#### Die Familie: wer invalidiert, wer nicht
+
+Alle Schreibpfade auf die Kanzlei-Zeile wurden geprüft:
+
+| Schreibpfad | Invalidiert `branding:`? |
+|---|---|
+| `branding.service.updateBranding` (Farben, Domain) | ja |
+| `branding.service.uploadLogo` | ja |
+| `branding.service.deleteLogo` / `clearLogo` | ja |
+| `domain-verification.startVerification` (setzt `customDomain`) | **nein** |
+| `domain-verification.verifyVerification` (setzt `customDomainVerified`) | **nein** |
+| `subscription.service` (Tarif, Status) | nicht nötig — der Tarif steckt nicht im Branding-DTO |
+
+Der Fehler war leicht zu übersehen: das Branding-Modell invalidiert an
+**allen drei** eigenen Schreibpfaden. Nur der Schreibpfad **außerhalb** des
+Moduls blieb unberücksichtigt — und der ist genau der, den man nicht im
+Blick hat, wenn man das Branding-Modum liest.
+
+#### Die Wirkung
+
+Der Nutzer startet die Verifikation, trägt den TXT-Record ein, die Prüfung
+gelingt — und nach einem Neuladen der Seite steht wieder „Domain nicht
+verifiziert". Bis zu einer Stunde lang zeigt die Oberfläche einen Stand, den
+es nicht mehr gibt. Das PDF ist **nicht** betroffen (es verwendet die Domain
+nicht), der Audit-Trail ebenfalls nicht (er schreibt in die Datenbank).
+
+#### Die Behebung
+
+1. `DomainVerificationService` invalidiert den Branding-Cache nach dem
+   Schreiben — **nach** dem Write und **außerhalb** des try/catch: eine
+   gescheiterte Invalidierung ist ein veralteter Cache, aber *kein*
+   gescheiterter Schreibvorgang. Beides zu vermischen wäre genau der Fehler,
+   den dieser Block 2026-10-06 behoben hat (der Aufrufer glaubte, die Domain
+   sei nicht gespeichert).
+2. **Ein Wächter statt eines Einzelfalltests**
+   (`src/common/cache/branding-cache-invalidation.spec.ts`): jede Datei der
+   Service-Schicht, die ein Branding-Feld schreibt, muss den Branding-Cache
+   invalidieren. Der Einzelfalltest fällt nicht, wenn ein **weiterer**
+   Schreiber dazukommt — der Wächter schon.
+
+Der Wächter prüft die Service-Schicht. Ausgenommen sind die Datenschicht
+(`common/repositories/`) und die Routing-Schicht (`controllers/`) — beide sind
+per Definition nicht zuständig für die Cache-Pflege, und der Aufrufer wird
+erfasst. Es gibt **keine Ausnahmeliste** für einzelne Dateien.
+
+#### Die Negativprobe
+
+Invalidierung entfernt → **vier** Tests rot, jeder aus dem richtigen Grund:
+
+```
+Unit   "invalidiert den Branding-Cache nach dem Schreiben":
+       expected "spy" to be called with arguments: [ … ]
+Unit   "invalidiert den Branding-Cache auch nach der Verifikation":
+       expected "spy" to be called with arguments: [ … ]
+Wächter "invalidiert den Branding-Cache in jedem Schreibpfad":
+       diese Dateien schreiben ein Branding-Feld, invalidieren den
+       Branding-Cache aber nicht:
+       src/modules/dns/services/domain-verification.service.ts
+e2e    "liefert die Domain sofort, nachdem die Verifikation sie gesetzt hat":
+       die Branding-API lieferte einen veralteten Wert (der Cache wurde nicht
+       invalidiert): expected null to be 'e2e-cache-….example.de'
+```
+
+#### Die Tests
+
+- `src/common/cache/branding-cache-invalidation.spec.ts` (2 Tests): der
+  Wächter — plus ein **Vorbildungstest**, der sicherstellt, dass der Wächter
+  überhaupt Schreibpfade findet (ein leerer Fund wäre genauso grün wie der
+  Befund).
+- `src/modules/dns/services/domain-verification.service.spec.ts` (2 neue
+  Fälle): der Cache wird nach dem Schreiben invalidiert — beim Start und bei
+  der Verifikation.
+- `e2e/branding-cache-invalidation.e2e.spec.ts` (1 Test): nach
+  `start-verification` liefert die Branding-API **sofort** die neue Domain
+  (ohne Wartezeit und ohne Reload).
+
+**Merksatz:** Ein Cache gehört dem Modul, das ihn liest — die **Daten** aber
+dem Modul, das sie schreibt. Wer Felder schreibt, die ein fremder Cache
+hält, muss ihn invalidieren; sonst zeigt die Oberfläche einen Stand, den es
+nicht mehr gibt.
+
+**Merksatz:** „An allen drei eigenen Schreibpfaden invalidiert" sagt nichts
+über den vierten — den in einem anderen Modul. Eine Regel, die eine
+Modulgrenze überschreitet, braucht einen Wächter, der sie überschreitet:
+der Einzelfalltest schützt die eine Stelle, der Wächter die Regel.
+
+#### Verifikation (Nachtrag 84)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **902/906** (115 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
 
 ---
 

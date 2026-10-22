@@ -84,13 +84,23 @@ function buildService(opts: { updateWirft?: boolean } = {}) {
     }),
     verifyTxtRecordViaPublicDns: vi.fn().mockResolvedValue(false),
   };
+  // BEFUND 2026-10-22 (Nachtrag 84): Der Service invalidiert nach dem
+  // Schreiben den Branding-Cache — die Verifikation schreibt Felder, die
+  // `GET /api/branding/:kanzleiId` aus dem Cache liefert.
+  const cache = {
+    invalidate: vi.fn().mockResolvedValue(undefined),
+    memoize: vi.fn(async (_k: string, _t: number, fn: () => Promise<unknown>) => fn()),
+    get: vi.fn().mockReturnValue(undefined),
+    set: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new DomainVerificationService(
     dnsProvider as never,
     kanzleiRepository as never,
     { record: vi.fn().mockResolvedValue(undefined) } as never,
     prisma as never,
+    cache as never,
   );
-  return { service, prisma, kanzleiRepository, dnsProvider };
+  return { service, prisma, kanzleiRepository, dnsProvider, cache };
 }
 
 const adminVonA = {
@@ -277,5 +287,27 @@ describe('DomainVerification: der Token wird geprueft (Nachtrag 83)', () => {
       antwort.verificationToken,
     );
     expect(daten.data.customDomainVerificationRequestedAt).toBeInstanceOf(Date);
+  });
+
+  it('invalidiert den Branding-Cache nach dem Schreiben (Nachtrag 84)', async () => {
+    // Der Cache haelt genau die Felder, die diese Verifikation schreibt
+    // (`customDomain`, `customDomainVerified`). Ohne Invalidierung lieferte
+    // die Branding-API bis zu einer Stunde (TTL) den alten Stand.
+    const { service, cache } = buildService();
+    await service.startVerification(KANZLEI_A, 'kanzlei-a.example', adminVonA, {});
+    expect(cache.invalidate).toHaveBeenCalledWith(`branding:${KANZLEI_A}`);
+  });
+
+  it('invalidiert den Branding-Cache auch nach der Verifikation', async () => {
+    const { service, cache, kanzleiRepository, dnsProvider } = buildService();
+    kanzleiRepository.findById.mockResolvedValue({
+      id: KANZLEI_A,
+      customDomain: 'kanzlei-a.example',
+      customDomainVerified: false,
+      customDomainVerificationToken: 'a'.repeat(32),
+    });
+    dnsProvider.verifyTxtRecordViaPublicDns.mockResolvedValue(true);
+    await service.verifyVerification(KANZLEI_A, adminVonA, {});
+    expect(cache.invalidate).toHaveBeenCalledWith(`branding:${KANZLEI_A}`);
   });
 });

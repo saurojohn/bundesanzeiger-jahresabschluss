@@ -116,6 +116,9 @@ describe('BEFUND 2026-10-11: Admin in A darf nicht in B schreiben', () => {
       { findById: vi.fn().mockResolvedValue(null) } as never,
       { record: vi.fn() } as never,
       mandantPrisma() as never,
+      // BEFUND 2026-10-22 (Nachtrag 84): der Service invalidiert nach dem
+      // Schreiben den Branding-Cache.
+      { invalidate: vi.fn(), memoize: vi.fn() } as never,
     );
     await expect(
       service.startVerification(KANZLEI_B, 'kanzlei-b.example', userMitGeteilterAdminRolle(), ctx),

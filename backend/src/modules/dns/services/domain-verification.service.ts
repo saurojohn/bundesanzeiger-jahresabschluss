@@ -14,6 +14,7 @@ import type { AuthUser } from '../../auth/types/auth-user.types';
 import { assertFeatureEntitled } from '../../../common/utils/entitlements';
 import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
 import { normalisiereDomain } from '../../../common/utils/domain-normalisierung';
+import { CacheManagerService } from '../../../common/cache/cache-manager.service';
 
 /**
  * Domain-Verifikations-Service (M4 Sprint 3).
@@ -50,6 +51,15 @@ export class DomainVerificationService {
     private readonly kanzleiRepository: KanzleiRepository,
     private readonly auditService: AuditService,
     private readonly prisma: PrismaService,
+    /**
+     * BEFUND 2026-10-22 (Nachtrag 84): Die Verifikation schreibt Felder, die
+     * der Branding-Cache haelt (`customDomain`, `customDomainVerified`). Der
+     * Cache gehoert zwar zum Branding-Modul, die Daten aber nicht — ohne
+     * Invalidierung lieferte `GET /api/branding/:kanzleiId` bis zu **eine
+     * Stunde** (TTL) den alten Stand: nach der Verifikation war die Domain
+     * in der Datenbank, in der API aber weiterhin `null`.
+     */
+    private readonly cache: CacheManagerService,
   ) {}
 
   /**
@@ -364,6 +374,19 @@ export class DomainVerificationService {
   /**
    * Prisma-Update mit Logging bei Fehlern (z.B. wenn Schema-Migration
    * noch nicht durch ist und Spalten fehlen).
+   *
+   * BEFUND 2026-10-22 (Nachtrag 84): Nach dem Schreiben wird der
+   * **Branding-Cache** invalidiert. Das Update aendert `customDomain` und
+   * `customDomainVerified` — genau die Felder, die
+   * `GET /api/branding/:kanzleiId` aus dem Cache liefert (TTL 1 h). Ohne
+   * Invalidierung blieb der alte Stand bis zum Ablauf stehen: nach der
+   * Verifikation war die Domain in der Datenbank, in der API aber weiterhin
+   * `null` (gemessen).
+   *
+   * Der Cache gehoert zwar zum Branding-Modul, die Daten aber nicht — wer
+   * sie schreibt, muss ihn invalidieren. Der Wächter
+   * `src/common/cache/branding-cache-invalidation.spec.ts` stellt sicher,
+   * dass kein weiterer Schreiber das vergisst.
    */
   private async prismaUpdateWithFallback(
     kanzleiId: string,
@@ -384,6 +407,19 @@ export class DomainVerificationService {
       );
       throw new InternalServerErrorException(
         'Die Domain konnte nicht gespeichert werden. Bitte erneut versuchen.',
+      );
+    }
+
+    // Cache invalidieren — **nach** dem Schreiben und ausserhalb des
+    // try/catch: eine gescheiterte Invalidierung ist ein veralteter Cache,
+    // aber **kein** gescheiterter Schreibvorgang. Beides zu vermischen waere
+    // genau der Fehler, den dieser Block 2026-10-06 behoben hat (der
+    // Aufrufer glaubte, die Domain sei nicht gespeichert).
+    try {
+      await this.cache.invalidate(`branding:${kanzleiId}`);
+    } catch (err) {
+      this.logger.error(
+        `Branding-Cache konnte nicht invalidiert werden: ${(err as Error).message}`,
       );
     }
   }

@@ -21,7 +21,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { BrandingService } from './branding.service';
 
 const KANZLEI_A = 'aaaaaaaa-7777-4777-8777-aaaaaaaaaaaa';
@@ -165,3 +169,86 @@ describe('BrandingService.getLogoBuffer: Zugriffsprüfung', () => {
 // Nur zur Vollstaendigkeit referenziert: NotFoundException wird in
 // getLogoBuffer weiterhin verwendet (eigene Kanzlei ohne Eintrag).
 void NotFoundException;
+/**
+ * BEFUND 2026-10-22 (Nachtrag 83): Die Eindeutigkeitspruefung der
+ * Custom-Domain ist eine **Pruefung**, kein Versprechen — zwischen Pruefen
+ * und Schreiben kann ein zweiter Aufruf dazwischenkommen. Dann greift der
+ * UNIQUE-Constraint der Datenbank und Prisma meldet P2002.
+ *
+ * Das ist kein Serverdefekt, sondern "die Domain ist inzwischen vergeben" —
+ * und muss auch so antworten (400), nicht 500.
+ */
+describe('BrandingService: die Domain-Eindeutigkeit gilt auch im Gleichstand', () => {
+  const KANZLEI = 'aaaaaaaa-7777-4777-8777-aaaaaaaaaaaa';
+  const MANDANT = 'mandant-a';
+
+  const admin = {
+    id: 'a'.repeat(8) + '-7777-4777-8777-777777777777',
+    globalRole: null,
+    mandanten: [{ id: MANDANT, firmenname: 'A GmbH', rolle: 'KANZLEI_ADMIN' }],
+  } as never;
+
+  function svcMit(updateBranding: () => Promise<unknown>) {
+    const prisma = {
+      mandant: {
+        findFirst: vi.fn().mockResolvedValue({ id: MANDANT }),
+        findMany: vi.fn().mockResolvedValue([{ id: MANDANT }]),
+      },
+      kanzlei: {
+        // Premium — sonst greift zuerst die Tarifgrenze (402).
+        findUnique: vi.fn().mockResolvedValue({ id: KANZLEI, subscriptionTier: 'PREMIUM' }),
+      },
+    };
+    const kanzleiRepository = {
+      findById: vi.fn().mockResolvedValue({
+        id: KANZLEI,
+        customDomain: null,
+        customDomainVerified: false,
+        logoUrl: null,
+      }),
+      isCustomDomainTaken: vi.fn().mockResolvedValue(false),
+      updateBranding: vi.fn().mockImplementation(updateBranding),
+    };
+    const cache = {
+      memoize: vi.fn(async (_k: string, _t: number, fn: () => Promise<unknown>) => fn()),
+      get: vi.fn().mockReturnValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+      invalidate: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new BrandingService(
+      prisma as never,
+      cache as never,
+      kanzleiRepository as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { downloadFromWorm: vi.fn() } as never,
+    );
+    return { service, kanzleiRepository };
+  }
+
+  it('antwortet mit 400, wenn der UNIQUE-Constraint greift', async () => {
+    const { service } = svcMit(() =>
+      Promise.reject(Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })),
+    );
+    await expect(
+      service.updateBranding(
+        KANZLEI,
+        { customDomain: 'example.de' } as never,
+        admin,
+        {},
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('reicht andere Fehler unveraendert weiter', async () => {
+    // Ein DB-Ausfall darf nicht als "Domain vergeben" getarnt werden.
+    const { service } = svcMit(() => Promise.reject(new Error('P1001: kein Server')));
+    await expect(
+      service.updateBranding(
+        KANZLEI,
+        { customDomain: 'example.de' } as never,
+        admin,
+        {},
+      ),
+    ).rejects.toThrow('P1001: kein Server');
+  });
+});

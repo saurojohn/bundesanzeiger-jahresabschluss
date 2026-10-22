@@ -41,9 +41,26 @@ model Kanzlei {
   accentColor          String?   @default("#0ea5e9")
   /// Custom-Domain (FQDN) — z.B. "rechnungen.musterkanzlei.de".
   /// M4: DNS-Verifikation, M3: nur Speicherung + Anzeige.
+  ///
+  /// BEFUND 2026-10-22 (Nachtrag 83): Der Wert wird **normalisiert**
+  /// gespeichert (getrimmt, kleingeschrieben, ohne abschliessenden Punkt).
+  /// DNS ist case-insensitiv, der Unique-Constraint ist es nicht — ohne
+  /// Normalisierung konnten zwei Kanzleien dieselbe Domain beanspruchen
+  /// ("example.de" und "EXAMPLE.DE").
   customDomain         String?   @unique
   /// true sobald DNS-TXT-Record verifiziert wurde (M4).
   customDomainVerified Boolean   @default(false)
+  /// Token der laufenden Domain-Verifikation (32 Hex-Zeichen).
+  ///
+  /// BEFUND 2026-10-22 (Nachtrag 83): Der Token wurde zwar ausgestellt und
+  /// dem Client zurueckgegeben, aber **nirgends gespeichert** — und
+  /// `verifyVerification()` verglich ihn mit **nichts**. Die Pruefung
+  /// bestaetigte damit nur "irgendein TXT-Record mit dem Praefix
+  /// banz-verify= existiert", nicht "der Record enthaelt das Token dieser
+  /// Kanzlei". Ohne Token gibt es keine Verifikation.
+  customDomainVerificationToken String?
+  /// Wann wurde die Verifikation angefordert? (Nachvollziehbarkeit)
+  customDomainVerificationRequestedAt DateTime?
   /// Wann wurde das Branding zuletzt geändert (für Audit + Cache-Invalidation).
   brandingUpdatedAt    DateTime?
   /// Welcher User hat das Branding zuletzt geändert.

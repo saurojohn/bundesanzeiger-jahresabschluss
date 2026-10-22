@@ -8022,6 +8022,211 @@ Produktentscheidung, keine Korrektur.
 
 ---
 
+### Nachtrag 2026-10-22 (Nachtrag 83): Die Custom-Domain-Verifikation beweist nichts, und zwei Kanzleien konnten dieselbe Domain beanspruchen
+
+#### Der Befund (zwei Teile, eine Kette)
+
+**Teil A — die Domain-Eindeutigkeit war case-sensitiv.** DNS ist
+case-insensitiv, die Prüfung war es nicht: `isCustomDomainTaken()` suchte per
+`findUnique` auf dem exakten String, und der UNIQUE-Constraint greift bei
+`"EXAMPLE.DE"` vs. `"example.de"` ebenfalls nicht — zwei verschiedene
+Zeichenketten.
+
+**Gemessen** an der laufenden API (zwei Kanzleien, die Seed-Daten enthalten
+nur eine):
+
+```
+Kanzlei A: PATCH /api/branding/<A> {customDomain: "beispiel-messung.de"}
+        -> HTTP 200
+Kanzlei B: PATCH /api/branding/<B> {customDomain: "BEISPIEL-MESSUNG.DE"}
+        -> HTTP 200          (statt 400 — die Domain war "frei")
+
+SELECT name, "customDomain" FROM kanzlei WHERE "customDomain" IS NOT NULL;
+  Musterkanzlei Steuerberatung GmbH | beispiel-messung.de
+  Messkanzlei B GmbH                 | BEISPIEL-MESSUNG.DE
+```
+
+**Teil B — der ausgestellte Verifikationstoken wurde nie verglichen.**
+`startVerification()` erzeugte einen Token, gab ihn dem Client mit („TXT-Record
+Wert `banz-verify=<token>`") — und legte ihn **nirgends ab**. `verifyVerification()`
+las den erwarteten Wert stattdessen **aus dem DNS selbst**:
+
+```ts
+const records = await listTxtRecords(expectedName);
+const expectedValue = records.find((r) => r.value.startsWith('banz-verify='))?.value;
+const publicMatch = await verifyTxtRecordViaPublicDns(expectedName, expectedValue);
+```
+
+Geprüft wurde damit: *„Es existiert ein TXT-Record mit dem Präfix
+`banz-verify=` unter `_banz-verify.<domain>`, und er ist öffentlich sichtbar."*
+Nicht geprüft wurde: *„Der Record enthält genau das Token, das diese Kanzlei
+gerade erhalten hat."* Der Token konnte also **nicht** in die Prüfung eingehen
+— er existierte im System nur noch als Zeichenkette in der Antwort an den
+Client.
+
+Drei weitere Fehler im selben Pfad:
+
+- **Ohne Anfrage prüfbar.** `verifyVerification()` brauchte keine vorherige
+  `startVerification()` — die Domain ließ sich allein über den Branding-Pfad
+  setzen und dann „verifizieren". Das Flag `customDomainVerified` stand danach
+  auf `true`, obwohl niemand die Domain nachgewiesen hatte.
+- **Der Vergleich war ein Teilstring-Vergleich.** `value === expectedValue ||
+  value.includes(expectedValue)` — ein Record, der den erwarteten Wert nur
+  *enthält*, galt als Treffer. (Das `includes` ist kein Notbehelf für
+  fehlende Quotes: Node liefert TXT-Werte ohne Quotes — gemessen.)
+- **Der Provider war eine Voraussetzung.** `listTxtRecords()` wirft ohne
+  konfigurierte Zone (`HETZNER_DNS_ZONE_ID` fehlt) — der dokumentierte
+  Handpfad („User trägt TXT-Record manuell ein") konnte damit gar nicht
+  durchlaufen.
+
+#### Die Kette
+
+Teil B allein ist ein schwaches Beweis. Zusammen mit Teil A ist es eine
+Übernahme fremder Domains: Kanzlei A besitzt `example.de` und hinterlässt
+den TXT-Record (er wird nie gelöscht). Kanzlei B setzt `EXAMPLE.DE` — der
+Unique-Constraint greift nicht, die Eindeutigkeitsprüfung greift nicht. B
+ruft „prüfen" auf, findet A's Record und ist **verifiziert** für eine Domain,
+die B nicht gehört.
+
+Die Domain-Auflösung über den Host-Header ist heute noch nicht implementiert
+(`findByCustomDomain()` hat keine Aufrufer — „M4-Vorbereitung"). Der
+Produktivschaden ist heute ein **falsches Flag** in der Branding-API und in
+der Oberfläche („Ihre Domain ist verifiziert"); mit dem DNS-Routing wird daraus
+eine Domain-Übernahme. Der Befund ist deshalb jetzt zu schließen und nicht
+erst mit dem Routing.
+
+#### Die Behebung
+
+1. **Normalisierung an der Grenze** (`common/utils/domain-normalisierung.ts`):
+   getrimmt, kleingeschrieben, ohne abschließenden Punkt. Angewendet an
+   **beiden** Schreibpfaden (`branding.service.updateBranding` und
+   `domain-verification.startVerification`) — eine Stelle allein lässt die
+   andere unnormalisiert durch.
+2. **Eindeutigkeitsprüfung case-insensitiv**
+   (`kanzlei.repository.isCustomDomainTaken` → `mode: 'insensitive'`). Die
+   Datenbank-Constraint bleibt als zweite Schicht bestehen; die Anwendung
+   prüft vorher, damit der Nutzer eine verständliche Meldung bekommt statt
+   eines Prisma-Fehlers.
+3. **Token persistieren, vergleichen, löschen.** Neue Spalten
+   `customDomainVerificationToken` und `customDomainVerificationRequestedAt`
+   (Migration `2026_10_22_210000_domain_verification_token`). Der erwartete
+   Wert ist jetzt `banz-verify=<Token dieser Kanzlei>`; der Vergleich ist
+   **exakt** (mit Entfernen umschließender Quotes, weil manche Resolver so
+   liefern). Nach dem Erfolg wird der Token gelöscht — er ist **einmalig**
+   verwendbar.
+4. **Fail-closed ohne Anfrage.** Ohne gespeicherten Token gibt es keine
+   Verifikation (400 mit klarer Meldung), statt irgendeinen Record
+   anzuerkennen.
+5. **Neue Domain entwertet die Anfrage.** `updateBranding` löscht bei einer
+   Domain-Änderung den Token — er gehört zur TXT-Record-Adresse der alten
+   Domain.
+6. **Der Provider ist keine Voraussetzung mehr.** Die Prüfung stützt sich auf
+   den öffentlichen DNS; der Provider liefert nur noch die Auto-Anlage und
+   die Diagnose. Damit funktioniert auch der dokumentierte Handpfad.
+
+#### Eine Verhaltensänderung, die eine Testerwartung verschiebt
+
+Der Provider war bisher eine **Voraussetzung** der Prüfung: ohne konfigurierte
+Zone brach `listTxtRecords()` ab, und der Endpunkt antwortete **503**
+(„DNS-Provider ist nicht konfiguriert (HETZNER_DNS_ZONE_ID fehlt)"). Das war
+die Korrektur vom 2026-10-05 — sie sollte verhindern, dass ein nackter
+`Error` als **500** ankommt.
+
+Mit der Provider-Unabhängigkeit entfällt diese Voraussetzung: die Prüfung
+misst jetzt den öffentlichen DNS und antwortet **200 mit `verified: false`**
+und einer Begründung, die den fehlenden Provider nennt. Der Handpfad
+(„User trägt TXT-Record manuell ein") wird damit erstmals ausführbar — vorher
+konnte er in einer Umgebung ohne Provider-Zone gar nicht durchlaufen.
+
+**Die Testerwartung wurde entsprechend verschoben** (`frontend/e2e/custom-domain.spec.ts`):
+vorher „503 und die Meldung nennt HETZNER_DNS_ZONE_ID", jetzt „200,
+`verified: false`, und die Begründung nennt HETZNER_DNS_ZONE_ID". Der
+Schutz, den der Test wollte, bleibt unverändert: **kein 500, und eine
+verständliche Meldung**.
+
+#### Die Negativproben (drei Dimensionen)
+
+**A — Normalisierung und case-insensitive Prüfung zurückgebaut:**
+
+```
+"weist die case-insensitive Doppelbeanspruchung ab":
+  expected 200 to be 400   (die Antwort enthielt customDomain:
+                           "E2E-EINDEUTIGKEIT-….DE" — die zweite Kanzlei
+                           hatte die Domain bekommen)
+"speichert die Domain normalisiert (klein)":
+  expected 'E2E-Normalisierung-….DE' to be 'e2e-normalisierung-….de'
+Gegenprobe (eigene Domain behalten): bleibt grün
+```
+
+**B — Token-Vergleich zurückgebaut** (erwarteter Wert wieder aus dem DNS):
+
+```
+"weist einen Record mit FREMDEM Token ab":
+  expected true to be false          <- der alte Code hat den fremden
+                                        Token akzeptiert und "verifiziert"
+"verweigert die Pruefung ohne laufende Verifikationsanfrage":
+  promise resolved "{ verified: false, … }" instead of rejecting
+```
+
+**C — exakter Vergleich zurückgebaut** (`includes` wieder rein):
+
+```
+"weist einen Wert ab, der den erwarteten nur ENTHAELT":
+  expected true to be false
+```
+
+**Ein Zwischenbefund aus der Negativprobe B:** Der Test „weist einen Record
+mit fremdem Token ab" war beim ersten Durchlauf **grün** — aus dem falschen
+Grund: der Mock lieferte dem alten Codepfad eine leere Record-Liste, der
+Test prüfte also nur den Zweig „kein Record gefunden". Erst als der Mock
+den realen Record lieferte, wurde der alte Code rot. Ein Negativprobe, die
+im ersten Lauf grün ist, prüft den Falschen.
+
+#### Die Tests
+
+- `e2e/customdomain-eindeutigkeit.e2e.spec.ts` (3 Tests): die
+  Doppelbeanspruchung in abweichender Schreibweise wird abgewiesen (400) und
+  steht nur einmal in der Datenbank; die gespeicherte Domain ist
+  normalisiert; **Gegenprobe**: dieselbe Kanzlei darf ihre eigene Domain
+  unveraendert behalten.
+- `src/modules/dns/services/domain-verification.service.spec.ts` (5 neue
+  Fälle): der Vergleich gegen das Token der laufenden Anfrage; ein Record
+  mit **fremdem** Token wird abgewiesen und nichts wird gespeichert; ohne
+  Anfrage gibt es keine Verifikation; nach dem Erfolg wird der Token
+  gelöscht; `startVerification()` speichert den Token und normalisiert die
+  Domain.
+- `src/modules/dns/services/dns-provider.service.spec.ts` (5 Fälle): der
+  exakte TXT-Vergleich (mit gemocktem DNS-Modul — die Vergleichslogik selbst
+  ist die echte).
+- `src/common/utils/domain-normalisierung.spec.ts` (6 Fälle).
+
+**Merksatz:** Ein Beweis, den die Anwendung selbst ausstellt, muss
+**gespeichert** werden, sonst kann er nicht geprüft werden. „Der erwartete
+Wert wird aus der Umgebung gelesen und mit der Umgebung verglichen" ist kein
+Vergleich — er bestätigt, dass die Umgebung mit sich selbst übereinstimmt.
+
+**Merksatz:** Case-Sensitivity ist keine reine Textfrage. Für DNS ist
+`EXAMPLE.DE` **dieselbe** Domain wie `example.de` — ein Unique-Constraint auf
+dem Originalstring schützt dann vor nichts. Die Normalisierung gehört an die
+Grenze, und zwar an **alle** Schreibpfade.
+
+**Merksatz:** Eine Negativprobe, die im ersten Lauf grün ist, prüft den
+Falschen. Im Mock muss die Umgebung so beschaffen sein, dass der alte Code
+sie tatsächlich akzeptiert — sonst wird der Fehlerzweig geprüft statt der
+Regel.
+
+#### Verifikation (Nachtrag 83)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **897/901** (113 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

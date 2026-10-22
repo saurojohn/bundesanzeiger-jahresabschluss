@@ -19,6 +19,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
+  BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
@@ -62,6 +63,7 @@ function buildService(opts: { updateWirft?: boolean } = {}) {
       id: KANZLEI_A,
       customDomain: null,
       customDomainVerified: false,
+      customDomainVerificationToken: null,
     }),
     isCustomDomainTaken: vi.fn().mockResolvedValue(false),
     findByCustomDomain: vi.fn().mockResolvedValue(null),
@@ -71,6 +73,16 @@ function buildService(opts: { updateWirft?: boolean } = {}) {
     verifyTxtRecord: vi.fn().mockResolvedValue({ verified: true, value: 'tok' }),
     getProviderName: vi.fn().mockReturnValue('mock'),
     getInstruction: vi.fn().mockReturnValue('Anleitung'),
+    // BEFUND 2026-10-22 (Nachtrag 83): Der Service liest den Provider ueber
+    // `getProvider()` (das ist der Provider-Adapter) und prueft die
+    // Verifikation ueber `verifyTxtRecordViaPublicDns()` (das ist der
+    // DNS-Resolver — er kennt keinen Provider).
+    getProvider: vi.fn().mockReturnValue({
+      createTxtRecord: vi.fn().mockResolvedValue({ recordId: 'rec-1' }),
+      deleteTxtRecord: vi.fn().mockResolvedValue(undefined),
+      listTxtRecords: vi.fn().mockResolvedValue([]),
+    }),
+    verifyTxtRecordViaPublicDns: vi.fn().mockResolvedValue(false),
   };
   const service = new DomainVerificationService(
     dnsProvider as never,
@@ -129,5 +141,141 @@ describe('DomainVerification: Kanzlei-Bindung', () => {
     await expect(
       service.startVerification(KANZLEI_A, 'kanzlei-a.example', adminVonA, {}),
     ).rejects.toBeInstanceOf(InternalServerErrorException);
+  });
+});
+
+/**
+ * BEFUND 2026-10-22 (Nachtrag 83): Die Verifikation verglich den
+ * ausgestellten Token **nicht**.
+ *
+ * `startVerification()` erzeugte einen Token, gab ihn dem Client mit und
+ * legte ihn **nirgends ab**. `verifyVerification()` las den erwarteten Wert
+ * stattdessen aus dem DNS selbst:
+ *
+ *     const records = await listTxtRecords(name);
+ *     const expectedValue = records.find(r => r.value.startsWith('banz-verify=')).value;
+ *     const publicMatch = await verifyTxtRecordViaPublicDns(name, expectedValue);
+ *
+ * Geprueft wurde damit: "Es gibt einen TXT-Record mit dem Praefix
+ * 'banz-verify=' und er ist oeffentlich sichtbar." **Nicht** geprueft wurde:
+ * "Der Record enthaelt das Token, das diese Kanzlei erhalten hat."
+ *
+ * Ein Record aus einem fremden Verifikationslauf genuegte damit — und
+ * zusammen mit der case-sensitiven Domain-Eindeutigkeit (zwei Kanzleien,
+ * dieselbe Domain) war das eine Uebernahme fremder Domains.
+ */
+describe('DomainVerification: der Token wird geprueft (Nachtrag 83)', () => {
+  const DOMAIN = 'kanzlei-a.example';
+  const TOKEN = 'a'.repeat(32);
+
+  /** Kanzlei mit hinterlegter Verifikationsanfrage. */
+  function svcMitAnfrage(opts: { dnsWert?: string } = {}) {
+    const gebaut = buildService();
+    const dnsWert = opts.dnsWert ?? `banz-verify=${TOKEN}`;
+    gebaut.kanzleiRepository.findById.mockResolvedValue({
+      id: KANZLEI_A,
+      customDomain: DOMAIN,
+      customDomainVerified: false,
+      customDomainVerificationToken: TOKEN,
+    });
+    // Der Mock bildet die Umgebung ab (welche TXT-Records oeffentlich
+    // sichtbar sind) — NICHT die Vergleichslogik: der Service muss den
+    // richtigen Erwartungswert uebergeben.
+    //
+    // WICHTIG: `listTxtRecords` liefert den Record, der tatsaechlich im DNS
+    // steht. Sonst prueft der Test nur den "kein Record gefunden"-Zweig —
+    // und waere auch mit dem alten Code gruen (die Negativprobe waere dann
+    // aus dem falschen Grund gruen).
+    gebaut.dnsProvider.getProvider.mockReturnValue({
+      createTxtRecord: vi.fn().mockResolvedValue({ recordId: 'rec-1' }),
+      deleteTxtRecord: vi.fn().mockResolvedValue(undefined),
+      listTxtRecords: vi.fn().mockResolvedValue([
+        { recordId: 'rec-1', name: `_banz-verify.${DOMAIN}`, value: dnsWert, ttl: 300 },
+      ]),
+    });
+    gebaut.dnsProvider.verifyTxtRecordViaPublicDns.mockImplementation(
+      async (_name: string, erwartet: string) => dnsWert === erwartet,
+    );
+    return gebaut;
+  }
+
+  it('prueft gegen das Token der laufenden Anfrage', async () => {
+    const { service, dnsProvider } = svcMitAnfrage();
+    const ergebnis = await service.verifyVerification(KANZLEI_A, adminVonA, {});
+
+    expect(dnsProvider.verifyTxtRecordViaPublicDns).toHaveBeenCalledWith(
+      `_banz-verify.${DOMAIN}`,
+      `banz-verify=${TOKEN}`,
+    );
+    expect(ergebnis.verified).toBe(true);
+  });
+
+  it('weist einen Record mit FREMDEM Token ab (BUG vor dem Fix)', async () => {
+    // Der TXT-Record stammt aus einem anderen Verifikationslauf.
+    const { service, prisma } = svcMitAnfrage({
+      dnsWert: 'banz-verify=fremderToken12345678901234567890',
+    });
+    const ergebnis = await service.verifyVerification(KANZLEI_A, adminVonA, {});
+
+    expect(ergebnis.verified).toBe(false);
+    expect(ergebnis.reason).toBeTruthy();
+    // Und es wurde **nicht** als verifiziert gespeichert.
+    expect(prisma.kanzlei.update).not.toHaveBeenCalled();
+  });
+
+  it('verweigert die Pruefung ohne laufende Verifikationsanfrage (fail-closed)', async () => {
+    // Vorher konnte jede Kanzlei "pruefen", ohne je ein Token erhalten zu
+    // haben — die Domain stand dann als verifiziert da, obwohl sie
+    // niemandem gehoert.
+    const { service, dnsProvider, prisma, kanzleiRepository } = buildService();
+    kanzleiRepository.findById.mockResolvedValue({
+      id: KANZLEI_A,
+      customDomain: DOMAIN,
+      customDomainVerified: false,
+      customDomainVerificationToken: null,
+    });
+
+    await expect(
+      service.verifyVerification(KANZLEI_A, adminVonA, {}),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(dnsProvider.verifyTxtRecordViaPublicDns).not.toHaveBeenCalled();
+    expect(prisma.kanzlei.update).not.toHaveBeenCalled();
+  });
+
+  it('loescht das Token nach der erfolgreichen Verifikation (einmalig)', async () => {
+    const { service, prisma } = svcMitAnfrage();
+    await service.verifyVerification(KANZLEI_A, adminVonA, {});
+
+    const schreibvorgaenge = prisma.kanzlei.update.mock.calls;
+    expect(schreibvorgaenge.length).toBeGreaterThan(0);
+    const daten = schreibvorgaenge[0]![0] as {
+      data: { customDomainVerified: boolean; customDomainVerificationToken: string | null };
+    };
+    expect(daten.data.customDomainVerified).toBe(true);
+    expect(daten.data.customDomainVerificationToken).toBeNull();
+  });
+
+  it('speichert den ausgestellten Token und normalisiert die Domain', async () => {
+    const { service, prisma } = buildService();
+    const antwort = await service.startVerification(
+      KANZLEI_A,
+      '  Kanzlei-A.Example.  ',
+      adminVonA,
+      {},
+    );
+
+    expect(antwort.verificationToken).toHaveLength(32);
+    const daten = prisma.kanzlei.update.mock.calls[0]![0] as {
+      data: {
+        customDomain: string;
+        customDomainVerificationToken: string;
+        customDomainVerificationRequestedAt: Date;
+      };
+    };
+    expect(daten.data.customDomain).toBe('kanzlei-a.example');
+    expect(daten.data.customDomainVerificationToken).toBe(
+      antwort.verificationToken,
+    );
+    expect(daten.data.customDomainVerificationRequestedAt).toBeInstanceOf(Date);
   });
 });

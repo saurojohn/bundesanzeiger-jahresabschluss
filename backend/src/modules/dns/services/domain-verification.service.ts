@@ -13,6 +13,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { assertFeatureEntitled } from '../../../common/utils/entitlements';
 import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
+import { normalisiereDomain } from '../../../common/utils/domain-normalisierung';
 
 /**
  * Domain-Verifikations-Service (M4 Sprint 3).
@@ -79,16 +80,22 @@ export class DomainVerificationService {
     // Custom-Domain verifizieren.
     await assertFeatureEntitled(this.prisma, kanzleiId, 'custom-domain');
 
+    // BEFUND 2026-10-22 (Nachtrag 83): Die Domain wird normalisiert
+    // (getrimmt, kleingeschrieben, ohne abschliessenden Punkt). Ohne das
+    // konnte eine zweite Kanzlei dieselbe Domain beanspruchen — DNS ist
+    // case-insensitiv, der Vergleich war es nicht.
+    const domain = normalisiereDomain(customDomain);
+
     // Domain-Format-Validierung
-    if (!this.isValidDomain(customDomain)) {
+    if (!this.isValidDomain(domain)) {
       throw new BadRequestException(`Ungültiger Domain-Format: ${customDomain}`);
     }
 
     // Kollisions-Check
-    const taken = await this.kanzleiRepository.isCustomDomainTaken(customDomain, kanzleiId);
+    const taken = await this.kanzleiRepository.isCustomDomainTaken(domain, kanzleiId);
     if (taken) {
       throw new BadRequestException(
-        `Custom-Domain "${customDomain}" wird bereits von einer anderen Kanzlei verwendet`,
+        `Custom-Domain "${domain}" wird bereits von einer anderen Kanzlei verwendet`,
       );
     }
 
@@ -97,7 +104,7 @@ export class DomainVerificationService {
 
     // Token generieren (32 hex chars)
     const verificationToken = uuidv4().replace(/-/g, '').substring(0, 32);
-    const txtRecordName = `_banz-verify.${customDomain}`;
+    const txtRecordName = `_banz-verify.${domain}`;
     const txtRecordValue = `banz-verify=${verificationToken}`;
 
     // Versuche TXT-Record via Provider anzulegen
@@ -109,19 +116,27 @@ export class DomainVerificationService {
         ttl: this.TTL,
       });
       this.logger.log(
-        `TXT-Record automatisch angelegt für ${customDomain}: recordId=${record.recordId}`,
+        `TXT-Record automatisch angelegt für ${domain}: recordId=${record.recordId}`,
       );
       autoCreated = true;
     } catch (err) {
       this.logger.warn(
-        `Auto-Anlage fehlgeschlagen für ${customDomain} (User trägt manuell ein): ${(err as Error).message}`,
+        `Auto-Anlage fehlgeschlagen für ${domain} (User trägt manuell ein): ${(err as Error).message}`,
       );
     }
 
     // Kanzlei speichern (mit Verification-Pending-Markierung)
+    //
+    // BEFUND 2026-10-22 (Nachtrag 83): Das Token wird **gespeichert**. Vorher
+    // wurde es ausgestellt und dem Client mitgegeben, aber nirgends
+    // abgelegt — `verifyVerification()` hatte damit nichts, womit es den
+    // TXT-Record vergleichen konnte, und bestaetigte jeden Record mit dem
+    // Praefix "banz-verify=" (auch einen fremden).
     await this.prismaUpdateWithFallback(kanzleiId, {
-      customDomain,
+      customDomain: domain,
       // customDomainVerified bleibt false bis verifyVerification()
+      customDomainVerificationToken: verificationToken,
+      customDomainVerificationRequestedAt: new Date(),
       brandingUpdatedAt: new Date(),
       brandingUpdatedById: user.id,
     });
@@ -144,7 +159,7 @@ export class DomainVerificationService {
     });
 
     const manualInstructions = this.buildManualInstructions(
-      customDomain,
+      domain,
       txtRecordName,
       txtRecordValue,
     );
@@ -162,6 +177,25 @@ export class DomainVerificationService {
    * Prüft ob der TXT-Record öffentlich verfügbar ist und matched.
    *
    * Bei Erfolg: kanzlei.customDomainVerified = true.
+   *
+   * BEFUND 2026-10-22 (Nachtrag 83): Der Vergleich war **wirkungslos**.
+   * Der erwartete Wert wurde aus dem DNS gelesen und mit dem oeffentlichen
+   * DNS verglichen:
+   *
+   *     const expectedValue = <der Wert, der im DNS steht>;
+   *     const publicMatch = await verifyTxtRecordViaPublicDns(name, expectedValue);
+   *
+   * Das Token, das `startVerification()` ausgestellt hat, kam hier **nicht
+   * vor** — es wurde nirgends gespeichert. Die Pruefung bestaetigte damit
+   * nur "irgendein TXT-Record mit dem Praefix banz-verify= existiert und
+   * ist oeffentlich sichtbar". Ein Record aus einem fremden Verifikations-
+   * lauf genuegte.
+   *
+   * Jetzt: Der erwartete Wert ist `banz-verify=<Token dieser Kanzlei>`.
+   * Der Token muss zur laufenden Anfrage gehoeren (er wird bei
+   * `startVerification()` ausgestellt und gespeichert) — sonst gibt es
+   * keine Verifikation (fail-closed). Nach dem Erfolg wird der Token
+   * geloescht: er ist einmalig verwendbar.
    */
   async verifyVerification(
     kanzleiId: string,
@@ -179,33 +213,65 @@ export class DomainVerificationService {
       return { verified: true, checkedAt: new Date() };
     }
 
-    // Wir lesen den erwarteten Token aus dem zuletzt angelegten TXT-Record
-    const expectedName = `_banz-verify.${kanzlei.customDomain}`;
-    const records = await this.dnsProvider.getProvider().listTxtRecords(expectedName);
-    let expectedValue: string | null = null;
-    for (const r of records) {
-      if (r.value.startsWith('banz-verify=')) {
-        expectedValue = r.value;
-        break;
-      }
-    }
-    if (!expectedValue) {
-      return {
-        verified: false,
-        reason: 'Kein TXT-Record beim konfigurierten DNS-Provider gefunden. Manuell eintragen oder Auto-Provider prüfen.',
-        checkedAt: new Date(),
-      };
+    // Fail-closed: ohne laufende Verifikationsanfrage gibt es nichts zu
+    // pruefen. Vorher konnte jede Kanzlei "pruefen", ohne je ein Token
+    // erhalten zu haben — die Domain stand dann als verifiziert da, obwohl
+    // sie niemandem gehoert.
+    if (!kanzlei.customDomainVerificationToken) {
+      throw new BadRequestException(
+        'Keine Verifikationsanfrage vorhanden — bitte zuerst "Verifikation starten" aufrufen',
+      );
     }
 
-    // Öffentliche DNS-Auflösung
+    const expectedName = `_banz-verify.${kanzlei.customDomain}`;
+    const expectedValue = `banz-verify=${kanzlei.customDomainVerificationToken}`;
+
+    // Öffentliche DNS-Auflösung — **exakter** Vergleich. Der erwartete
+    // Wert kommt aus dem gespeicherten Token dieser Kanzlei, nicht aus dem
+    // DNS selbst (das waere der alte, wirkungslose Weg) und nicht als
+    // Teilstring-Vergleich (ein "includes" haette z.B. einen fremden Record
+    // mit angehaengten Zeichen akzeptiert).
     const publicMatch = await this.dnsProvider.verifyTxtRecordViaPublicDns(
       expectedName,
       expectedValue,
     );
     if (!publicMatch) {
+      // Diagnose: der TXT-Record ist nicht (oder noch nicht) sichtbar.
+      //
+      // BEFUND 2026-10-22 (Nachtrag 83): Der Provider ist fuer die
+      // Pruefung **nicht** mehr erforderlich — der oeffentliche DNS ist die
+      // entscheidende Quelle. Damit funktioniert auch der dokumentierte
+      // Handpfad ("User traegt TXT-Record manuell ein"), der in einer
+      // Umgebung ohne Provider-Zone vorher gar nicht durchlaufen konnte
+      // (503).
+      //
+      // Der Provider liefert nur noch die Diagnose: steht dort ein *anderer*
+      // Wert, muss der Eintrag ersetzt werden; fehlt die Konfiguration
+      // ganz, muss der Nutzer das wissen — die automatische Anlage ist dann
+      // nicht moeglich, die manuelle aber weiterhin.
+      let hinweis = '';
+      try {
+        const records = await this.dnsProvider.getProvider().listTxtRecords(expectedName);
+        const abweichend = records.find(
+          (r) => r.value.startsWith('banz-verify=') && r.value !== expectedValue,
+        );
+        if (abweichend) {
+          hinweis =
+            ' Im DNS-Provider steht ein anderer Wert — bitte den Eintrag mit dem ' +
+            'aktuell zugewiesenen Token ersetzen.';
+        }
+      } catch (err) {
+        // Die Meldung des Providers ist bereits verstaendlich und nennt die
+        // Ursache (HETZNER_DNS_ZONE_ID). Sie wird hier nur eingebettet — der
+        // Text erscheint in der deutschen Oberflaeche.
+        hinweis = ` Hinweis: ${(err as Error).message}`;
+      }
       return {
         verified: false,
-        reason: 'TXT-Record ist beim Provider angelegt, aber öffentlich noch nicht sichtbar. DNS-Propagation abwarten (bis zu 5 Min) und erneut prüfen.',
+        reason:
+          `Der TXT-Record "${expectedName}" mit dem zugewiesenen Token ist ` +
+          'noch nicht öffentlich sichtbar. DNS-Propagation abwarten (bis zu 5 Min) ' +
+          `und erneut prüfen.${hinweis}`,
         checkedAt: new Date(),
       };
     }
@@ -213,6 +279,11 @@ export class DomainVerificationService {
     // Erfolg!
     await this.prismaUpdateWithFallback(kanzleiId, {
       customDomainVerified: true,
+      // Das Token wird geloescht: es ist einmalig verwendbar. Ein spaeterer
+      // Record mit demselben Wert koennte die Kanzlei sonst erneut
+      // "verifizieren", obwohl die Domain inzwischen jemand anderem gehoert.
+      customDomainVerificationToken: null,
+      customDomainVerificationRequestedAt: null,
       brandingUpdatedAt: new Date(),
       brandingUpdatedById: user.id,
     });

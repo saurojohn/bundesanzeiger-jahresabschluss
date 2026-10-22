@@ -17,6 +17,7 @@ import type { UpdateBrandingDto } from '../dto/update-branding.dto';
 import { ALLOWED_LOGO_MIME_TYPES } from '../dto/upload-logo.dto';
 import { assertFeatureEntitled } from '../../../common/utils/entitlements';
 import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
+import { normalisiereDomain } from '../../../common/utils/domain-normalisierung';
 
 /**
  * Default-Branding (Backwards-Compat).
@@ -177,25 +178,52 @@ export class BrandingService {
     if (!before) throw new NotFoundException('Kanzlei nicht gefunden');
 
     // Custom-Domain-Kollisionsprüfung
-    if (dto.customDomain && dto.customDomain !== before.customDomain) {
+    //
+    // BEFUND 2026-10-22 (Nachtrag 83): Die Domain wird hier **normalisiert**
+    // (getrimmt, kleingeschrieben, ohne abschliessenden Punkt). Ohne das
+    // konnte eine zweite Kanzlei dieselbe Domain mit abweichender
+    // Gross-/Kleinschreibung beanspruchen — DNS ist case-insensitiv, der
+    // Vergleich war es nicht (gemessen: HTTP 200 fuer "EXAMPLE.DE", wenn
+    // "example.de" bereits vergeben war).
+    const customDomain =
+      typeof dto.customDomain === 'string'
+        ? normalisiereDomain(dto.customDomain)
+        : undefined;
+    if (customDomain && customDomain !== before.customDomain) {
       const taken = await this.kanzleiRepository.isCustomDomainTaken(
-        dto.customDomain,
+        customDomain,
         kanzleiId,
       );
       if (taken) {
         throw new BadRequestException(
-          `Custom-Domain "${dto.customDomain}" wird bereits von einer anderen Kanzlei verwendet`,
+          `Custom-Domain "${customDomain}" wird bereits von einer anderen Kanzlei verwendet`,
         );
       }
     }
 
-    const updated = await this.kanzleiRepository.updateBranding(kanzleiId, {
-      primaryColor: dto.primaryColor,
-      accentColor: dto.accentColor,
-      customDomain: dto.customDomain ?? undefined,
-      brandingUpdatedAt: new Date(),
-      brandingUpdatedById: user.id,
-    });
+    let updated: Kanzlei;
+    try {
+      updated = await this.kanzleiRepository.updateBranding(kanzleiId, {
+        primaryColor: dto.primaryColor,
+        accentColor: dto.accentColor,
+        customDomain,
+        brandingUpdatedAt: new Date(),
+        brandingUpdatedById: user.id,
+      });
+    } catch (err) {
+      // BEFUND 2026-10-22 (Nachtrag 83): Die Eindeutigkeitspruefung oben
+      // ist eine Pruefung, kein Versprechen — zwischen Pruefen und Schreiben
+      // kann ein zweiter Aufruf dazwischenkommen. Dann greift der
+      // UNIQUE-Constraint der Datenbank (die zweite Schicht) und Prisma
+      // meldet P2002. Das ist kein Serverdefekt, sondern "die Domain ist
+      // inzwischen vergeben" — und muss so auch antworten (400), nicht 500.
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new BadRequestException(
+          `Custom-Domain "${customDomain ?? ''}" wird bereits von einer anderen Kanzlei verwendet`,
+        );
+      }
+      throw err;
+    }
 
     // Cache invalidieren (async via CacheManager)
     await this.cache.invalidate(`branding:${kanzleiId}`);

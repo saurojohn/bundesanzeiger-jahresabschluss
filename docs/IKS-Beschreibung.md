@@ -98,6 +98,7 @@ Drei Grundsätze, die jede Kontrolle unten tragen:
 | K-31 | Eine offene Sitzung bleibt lange nutzbar | Access Token 15 Minuten, serverseitig widerrufbar | `auth.service.ts` | KANZLEI_ADMIN |
 | K-32 | Ein Benutzer ohne Rolle sieht eine Aktion, die dann mit 403 endet | Die Oberfläche blendet Aktionen **mandantenbezogen nach Rolle** aus — die Regel steht an **einer** Stelle (`frontend/src/lib/session.ts`) und bildet den `RolesGuard` ab | `frontend/e2e/signatur-berechtigung.spec.ts` | KANZLEI_ADMIN |
 | K-34 | Ein Webhook-HMAC-Secret im Klartext | AES-256-GCM verschlüsselt abgelegt (Präfix `enc:v1:`), entschlüsselt **nur** beim Signieren; ein unlesbares Secret lässt die Zustellung sichtbar auf `FAILED`/`DEAD_LETTER` gehen, statt sie mit leerer Signatur zu senden. Hashen ist hier unmöglich (der Server signiert selbst) — Verschlüsseln ist die einzige wirksame Form | `e2e/webhook-secret-verschluesselt.e2e.spec.ts` | DevOps |
+| K-35 | Eine Kanzlei beansprucht die Custom-Domain einer anderen oder verifiziert eine fremde Domain | Die Domain wird **normalisiert** (klein, getrimmt) — DNS ist case-insensitiv, der Vergleich war es nicht; die Eindeutigkeitsprüfung läuft case-insensitiv. Die DNS-Verifikation prüft den **ausgestellten Token**: ohne laufende Verifikationsanfrage gibt es keine Verifikation (fail-closed), der Token wird nach dem Erfolg gelöscht | `e2e/customdomain-eindeutigkeit.e2e.spec.ts` und `src/modules/dns/services/domain-verification.service.spec.ts` | KANZLEI_ADMIN |
 
 ## 3. Offene Punkte der IKS
 

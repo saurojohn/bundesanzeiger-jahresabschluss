@@ -95,6 +95,13 @@ export class KanzleiRepository {
       data.customDomain = input.customDomain;
       // Wenn der User eine neue Domain setzt → Verifikation zurücksetzen.
       data.customDomainVerified = false;
+      // BEFUND 2026-10-22 (Nachtrag 83): Eine neue Domain macht auch die
+      // laufende Verifikationsanfrage ungueltig — der Token gehoert zur
+      // TXT-Record-Adresse (`_banz-verify.<domain>`) der alten Domain.
+      // Ohne das Zuruecksetzen koennte ein Token der alten Domain die neue
+      // Domain "verifizieren", wenn die TXT-Records schon passen.
+      data.customDomainVerificationToken = null;
+      data.customDomainVerificationRequestedAt = null;
     }
     if (input.brandingUpdatedById !== undefined) {
       data.brandingUpdatedById = input.brandingUpdatedById;
@@ -146,13 +153,21 @@ export class KanzleiRepository {
   /**
    * Prüft, ob eine Custom-Domain bereits von einer anderen Kanzlei
    * verwendet wird (für Update-Validation).
+   *
+   * BEFUND 2026-10-22 (Nachtrag 83): Der Vergleich war **case-sensitiv**
+   * (`findUnique` auf den exakten String). DNS ist case-insensitiv — zwei
+   * Kanzleien konnten dieselbe Domain beanspruchen. Der Vergleich läuft
+   * jetzt case-insensitiv; der Unique-Constraint in der Datenbank bleibt
+   * als zweite Schicht erhalten (dort greift die Gross-/Kleinschreibung
+   * allerdings nur fuer exakt gleiche Strings — deshalb wird an der
+   * Grenze normalisiert).
    */
   async isCustomDomainTaken(
     domain: string,
     excludeKanzleiId?: string,
   ): Promise<boolean> {
-    const found = await this.prismaService.kanzlei.findUnique({
-      where: { customDomain: domain },
+    const found = await this.prismaService.kanzlei.findFirst({
+      where: { customDomain: { equals: domain, mode: 'insensitive' } },
       select: { id: true },
     });
     if (!found) return false;

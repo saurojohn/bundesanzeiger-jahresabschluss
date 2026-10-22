@@ -97,16 +97,40 @@ export class DnsProviderService implements OnModuleInit {
    * ob der Wert matched. Diese Methode braucht keinen Provider — sie
    * funktioniert auch wenn der Provider nichts eingetragen hat (z.B.
    * User trägt TXT-Record manuell ein).
+   *
+   * BEFUND 2026-10-22 (Nachtrag 83): Der Vergleich war `===` **oder**
+   * `includes(...)`. Das `includes` ist kein Notbehelf, sondern eine
+   * Abschwächung: ein fremder Record, der den erwarteten Wert nur
+   * *enthaelt* (z.B. "banz-verify=<token>-x"), wurde akzeptiert. Der
+   * Vergleich ist jetzt **exakt** — die Verifikation haengt am Token, und
+   * der Token darf nicht erraten werden.
+   *
+   * Die Anfuehrungszeichen werden entfernt: manche Resolver liefern den
+   * TXT-Wert in Quotes ("banz-verify=abc"), andere ohne. Node liefert ihn
+   * normalerweise bereits ohne — die Entfernung ist die Absicherung gegen
+   * beide Formen.
    */
   async verifyTxtRecordViaPublicDns(name: string, expectedValue: string): Promise<boolean> {
     try {
       const records = await dns.resolveTxt(name);
-      const flat = records.flat();
-      return flat.some((value) => value === expectedValue || value.includes(expectedValue));
+      const flat = records.flat().map((value) => stripQuotes(value));
+      return flat.some((value) => value === expectedValue);
     } catch {
       return false;
     }
   }
+}
+
+/**
+ * Entfernt umschliessende doppelte Anfuehrungszeichen aus einem
+ * TXT-Record-Wert.
+ */
+function stripQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 /**
@@ -152,7 +176,8 @@ class HetznerDnsProvider implements DnsProvider {
       // statt einer verständlichen Meldung.
       throw new ServiceUnavailableException(
         'DNS-Provider ist nicht konfiguriert (HETZNER_DNS_ZONE_ID fehlt). ' +
-          'Die Domain-Verifikation kann in dieser Umgebung nicht durchgeführt werden.',
+          'Die automatische DNS-Integration ist in dieser Umgebung nicht ' +
+          'verfügbar — der TXT-Record muss manuell angelegt werden.',
       );
     }
     const res = await fetch(`${this.baseUrl}/records`, {
@@ -201,7 +226,8 @@ class HetznerDnsProvider implements DnsProvider {
       // statt einer verständlichen Meldung.
       throw new ServiceUnavailableException(
         'DNS-Provider ist nicht konfiguriert (HETZNER_DNS_ZONE_ID fehlt). ' +
-          'Die Domain-Verifikation kann in dieser Umgebung nicht durchgeführt werden.',
+          'Die automatische DNS-Integration ist in dieser Umgebung nicht ' +
+          'verfügbar — der TXT-Record muss manuell angelegt werden.',
       );
     }
     const url = `${this.baseUrl}/records?zone_id=${this.zoneId}&name=${encodeURIComponent(name)}&type=TXT`;

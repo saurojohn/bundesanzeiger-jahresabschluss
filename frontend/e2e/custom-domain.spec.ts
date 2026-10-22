@@ -137,18 +137,37 @@ test('Custom-Domain: Verifikation starten → Status prüfen', async ({ page }) 
     );
     await pruefen.click();
     const checkResp = await check;
-    const checkBody = (await checkResp.json().catch(() => ({}))) as { message?: string };
-    console.log('POST /dns/verify →', checkResp.status(), checkBody.message ?? '');
-    // In dieser Umgebung ist kein DNS-Provider konfiguriert
-    // (HETZNER_DNS_ZONE_ID fehlt). Das ist ein Nicht-verfuegbar-Zustand
-    // der Instanz, kein Serverdefekt: die Antwort muss 503 sein mit
-    // verstaendlichem Text. Vor dem Fix stand dort ein nackter `Error` und
-    // die Oberflaeche bekam 500 "Internal server error".
+    const checkBody = (await checkResp.json().catch(() => ({}))) as {
+      message?: string;
+      verified?: boolean;
+      reason?: string;
+    };
+    console.log('POST /dns/verify →', checkResp.status(), checkBody.message ?? checkBody.reason ?? '');
+    // BEFUND 2026-10-22 (Nachtrag 83): Die Pruefung stuetzt sich jetzt auf
+    // den **oeffentlichen** DNS, nicht auf den Provider der Instanz. Der
+    // Provider liefert nur noch die Diagnose.
+    //
+    // Vorher war der Provider eine Voraussetzung: ohne konfigurierte Zone
+    // (HETZNER_DNS_ZONE_ID fehlt) brach die Pruefung mit 503 ab — und der
+    // dokumentierte Handpfad ("User traegt TXT-Record manuell ein") konnte
+    // gar nicht durchlaufen. Jetzt wird gegen den oeffentlichen DNS
+    // geprueft: die Antwort ist 200 mit `verified: false` und einer
+    // verstaendlichen Begruendung, die den fehlenden Provider nennt.
+    //
+    // Der Schutz, den dieser Test ursprünglich wollte, bleibt: **kein 500
+    // und eine verstaendliche Meldung**. Vor dem Fix vom 2026-10-05 stand
+    // dort ein nackter `Error` ("Internal server error").
     expect(
       checkResp.status(),
-      `ohne DNS-Konfiguration wird 503 erwartet, war ${checkResp.status()}: ${checkBody.message ?? ''}`,
-    ).toBe(503);
-    expect(checkBody.message, 'die Meldung muss die Ursache nennen').toContain(
+      `ohne DNS-Konfiguration wird 200 mit einer Begruendung erwartet, war ` +
+        `${checkResp.status()}: ${checkBody.message ?? checkBody.reason ?? ''}`,
+    ).toBe(200);
+    expect(
+      checkBody.verified,
+      'ohne einen oeffentlichen TXT-Record kann die Domain nicht verifiziert sein',
+    ).toBe(false);
+    const begruendung = `${checkBody.message ?? ''} ${checkBody.reason ?? ''}`;
+    expect(begruendung, 'die Meldung muss die Ursache nennen').toContain(
       'HETZNER_DNS_ZONE_ID',
     );
   } else {
@@ -158,8 +177,12 @@ test('Custom-Domain: Verifikation starten → Status prüfen', async ({ page }) 
   const schreibzugriffe = aufrufe.filter((a) => a.methode !== 'GET');
   console.log('SCHREIBZUGRIFFE:', JSON.stringify(schreibzugriffe));
   for (const a of schreibzugriffe) {
-    // 503 ist der erwartete Ausgang fuer /verify in dieser Umgebung.
-    const erlaubt = a.url.includes('/verify') ? [503] : [200, 201, 204];
+    // BEFUND 2026-10-22 (Nachtrag 83): /verify antwortet jetzt 200 mit
+    // `verified: false` und einer Begruendung — die Pruefung laeuft gegen den
+    // oeffentlichen DNS und braucht den DNS-Provider der Instanz nicht mehr.
+    // 503 bleibt zulaessig, falls eine Umgebung doch keinen oeffentlichen
+    // DNS-Aufloeser hat.
+    const erlaubt = a.url.includes('/verify') ? [200, 503] : [200, 201, 204];
     expect(
       erlaubt,
       `${a.methode} ${a.url} → ${a.status} (erwartet: ${erlaubt.join('/')})`,

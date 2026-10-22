@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { fuehreVierAugenPruefungDurch } from './helpers/wp-vier-augen';
 
 /**
  * Ein archivierter Mandant darf nicht mehr veroeffentlicht werden.
@@ -35,6 +36,9 @@ describe('Archivierung: ein archivierter Mandant wird nicht mehr eingereicht (Na
   const prisma = new PrismaClient();
   let token = '';
   let userId = '';
+  /** Die zweite Wirtschaftsprueferin (Vier-Augen-Freigabe). */
+  let zweiterWpId = '';
+  let zweiterWpEmail = '';
   let mandantId = '';
   let abschlussId = '';
   /** Zweiter Abschluss — fuer die Gegenprobe (siehe dort). */
@@ -111,6 +115,17 @@ describe('Archivierung: ein archivierter Mandant wird nicht mehr eingereicht (Na
     });
     expect(fin.status, 'Abschluss finalisieren').toBe(200);
 
+    // BEFUND 2026-10-21 (Nachtrag 79): Die Endabnahme verlangt einen
+    // freigegebenen Vier-Augen-Pruefungsnachweis der Bilanz.
+    const zweiterToken = await login(zweiterWpEmail);
+    await fuehreVierAugenPruefungDurch({
+      base: BASE,
+      mandantId,
+      bilanzId: bId,
+      tokenPruefend: token,
+      tokenFreigebend: zweiterToken,
+    });
+
     const sign = await fetch(`${BASE}/api/signatur/sign-abschluss`, {
       method: 'POST', headers: auth(),
       body: JSON.stringify({
@@ -163,6 +178,26 @@ describe('Archivierung: ein archivierter Mandant wird nicht mehr eingereicht (Na
       });
     }
 
+    // Die **zweite** Wirtschaftsprueferin — sie gibt die WP-Pruefung frei
+    // (Vier-Augen-Prinzip, IDW PS 880). Die Endabnahme verlangt diesen
+    // Nachweis (Nachtrag 79).
+    const zweite = await prisma.user.create({
+      data: {
+        email: `archiv-einreichen-wp2-${Date.now()}@kanzlei.de`,
+        passwordHash: await bcrypt.hash('Demo123!', 10),
+        vorname: 'Mess',
+        nachname: 'Zweitprueferin',
+        globalRole: 'USER',
+        isActive: true,
+      },
+      select: { id: true, email: true },
+    });
+    zweiterWpId = zweite.id;
+    zweiterWpEmail = zweite.email;
+    await prisma.userMandantRole.create({
+      data: { userId: zweiterWpId, mandantId, rolle: 'WIRTSCHAFTSPRUEFER' },
+    });
+
     // **Danach** anmelden: der JWT traegt die Mandanten des Users.
     token = await login(user.email);
 
@@ -206,6 +241,7 @@ describe('Archivierung: ein archivierter Mandant wird nicht mehr eingereicht (Na
       await prisma.mandant.deleteMany({ where: { id: mandantId } });
     }
     if (userId) await prisma.user.deleteMany({ where: { id: userId } });
+    if (zweiterWpId) await prisma.user.deleteMany({ where: { id: zweiterWpId } });
     await prisma.$disconnect();
   });
 

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { fuehreVierAugenPruefungDurch } from './helpers/wp-vier-augen';
 
 /**
  * Der Abweichungsindikator muss **informativ** sein — nicht dauerhaft rot.
@@ -41,6 +42,9 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
   const prisma = new PrismaClient();
   let token = '';
   let userId = '';
+  /** Die zweite Wirtschaftsprueferin (Vier-Augen-Freigabe). */
+  let zweiterWpId = '';
+  let zweiterWpEmail = '';
   let mandantId = '';
   let anhangId = '';
   let abschlussId = '';
@@ -93,6 +97,26 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
         data: { userId, mandantId, rolle },
       });
     }
+
+    // Die **zweite** Wirtschaftsprueferin: sie gibt die WP-Pruefung frei
+    // (Vier-Augen-Prinzip, IDW PS 880). Ohne sie waere die Endabnahme
+    // nicht moeglich (Nachtrag 79).
+    const zweite = await prisma.user.create({
+      data: {
+        email: `abweichung-wp2-${Date.now()}@kanzlei.de`,
+        passwordHash: await bcrypt.hash('Demo123!', 10),
+        vorname: 'Mess',
+        nachname: 'Zweitprueferin',
+        globalRole: 'USER',
+        isActive: true,
+      },
+      select: { id: true, email: true },
+    });
+    zweiterWpId = zweite.id;
+    zweiterWpEmail = zweite.email;
+    await prisma.userMandantRole.create({
+      data: { userId: zweiterWpId, mandantId, rolle: 'WIRTSCHAFTSPRUEFER' },
+    });
     token = await login(user.email);
 
     for (let j = 2050; j <= 2099; j++) {
@@ -159,6 +183,18 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
     });
     expect(fin.status, 'Abschluss finalisieren').toBe(200);
 
+    // BEFUND 2026-10-21 (Nachtrag 79): Die Endabnahme verlangt einen
+    // freigegebenen Vier-Augen-Pruefungsnachweis der Bilanz — erst pruefen
+    // (Person 1), dann von der zweiten Person freigeben lassen (Person 2).
+    const zweiterToken = await login(zweiterWpEmail);
+    await fuehreVierAugenPruefungDurch({
+      base: BASE,
+      mandantId,
+      bilanzId,
+      tokenPruefend: token,
+      tokenFreigebend: zweiterToken,
+    });
+
     const sign = await fetch(`${BASE}/api/signatur/sign-abschluss`, {
       method: 'POST', headers: auth(),
       body: JSON.stringify({
@@ -183,6 +219,7 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
       await prisma.mandant.deleteMany({ where: { id: mandantId } });
     }
     if (userId) await prisma.user.deleteMany({ where: { id: userId } });
+    if (zweiterWpId) await prisma.user.deleteMany({ where: { id: zweiterWpId } });
     await prisma.$disconnect();
   });
 

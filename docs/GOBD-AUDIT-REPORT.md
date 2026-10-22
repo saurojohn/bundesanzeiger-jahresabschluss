@@ -7405,6 +7405,102 @@ Abschluss muss SIGNIERT sein).
 
 ---
 
+### Nachtrag 2026-10-21 (Nachtrag 79): Die qeS-Endabnahme bescheinigte einen Abschluss, den niemand geprueft hatte
+
+#### Der Befund
+
+Der schwerste Befund der Pruefrunde — und der einzige, der die **fachliche
+Aussage** der Signatur betrifft.
+
+Die Verfahrensdokumentation sagt:
+
+> | **WIRTSCHAFTSPRUEFER** | prueft (Plausibilitaetsregeln, Vier-Augen-Freigabe) und **bescheinigt** (Endabnahme) |
+
+Die Einreichung verlangt zwingend eine qeS (IKS K-20) — jeder
+veroeffentlichte Jahresabschluss gilt damit als **gepruefte Fassung**. Und
+doch lief die komplette Kette ohne jeden Pruefungsnachweis durch.
+
+**Gemessen.** Ein STEUERBERATER setzt die drei Saetze auf `VALIDATED` (das
+darf er per API), schliesst den Jahresabschluss ab, ein WP zeichnet die qeS,
+die Kanzlei reicht ein:
+
+```
+VALIDATED setzen (nur Berater)  -> Bilanz 200, GuV 200, Anhang 200
+finalize                        -> HTTP 200
+sign-abschluss (WP, qeS)       -> HTTP 200
+einreichen (Kanzlei)           -> HTTP 200  -> Status SUBMITTED
+
+Status der Bilanz: VALIDATED   (APPROVED = Vier-Augen-Freigabe)
+WP-Pruefungen zur Bilanz: 0
+```
+
+**Ursache.** Der Finalize prueft (IKS K-6) Saldo, GuV-Ergebnis,
+Anhang-Platzhalter und „die drei Saetze duerfen nicht mehr in Bearbeitung
+sein" (`status !== 'DRAFT'`). Der Marker der Vier-Augen-Freigabe —
+`bilanz.status = 'APPROVED'`, gesetzt **ausschliesslich** von der Freigabe
+durch die zweite Person (Nachtrag 29) — wurde **nicht** geprueft.
+`VALIDATED` genuegte.
+
+Damit war die Vier-Augen-Kontrolle **optional**: sie haengte an einem
+Statusfeld, dessen Kriterium „nicht in Bearbeitung" war statt „von einer
+zweiten Person freigegeben". Und eine qeS ohne Pruefungsnachweis ist eine
+Bescheinigung ohne Grundlage — im Trail stuende „geprueft und freigegeben"
+bei einem Abschluss, zu dem es keine Pruefung gibt.
+
+#### Die Entscheidung (2026-10-21, Fachverantwortliche)
+
+**Fail-closed.** Die qeS-Endabnahme verlangt einen freigegebenen
+Vier-Augen-Pruefungsnachweis der Bilanz; ohne ihn keine Signatur (409). Der
+Weg: WP pruefen, zweite Person gibt frei, dann signieren.
+
+#### Die Behebung
+
+`signatur.service.ts` -> `signInternal()`: fuer `entityType === 'Abschluss'`
+wird der Nachweis geprueft — ein `WPPruefungsAbschluss` der Bilanz mit
+Status `APPROVED` **und** gesetztem `freigegebenVonId` (die zweite Person).
+
+**Die Reihenfolge ist bewusst:** die Sperre steht **hinter** der
+Rollenpruefung (`assertSignaturRolle`). Sonst verdeckte die neue Sperre die
+Aussage der Rollenpruefung — der Nachtrag-73-Test (403 wegen der fehlenden
+WP-Rolle) waere dann aus dem falschen Grund rot geworden.
+
+**Nur die Endabnahme.** Eine *Bestandteil*-Signatur (Bilanz/GuV/Anhang)
+bescheinigt nur ein geprueftes Teilstueck (Nachtrag 60) und braucht
+deshalb keinen Pruefungsnachweis.
+
+#### Die Negativprobe
+
+Pruefung entfernt → `expected 200 to be 409` (die Signatur wurde erzeugt,
+`signatureId` in der Antwort).
+
+#### Der Test
+
+`e2e/signatur-pruefungsnachweis.e2e.spec.ts` (3 Tests): ohne Nachweis
+**keine** Endabnahme (409, keine Signatur in der Datenbank), nach der
+Freigabe durch die zweite Person **ja** (200, die Signatur existiert), und
+als Gegenprobe: eine Bestandteil-Signatur bleibt ohne Pruefungsnachweis
+zulaessig.
+
+#### Die vier mitbetroffenen Specs
+
+Die bestehenden Specs, die einen Jahresabschluss signierten, sind auf das
+**richtige** Verfahren umgestellt (Pruefung durch WP A, Freigabe durch WP B,
+dann signieren) — der Ablauf steckt jetzt im geteilten Helfer
+`e2e/helpers/wp-vier-augen.ts`:
+
+| Spec | Aenderung |
+|---|---|
+| `e2e/jahresabschluss-signatur.e2e.spec.ts` | Vier-Augen-Ablauf vor der Signatur (`wp@` prueft, `wp2@` gibt frei) |
+| `e2e/signatur-mandantenrolle.e2e.spec.ts` | zweite WP-Person (Seed) + Ablauf in der Gegenprobe |
+| `e2e/signatur-abweichung.e2e.spec.ts` | eigene zweite WP-Person + Ablauf im Setup |
+| `e2e/archiv-einreichen-sperre.e2e.spec.ts` | eigene zweite WP-Person + Ablauf im Setup |
+
+**Merksatz:** Ein Test, der die **falsche** Prozedur festschreibt, ist
+selbst ein Befund. Er laesst sich nur finden, wenn man die Regel aendert
+und fragt, warum der Test rot wird.
+
+---
+
 ### Nachtrag 2026-10-21 (Nachtrag 74): Der DATEV-Import schrieb Bücher in einen Mandanten, für den die Person nur Wirtschaftsprüfer ist
 
 #### Der Befund

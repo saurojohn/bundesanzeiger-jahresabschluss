@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { fuehreVierAugenPruefungDurch } from './helpers/wp-vier-augen';
 
 /**
  * Jahresabschluss: SIGNED -> SUBMITTED -> PUBLISHED.
@@ -46,6 +47,8 @@ describe('Jahresabschluss: Einreichung und Veroeffentlichung (Nachtrag 62)', () 
   const prisma = new PrismaClient();
   let sbToken = '';
   let wpToken = '';
+  /** Der ZWEITE Wirtschaftspruefer — gibt die WP-Pruefung frei (Vier-Augen). */
+  let wp2Token = '';
   let mandantId = '';
   let p12Base64 = '';
   let abschlussA = '';
@@ -137,6 +140,17 @@ describe('Jahresabschluss: Einreichung und Veroeffentlichung (Nachtrag 62)', () 
     });
     expect(fin.status, `Abschluss abschliessen: ${await fin.text()}`).toBe(200);
 
+    // BEFUND 2026-10-21 (Nachtrag 79): Die qeS-Endabnahme verlangt einen
+    // freigegebenen Vier-Augen-Pruefungsnachweis der Bilanz. Also erst
+    // pruefen (wp@), dann von einer zweiten Person freigeben lassen (wp2@).
+    await fuehreVierAugenPruefungDurch({
+      base: BASE,
+      mandantId,
+      bilanzId,
+      tokenPruefend: wpToken,
+      tokenFreigebend: wp2Token,
+    });
+
     return abschlussId;
   }
 
@@ -155,6 +169,7 @@ describe('Jahresabschluss: Einreichung und Veroeffentlichung (Nachtrag 62)', () 
   beforeAll(async () => {
     sbToken = await anmelden('steuerberater@kanzlei.de');
     wpToken = await anmelden('wp@kanzlei.de');
+    wp2Token = await anmelden('wp2@kanzlei.de');
     p12Base64 = readFileSync(join(process.cwd(), P12_PATH)).toString('base64');
 
     const liste = (await (

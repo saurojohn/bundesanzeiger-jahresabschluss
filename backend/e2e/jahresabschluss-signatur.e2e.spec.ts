@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { fuehreVierAugenPruefungDurch } from './helpers/wp-vier-augen';
 
 /**
  * Signatur des Jahresabschlusses (qeS).
@@ -45,6 +46,8 @@ describe('Jahresabschluss signieren (qeS)', () => {
   const prisma = new PrismaClient();
   let token = '';
   let wpToken = '';
+  /** Der ZWEITE Wirtschaftspruefer — gibt die WP-Pruefung frei (Vier-Augen). */
+  let wp2Token = '';
   let mandantId = '';
   let p12Base64 = '';
   let draftId = '';
@@ -158,6 +161,19 @@ describe('Jahresabschluss signieren (qeS)', () => {
         body: JSON.stringify({}),
       });
       expect(fin.status, 'finalize').toBe(200);
+
+      // BEFUND 2026-10-21 (Nachtrag 79): Die qeS-**Endabnahme** verlangt
+      // eine freigegebene Vier-Augen-Pruefung der Bilanz (Entscheidung der
+      // Fachverantwortlichen: fail-closed). Ohne sie ist keine Signatur
+      // moeglich — der Weg ist: WP prueft, zweite Person gibt frei, dann
+      // signiert.
+      await fuehreVierAugenPruefungDurch({
+        base: BASE,
+        mandantId,
+        bilanzId: b,
+        tokenPruefend: wpToken,
+        tokenFreigebend: wp2Token,
+      });
     }
     return id;
   }
@@ -183,6 +199,7 @@ describe('Jahresabschluss signieren (qeS)', () => {
     const sb = await anmelden('steuerberater@kanzlei.de');
     token = sb.accessToken;
     wpToken = (await anmelden('wp@kanzlei.de')).accessToken;
+    wp2Token = (await anmelden('wp2@kanzlei.de')).accessToken;
     p12Base64 = readFileSync(join(process.cwd(), P12_PATH)).toString('base64');
 
     const liste = (await (

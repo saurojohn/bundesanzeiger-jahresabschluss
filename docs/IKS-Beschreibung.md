@@ -59,12 +59,12 @@ Drei Grundsätze, die jede Kontrolle unten tragen:
 
 | # | Risiko | Kontrolle | Nachweis im System | Verantwortlich |
 |---|---|---|---|---|
-| K-11 | Ein nie abgeschlossener Abschluss wird signiert | **Status-Sperre**: signiert wird nur `FINALIZED` | `e2e/jahresabschluss-signatur.e2e.spec.ts` | WIRTSCHAFTSPRUEFER |
+| K-11 | Ein nie abgeschlossener Abschluss wird signiert | **Status-Sperre**: signiert wird nur `FINALIZED` (Erstsignatur) oder `SIGNED` (Korrektur nach einer Änderung — Nachtrag 78) | `e2e/jahresabschluss-signatur.e2e.spec.ts` | WIRTSCHAFTSPRUEFER |
 | K-12 | Ein nicht zugelassenes Zertifikat beglaubigt eine Abschluss | Aussteller muss in `SIGNATURE_TRUSTED_ISSUERS` stehen; selbstsignierte Zertifikate sind per Default **nicht** zugelassen | `signatur.service.ts` — `trustedIssuers`; Konfiguration im Pilot prüfen | WIRTSCHAFTSPRUEFER |
 | K-13 | Ein gesperrtes Zertifikat wird akzeptiert | Sperrlisten-Prüfung, **fail-closed**: nicht erreichbare CRL ⇒ Zertifikat gilt als nicht vertrauenswürdig | `signatur.service.ts` — `requireRevocationCheck` | WIRTSCHAFTSPRUEFER |
 | K-14 | Ein signiertes PDF ohne Signatur-Datensatz (oder umgekehrt) | Manifest und Signatur-Record in **einer** Transaktion | `signatur.service.ts` — `prisma.$transaction(...)` | WIRTSCHAFTSPRUEFER |
 | K-15 | Ein Bestandteil-Signatur wird als Endabnahme gelesen | **Modellfeld `signaturEbene`** (`ABSCHLUSS` / `BESTANDTEIL`); die Status-API zählt für den Abschluss nur die Abschluss-Signaturen, die Oberfläche zeigt „⚠ 1× Bestandteil geprüft — nicht signiert" | `e2e/signatur-bezugsachse.e2e.spec.ts` — „der Jahresabschluss gilt NICHT als signiert, wenn nur die Bilanz geprüft wurde" | WIRTSCHAFTSPRUEFER |
-| K-16 | Die vorgelegten Daten weichen von der signierten Fassung ab | Die Signatur **sperrt nicht** (eine Korrektur erzeugt zwingend eine neue Signatur), aber die Abweichung wird sichtbar ausgewiesen (`ABWEICHEND`) | `frontend/e2e/signatur.spec.ts` — `SignaturStatusBadge` | WIRTSCHAFTSPRUEFER |
+| K-16 | Die vorgelegten Daten weichen von der signierten Fassung ab | Die Signatur **sperrt nicht** (eine Korrektur erzeugt zwingend eine neue Signatur), aber die Abweichung wird sichtbar ausgewiesen (`ABWEICHEND`) **und die Einreichung wird gesperrt** (409, Nachtrag 78) | `e2e/signatur-abweichung.e2e.spec.ts`; `frontend/e2e/signatur.spec.ts` — `SignaturStatusBadge` | WIRTSCHAFTSPRUEFER |
 | K-17 | Ein Zeitstempel fehlt und wird übersehen | Mock-TSA erzeugt eine **sichtbare Warnung** an der Signatur („Pilot nicht freigabefähig") | `signatur.service.ts` — `warnings` | WIRTSCHAFTSPRUEFER |
 
 ### 2.4 Einreichung und Veröffentlichung
@@ -74,6 +74,7 @@ Drei Grundsätze, die jede Kontrolle unten tragen:
 | K-18 | Ein Abschluss gilt als eingereicht, ohne dass etwas eingereicht wurde | Die **Bestellnummer ist Pflicht**; ohne sie kein Statuswechsel. Der Beleg hält Nutzlast und SHA-256 der eingereichten Fassung | `e2e/jahresabschluss-einreichung.e2e.spec.ts` | STEUERBERATER |
 | K-19 | Zwei Abschlüsse hängen an demselben Vorgang | **Eindeutigkeit in der Datenbank** (`@unique`), nicht nur im Anwendungscode; verbleibende Konkurrenz wird als 409 beantwortet | Migration `2026_10_20_220000_banz_bestellnummer_unique` | STEUERBERATER |
 | K-20 | Ein nicht signierter Abschluss wird eingereicht | **Fail-closed**: ohne Signatur 409, ohne signiertes PDF im WORM 409 | `e2e/jahresabschluss-einreichung.e2e.spec.ts` | STEUERBERATER |
+| K-33 | Ein Abschluss wird bescheinigt und veroeffentlicht, ohne dass jemand ihn geprueft hat | Die qeS-**Endabnahme** verlangt einen **freigegebenen Vier-Augen-Pruefungsnachweis** der Bilanz (`WPPruefungsAbschluss` mit Status `APPROVED` und `freigegebenVonId`); ohne ihn 409. Eine *Bestandteil*-Signatur bleibt davon unberuehrt — sie bescheinigt nur ein Teilstueck | `e2e/signatur-pruefungsnachweis.e2e.spec.ts` | WIRTSCHAFTSPRUEFER |
 | K-21 | Der Wirtschaftsprüfer reicht eigenmächtig ein | Einreichungsrouten nur für `STEUERBERATER` und `KANZLEI_ADMIN` — der WP **bescheinigt**, die Kanzlei **reicht ein** | `e2e/jahresabschluss-einreichung.e2e.spec.ts` (403) und `frontend/e2e/jahresabschluss-einreichung.spec.ts` (der Knopf ist für den WP gar nicht sichtbar) | KANZLEI_ADMIN |
 
 ### 2.5 Aufbewahrung und Nachvollziehbarkeit

@@ -533,7 +533,7 @@ export class SignaturService {
     // entscheidet gar nichts darueber.
     const abschluss = await this.prisma.jahresabschluss.findFirst({
       where: { id: args.jahresabschlussId, mandantId: args.mandantId },
-      select: { id: true, status: true, finalisiertAm: true },
+      select: { id: true, status: true, finalisiertAm: true, bilanzId: true },
     });
     if (!abschluss) {
       throw new NotFoundException('Jahresabschluss nicht gefunden');
@@ -894,6 +894,67 @@ export class SignaturService {
     // Steuerberater des Mandanten signiert werden; die Signatur wird dann
     // als `signaturEbene: BESTANDTEIL` erfasst und ist **keine** Endabnahme.
     this.assertSignaturRolle(entityType, args.mandantId, user);
+
+    // 1b) Vorbedingung: es muss ein **freigegebener Vier-Augen-Pruefungsnachweis**
+    // fuer die Bilanz vorliegen.
+    //
+    // ENTSCHEIDUNG 2026-10-21 (Nachtrag 79): Die Endabnahme (die qeS des
+    // Wirtschaftspruefers) verlangt die Pruefung, die sie bescheinigt.
+    //
+    // **Gemessen.** Die Kette lief ohne jeden Pruefungsnachweis durch:
+    //
+    //     VALIDATED setzen (nur Berater)  -> Bilanz 200, GuV 200, Anhang 200
+    //     finalize                        -> HTTP 200
+    //     sign-abschluss (WP, qeS)       -> HTTP 200
+    //     einreichen (Kanzlei)           -> HTTP 200  -> SUBMITTED
+    //     WP-Pruefungen zur Bilanz: 0
+    //
+    // Der Einreichungsweg verlangt zwingend eine qeS (IKS K-20) — jeder
+    // veroeffentlichte Jahresabschluss gilt damit als **gepruefte Fassung**.
+    // Eine qeS ohne Pruefungsnachweis ist eine Bescheinigung ohne Grundlage:
+    // im Trail stuende "geprueft und freigegeben" bei einem Abschluss, zu dem
+    // es keine Pruefung gibt.
+    //
+    // Der Nachweis ist der Datensatz `WPPruefungsAbschluss` der Bilanz im
+    // Status APPROVED **mit** `freigegebenVonId` — die zweite Person hat
+    // freigegeben (IDW PS 880, § 11 Abs. 2 WPO). `bilanz.status = 'APPROVED'`
+    // wird dabei im selben Vorgang gesetzt, ist aber nur der Marker; der
+    // Datensatz ist der Nachweis.
+    //
+    // **Nur die Endabnahme.** Eine *Bestandteil*-Signatur (Bilanz/GuV/Anhang)
+    // bescheinigt nur ein geprueftes Teilstueck (Nachtrag 60) und braucht
+    // deshalb keinen Pruefungsnachweis.
+    // Die Bilanz des Abschlusses — bei der Endabnahme ist `entityId` die
+    // Abschluss-ID.
+    const bilanzDesAbschlusses =
+      entityType === 'Abschluss'
+        ? (
+            await this.prisma.jahresabschluss.findFirst({
+              where: { id: entityId, mandantId: args.mandantId },
+              select: { bilanzId: true },
+            })
+          )?.bilanzId ?? null
+        : null;
+    const pruefungsNachweis = bilanzDesAbschlusses
+      ? await this.prisma.wPPruefungsAbschluss.findFirst({
+          where: {
+            bilanzId: bilanzDesAbschlusses,
+            status: 'APPROVED',
+            freigegebenVonId: { not: null },
+          },
+          select: { id: true, freigegebenVonId: true, completedAt: true },
+        })
+      : null;
+    if (entityType === 'Abschluss' && !pruefungsNachweis) {
+      throw new ConflictException(
+        'Der Jahresabschluss kann nicht bescheinigt werden: es liegt keine ' +
+          'freigegebene Vier-Augen-Pruefung der Bilanz vor. ' +
+          'Die Endabnahme (qeS) bescheinigt eine Pruefung — bitte zuerst die ' +
+          'WP-Pruefung durchfuehren und von einer zweiten Person freigeben ' +
+          'lassen, danach kann der Abschluss signiert werden ' +
+          '(Vier-Augen-Prinzip, IDW PS 880).',
+      );
+    }
 
     // 2) P12-Parsing
     const p12Buffer = Buffer.from(args.p12Base64, 'base64');

@@ -160,6 +160,48 @@ async function signiertenAbschlussAnlegen(page: Page): Promise<string> {
       }
       const wpToken = ((await wpLogin.json()) as { accessToken: string }).accessToken;
 
+      // BEFUND 2026-10-21 (Nachtrag 79): Die qeS-Endabnahme verlangt einen
+      // freigegebenen Vier-Augen-Pruefungsnachweis der Bilanz — also erst
+      // pruefen (wp@), dann von einer zweiten Person freigeben lassen
+      // (wp2@), dann signieren.
+      const wp2Login = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'wp2@kanzlei.de', password: 'Demo123!' }),
+      });
+      if (wp2Login.status !== 200) {
+        return { ok: false as const, grund: `WP2-Login ${wp2Login.status}` };
+      }
+      const wp2Token = ((await wp2Login.json()) as { accessToken: string }).accessToken;
+
+      const pruefung = await fetch('/api/wp/pruefungen', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Authorization: `Bearer ${wpToken}`,
+          'x-mandant-id': m.id,
+        },
+        body: JSON.stringify({ bilanzId }),
+      });
+      if (pruefung.status !== 201) {
+        return { ok: false as const, grund: `WP-Pruefung starten ${pruefung.status}` };
+      }
+      const pruefungBody = (await pruefung.json()) as { pruefung?: { id: string }; id?: string };
+      const pruefungId = pruefungBody.pruefung?.id ?? pruefungBody.id ?? '';
+
+      const freigabe = await fetch(`/api/wp/pruefungen/${pruefungId}/finalize`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Authorization: `Bearer ${wp2Token}`,
+          'x-mandant-id': m.id,
+        },
+        body: JSON.stringify({ status: 'APPROVED', zusammenfassung: 'Freigabe (Test)' }),
+      });
+      if (freigabe.status !== 200) {
+        return { ok: false as const, grund: `Vier-Augen-Freigabe ${freigabe.status}` };
+      }
+
       const sign = await fetch(`/api/signatur/sign-abschluss?mandantId=${m.id}`, {
         method: 'POST',
         headers: {

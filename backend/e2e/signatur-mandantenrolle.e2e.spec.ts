@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { fuehreVierAugenPruefungDurch } from './helpers/wp-vier-augen';
 import bcrypt from 'bcrypt';
 
 /**
@@ -49,6 +50,8 @@ describe('qeS: der Signierer muss WP des Mandanten sein (Nachtrag 73)', () => {
   let personEmail = '';
   /** Zwei unabhaengige Jahresabschluesse — siehe der Hinweis beim Setup. */
   let bilanzId = '';
+  /** Die Bilanz des Gegenprobe-Abschlusses (fuer den Vier-Augen-Nachweis). */
+  let bilanzIdGegenprobe = '';
   let guvId = '';
   let anhangId = '';
   let abschlussId = '';
@@ -285,6 +288,7 @@ describe('qeS: der Signierer muss WP des Mandanten sein (Nachtrag 73)', () => {
     expect(fin2.status, `zweiter Abschluss finalisieren: ${await fin2.clone().text()}`).toBe(200);
 
     zweiterBestand = { bilanz2Id, guv2Id, anhang2Id };
+    bilanzIdGegenprobe = bilanz2Id;
   });
 
   afterAll(async () => {
@@ -345,7 +349,22 @@ describe('qeS: der Signierer muss WP des Mandanten sein (Nachtrag 73)', () => {
   it('Gegenprobe: der WP des Mandanten darf den Abschluss signieren', async () => {
     // wp@kanzlei.de ist Wirtschaftspruefer in Mandant B — der erlaubte Weg
     // muss offen bleiben, sonst waere die Kontrolle nur ein Produktschalter.
-    const token = await login('wp@kanzlei.de');
+    //
+    // BEFUND 2026-10-21 (Nachtrag 79): Die Endabnahme verlangt zusaetzlich
+    // einen **freigegebenen Vier-Augen-Pruefungsnachweis** der Bilanz. Also
+    // erst pruefen (wp@), dann von einer zweiten Person freigeben lassen
+    // (wp2@), dann signieren.
+    const wpToken = await login('wp@kanzlei.de');
+    const wp2Token = await login('wp2@kanzlei.de');
+    await fuehreVierAugenPruefungDurch({
+      base: BASE,
+      mandantId: mandantBId,
+      bilanzId: bilanzIdGegenprobe,
+      tokenPruefend: wpToken,
+      tokenFreigebend: wp2Token,
+    });
+
+    const token = wpToken;
     const res = await fetch(`${BASE}/api/signatur/sign-abschluss`, {
       method: 'POST',
       headers: {

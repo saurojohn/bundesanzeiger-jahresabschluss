@@ -20,16 +20,38 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { WebhookService } from './webhook.service';
+import { EncryptionService } from '../../auth/services/encryption.service';
+import {
+  entschluesseln,
+  istVerschluesselt,
+  verschluesseln,
+} from '../../../common/utils/verschluesseltes-geheimnis';
 
 const KANZLEI_ID = 'aaaaaaaa-5555-4555-8555-aaaaaaaaaaaa';
 
+/**
+ * Echter EncryptionService (kein Mock): der Test soll beweisen, dass der
+ * Chiffretext wirklich lesbar ist — eine nachgebaute Verschluesselung
+ * wuerde nur die Nachbildung messen.
+ */
+function echteEncryption(): EncryptionService {
+  return new EncryptionService(
+    new ConfigService({ JWT_SECRET: 'test-secret-nur-fuer-diesen-test' }),
+  );
+}
+
 function buildService(opts: { updateDeliveryThrows: boolean }) {
+  const encryption = echteEncryption();
+  const secret = 'sekret';
   const subscription = {
     id: 'sub-1',
     kanzleiId: KANZLEI_ID,
     url: 'https://example.invalid/hook',
-    secret: 'sekret',
+    // BEFUND 2026-10-22 (Nachtrag 82): das Secret liegt in der Datenbank
+    // verschluesselt. Der Test benutzt denselben Weg wie die Anwendung.
+    secret: verschluesseln(encryption, secret),
   };
   const delivery = {
     id: 'del-1',
@@ -48,6 +70,7 @@ function buildService(opts: { updateDeliveryThrows: boolean }) {
       ? vi.fn().mockRejectedValue(new Error('P2021: relation does not exist'))
       : vi.fn().mockResolvedValue(delivery),
     updateSubscriptionDeliveryStatus: vi.fn().mockResolvedValue(undefined),
+    updateSubscriptionSecret: vi.fn().mockResolvedValue(undefined),
   };
 
   // Prisma-Stub: die Zugriffspruefung loest ueber den Mandanten auf
@@ -79,9 +102,10 @@ function buildService(opts: { updateDeliveryThrows: boolean }) {
     repository as never,
     { record: vi.fn().mockResolvedValue(undefined) } as never,
     { signWebhookPayload: vi.fn().mockReturnValue('sig') } as never,
+    encryption,
   );
 
-  return { service, repository, prisma };
+  return { service, repository, prisma, encryption };
 }
 
 /**
@@ -222,6 +246,7 @@ describe('WebhookService: Kanzlei-Trennung der Zugriffsprüfung', () => {
       findDeliveriesBySubscription: vi.fn().mockResolvedValue([]),
       findSubscriptionById: vi.fn().mockResolvedValue(null),
       deleteSubscription: vi.fn().mockResolvedValue(undefined),
+      updateSubscriptionSecret: vi.fn().mockResolvedValue(undefined),
     };
     const prisma = {
       mandant: {
@@ -245,6 +270,7 @@ describe('WebhookService: Kanzlei-Trennung der Zugriffsprüfung', () => {
       repository as never,
       { record: vi.fn().mockResolvedValue(undefined) } as never,
       { signWebhookPayload: vi.fn().mockReturnValue('sig') } as never,
+      echteEncryption(),
     );
     return { service, repository, prisma };
   }
@@ -323,5 +349,166 @@ describe('WebhookService: Kanzlei-Trennung der Zugriffsprüfung', () => {
     await expect(
       service.listSubscriptions(KANZLEI_A, keiner),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+/**
+ * BEFUND 2026-10-22 (Nachtrag 82): das HMAC-Secret lag im Klartext in der
+ * Datenbank. Belegt wurde das an der LIVE-API:
+ *
+ *   POST /api/webhook-subscriptions {secret: "MessSecretKlartext0123..."}
+ *   -> HTTP 201, plaintextSecret zurueckgegeben
+ *   SELECT secret FROM webhook_subscription
+ *      -> "MessSecretKlartext0123456789ABCDEFGH"   (byteweise identisch)
+ *
+ * Ein Datenbank-Dump (Backup, Restore, Leck) lieferte damit ein
+ * verwendbares HMAC-Secret — damit war jede ausgehende Webhook-Nachricht
+ * faelschbar.
+ *
+ * Die Begruendung im DTO ("das Secret MUSS fuer HMAC-Signatur lesbar
+ * bleiben") war falsch: hashen ist unmoeglich, VERSCHLUESSELN nicht.
+ */
+describe('WebhookService: das HMAC-Secret liegt verschluesselt in der Datenbank', () => {
+  const KANZLEI = 'aaaaaaaa-5555-4555-8555-aaaaaaaaaaaa';
+  const PLAINTEXT = 'MessSecretKlartext0123456789ABCDEFGH';
+
+  const sysadmin = {
+    id: 's'.repeat(8) + '-5555-4555-8555-555555555555',
+    globalRole: 'SYSTEM_ADMIN',
+    mandanten: [],
+  } as never;
+
+  function svcMitSecret(secret: string) {
+    const enc = echteEncryption();
+    const subscription = {
+      id: 'sub-1',
+      kanzleiId: KANZLEI,
+      url: 'https://example.invalid/hook',
+      secret,
+    };
+    const delivery = {
+      id: 'del-1',
+      event: 'banz.submission.published',
+      payload: { a: 1 },
+      status: 'PENDING',
+      attemptCount: 0,
+      maxAttempts: 3,
+      subscription,
+    };
+    const repository = {
+      findDeliveryById: vi.fn().mockResolvedValue(delivery),
+      updateDelivery: vi.fn().mockResolvedValue(delivery),
+      updateSubscriptionDeliveryStatus: vi.fn().mockResolvedValue(undefined),
+      updateSubscriptionSecret: vi.fn().mockResolvedValue(undefined),
+      createSubscription: vi.fn().mockImplementation(
+        async (args: { secret: string }) => ({
+          id: 'sub-neu',
+          kanzleiId: KANZLEI,
+          url: 'https://example.invalid/hook',
+          events: ['banz.submission.published'],
+          isActive: true,
+          createdAt: new Date(),
+          lastDeliveryAt: null,
+          lastDeliveryStatus: null,
+          secret: args.secret,
+        }),
+      ),
+    };
+    const apiKeyService = {
+      signWebhookPayload: vi.fn().mockReturnValue('sig'),
+    };
+    const service = new WebhookService(
+      { mandant: { findFirst: vi.fn(), findMany: vi.fn() } } as never,
+      repository as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      apiKeyService as never,
+      enc,
+    );
+    return { service, repository, apiKeyService, enc };
+  }
+
+  it('legt das Secret NICHT im Klartext ab (der Kern des Befunds)', async () => {
+    const { service, repository, enc } = svcMitSecret('');
+    const antwort = await service.createSubscription(
+      {
+        kanzleiId: KANZLEI,
+        url: 'https://example.invalid/hook',
+        secret: PLAINTEXT,
+        events: ['banz.submission.published'],
+      } as never,
+      sysadmin,
+      {},
+    );
+
+    const gespeichert = repository.createSubscription.mock.calls[0]![0] as {
+      secret: string;
+    };
+    expect(
+      gespeichert.secret,
+      'das Secret darf nicht unveraendert in der Datenbank stehen',
+    ).not.toBe(PLAINTEXT);
+    expect(istVerschluesselt(gespeichert.secret)).toBe(true);
+    // Gegenstueck zur Negativ-Zusicherung: es ist nicht irgendein Muell,
+    // sondern genau DIES Secret — verschluesselt.
+    expect(entschluesseln(enc, gespeichert.secret)).toBe(PLAINTEXT);
+    // Der Client bekommt das Plaintext-Secret weiterhin genau einmal.
+    expect(antwort.plaintextSecret).toBe(PLAINTEXT);
+  });
+
+  it('signiert die Zustellung mit dem entschluesselten Secret', async () => {
+    const { service, apiKeyService } = svcMitSecret(
+      verschluesseln(echteEncryption(), PLAINTEXT),
+    );
+    await service.deliver('del-1').catch(() => undefined);
+
+    expect(apiKeyService.signWebhookPayload).toHaveBeenCalled();
+    const benutztesSecret = apiKeyService.signWebhookPayload.mock
+      .calls[0]![0] as string;
+    // Das ist der Gegenstueck zur Verschluesselung: in der Datenbank steht
+    // der Chiffretext, signiert wird mit dem Klartext — der Empfaenger kann
+    // die Signatur also weiterhin mit seinem Secret pruefen.
+    expect(benutztesSecret).toBe(PLAINTEXT);
+  });
+
+  it('heilt eine Altzeile im Klartext selbst (Selbstheilung)', async () => {
+    // Altzeile: das Secret liegt noch unverschluesselt in der Datenbank.
+    const { service, repository, apiKeyService } = svcMitSecret(PLAINTEXT);
+    await service.deliver('del-1').catch(() => undefined);
+
+    // 1) Die Zustellung nutzt den vorhandenen Wert (er ist gueltig) ...
+    expect(apiKeyService.signWebhookPayload).toHaveBeenCalledWith(
+      PLAINTEXT,
+      expect.any(Number),
+      expect.any(String),
+    );
+    // 2) ... und der Klartext wird sofort aus der Datenbank entfernt.
+    expect(repository.updateSubscriptionSecret).toHaveBeenCalledTimes(1);
+    const [, , neu] = repository.updateSubscriptionSecret.mock.calls[0]! as [
+      string,
+      string,
+      string,
+    ];
+    expect(neu).not.toBe(PLAINTEXT);
+    expect(istVerschluesselt(neu)).toBe(true);
+  });
+
+  it('laesst die Delivery bei unlesbarem Secret sichtbar fehlschlagen', async () => {
+    // Chiffretext beschaedigt (oder Master-Key rotiert): die Zustellung darf
+    // nicht mit leerem Secret weiterlaufen und nicht auf PENDING stehen
+    // bleiben — der Fehler muss am Zustand sichtbar werden.
+    const { service, repository, apiKeyService } = svcMitSecret(
+      'enc:v1:kein.gueltiger.chiffretext',
+    );
+    await service.deliver('del-1').catch(() => undefined);
+
+    expect(apiKeyService.signWebhookPayload).not.toHaveBeenCalled();
+    expect(repository.updateDelivery).toHaveBeenCalled();
+    // `updateDelivery(deliveryId, daten)` — der Zustand ist das ZWEITE Argument.
+    const zustand = repository.updateDelivery.mock.calls[0]![1] as {
+      status: string;
+      errorMessage: string | null;
+    };
+    expect(zustand.status).toBe('FAILED');
+    expect(zustand.errorMessage ?? '').toMatch(/Secret nicht lesbar/);
   });
 });

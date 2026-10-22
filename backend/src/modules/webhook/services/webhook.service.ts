@@ -29,6 +29,12 @@ import {
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { assertAdminInKanzlei } from '../../../common/utils/kanzlei-rolle';
+import { EncryptionService } from '../../auth/services/encryption.service';
+import {
+  entschluesseln,
+  istVerschluesselt,
+  verschluesseln,
+} from '../../../common/utils/verschluesseltes-geheimnis';
 
 /**
  * Kontext für Webhook-Mutationen (Audit).
@@ -60,6 +66,7 @@ export class WebhookService {
     private readonly repository: WebhookRepository,
     private readonly auditService: AuditService,
     private readonly apiKeyService: ApiKeyService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   // ===========================================================================
@@ -69,6 +76,16 @@ export class WebhookService {
   /**
    * Erstellt eine neue Webhook-Subscription. Plaintext-Secret wird EINMAL
    * zurückgegeben — der Client muss es für HMAC-Verifikation speichern.
+   *
+   * BEFUND 2026-10-22 (Nachtrag 82): Das Secret wurde bis dahin unveraendert
+   * in die Datenbank geschrieben (`secret: plaintextSecret`) und lag damit
+   * im Klartext. Ein Dump/Backup/Leck der Datenbank lieferte das HMAC-Secret
+   * im Klartext — damit liess sich jede ausgehende Webhook-Nachricht
+   * faelschen. Jetzt wird der Wert mit AES-256-GCM verschluesselt
+   * abgelegt (Praefix "enc:v1:"), entschluesselt wird nur beim Signieren.
+   *
+   * Der Client bekommt das Plaintext-Secret weiterhin genau einmal zurueck —
+   * er muss es selbst speichern, sonst kann er die Signatur nicht pruefen.
    */
   async createSubscription(
     args: CreateWebhookSubscriptionDto & { kanzleiId: string },
@@ -91,7 +108,7 @@ export class WebhookService {
       kanzlei: { connect: { id: args.kanzleiId } },
       url: args.url,
       events: args.events as string[],
-      secret: plaintextSecret,
+      secret: verschluesseln(this.encryption, plaintextSecret),
       isActive: true,
       createdBy: user.id ? { connect: { id: user.id } } : undefined,
     });
@@ -337,18 +354,27 @@ export class WebhookService {
       timestamp: new Date(timestamp * 1000).toISOString(),
     });
 
-    const signature = this.apiKeyService.signWebhookPayload(
-      sub.secret,
-      timestamp,
-      body,
-    );
-
     let responseCode: number | null = null;
     let responseBody: string | null = null;
     let errorMessage: string | null = null;
     let success = false;
+    let signature: string | null = null;
 
     try {
+      // BEFUND 2026-10-22 (Nachtrag 82): das HMAC-Secret wird hier
+      // entschluesselt — das ist die EINZIGE Stelle, an der der Klartext-Wert
+      // entsteht. Laesst es sich nicht entschluesseln (Chiffretext beschaedigt
+      // oder Master-Key rotiert), darf die Zustellung NICHT mit leerem oder
+      // geratenem Secret weiterlaufen: der Fehler muss sichtbar in den Zustand
+      // der Delivery eingehen (FAILED -> DEAD_LETTER), sonst bliebe die
+      // Zustellung auf PENDING stehen und niemand wuerde etwas merken.
+      const secret = await this.resolveSecret(sub);
+      signature = this.apiKeyService.signWebhookPayload(
+        secret,
+        timestamp,
+        body,
+      );
+
       // Schicht 2 des SSRF-Schutzes: unmittelbar VOR dem Request aufloesen und
       // pruefen, dass KEIN A-Record auf einen internen Bereich zeigt. Die
       // DTO-Pruefung beim Speichern greift nicht bei DNS-Rebinding — ein Host
@@ -394,10 +420,19 @@ export class WebhookService {
         errorMessage = `HTTP ${String(response.status)}`;
       }
     } catch (err) {
-      errorMessage =
+      const basis =
         err instanceof AxiosError
           ? `${err.code ?? 'ERR'}: ${err.message}`
           : (err as Error).message;
+      // `signature === null` heisst: der Fehler ist VOR dem HTTP-Request
+      // entstanden, also am Secret. Die Fallunterscheidung bleibt erhalten:
+      // "Secret nicht lesbar" (Server-seitig, Konfiguration) und "HTTP-Fehler"
+      // (Ziel nicht erreichbar) sind verschiedene Ursachen mit verschiedenen
+      // Handlungswegen fuer die Kanzlei.
+      errorMessage =
+        signature === null
+          ? `HMAC-Secret nicht lesbar: ${basis}`
+          : basis;
       this.logger.warn(
         `Webhook delivery ${deliveryId} failed (attempt ${String(attemptCount)}): ${errorMessage}`,
       );
@@ -490,6 +525,59 @@ export class WebhookService {
   // ===========================================================================
   // Private helpers
   // ===========================================================================
+
+  /**
+   * Liefert das HMAC-Secret einer Subscription — im Klartext, aber nur
+   * intern.
+   *
+   * BEFUND 2026-10-22 (Nachtrag 82): das Secret lag im Klartext in der
+   * Datenbank. Zwei Faelle werden hier unterschieden:
+   *
+   * 1. Verschluesselt (Praefix "enc:v1:"): normaler Weg. Der Wert wird
+   *    entschluesselt. Schlaegt das fehl (Chiffretext beschaedigt, Master-Key
+   *    rotiert), wirft die Funktion — die Zustellung schlaegt dann sichtbar
+   *    fehl, statt eine leere Signatur zu versenden.
+   *
+   * 2. Klartext (Altzeile aus der Zeit vor der Umstellung): das Geheimnis
+   *    wird NICHT weiter im Klartext belassen, sondern sofort verschluesselt
+   *    nachgeschrieben (Selbstheilung). Die Zustellung laeuft weiter — der
+   *    Wert ist gueltig, er war nur ungeschuetzt abgelegt. Ein Fehler beim
+   *    Nachschreiben blockiert die Zustellung NICHT (die Zustellung ist der
+   *    Auftrag; die Bereinigung ist Nacharbeit), wird aber protokolliert.
+   *
+   * Warum kein harter Abbruch bei Altzeilen: es gibt keinen Rotations-Endpunkt.
+   * Ein Abbruch wuerde die Subscription unbrauchbar machen und die Kanzlei
+   * mit einer Sperre im Weg der Not stehen lassen (Neuanlage ist der einzige
+   * Ausweg). Der Ausweg existiert — aber er soll nicht erzwungen werden,
+   * solange der Klartext-Wert technisch in Ordnung ist.
+   */
+  private async resolveSecret(sub: {
+    id: string;
+    kanzleiId: string;
+    secret: string;
+  }): Promise<string> {
+    if (istVerschluesselt(sub.secret)) {
+      return entschluesseln(this.encryption, sub.secret);
+    }
+
+    this.logger.warn(
+      `Webhook-Subscription ${sub.id}: Secret im Klartext vorgefunden — ` +
+        'wird jetzt verschlüsselt nachgeschrieben (Nachtrag 82)',
+    );
+    try {
+      await this.repository.updateSubscriptionSecret(
+        sub.id,
+        sub.kanzleiId,
+        verschluesseln(this.encryption, sub.secret),
+      );
+    } catch (err) {
+      this.logger.error(
+        `Webhook-Subscription ${sub.id}: Nachverschlüsselung fehlgeschlagen: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return sub.secret;
+  }
 
   /**
    * KANZLEI_ADMIN-/SYSTEM_ADMIN-Check (fuer Mutation), ausschliesslich

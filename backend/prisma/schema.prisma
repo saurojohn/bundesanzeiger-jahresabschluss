@@ -924,7 +924,10 @@ model WebhookSubscription {
   kanzleiId          String    @db.Uuid
   url                String // z.B. "https://datev.example.com/webhooks/banz"
   events             String[] // ["banz.submission.created", "bilanz.updated", ...]
-  secret             String // HMAC-Secret für Webhook-Signature
+  /// HMAC-Secret fuer die Signatur der ausgehenden Webhooks.
+  /// VERSCHLUESSELT (AES-256-GCM, Praefix "enc:v1:") — nie im Klartext.
+  /// Hashen ist nicht moeglich: der Server muss selbst signieren.
+  secret             String
   isActive           Boolean   @default(true)
   createdAt          DateTime  @default(now())
   createdById        String?   @db.Uuid

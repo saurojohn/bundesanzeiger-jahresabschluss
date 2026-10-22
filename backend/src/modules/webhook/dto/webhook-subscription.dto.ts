@@ -17,8 +17,18 @@ import { WEBHOOK_EVENTS, type WebhookEvent } from '../constants/webhook-events.c
  * Body für POST /api/webhook-subscriptions.
  *
  * Das `secret` wird VOM Client gesetzt (32+ Zeichen), damit der Subscriber
- * die eingehenden Webhooks verifizieren kann. Wird im Klartext gespeichert
- * (nicht hashen) — das Secret MUSS für HMAC-Signatur lesbar bleiben.
+ * die eingehenden Webhooks verifizieren kann.
+ *
+ * BEFUND 2026-10-22 (Nachtrag 82): Dieser Kommentar behauptete bisher:
+ * "Wird im Klartext gespeichert (nicht hashen) — das Secret MUSS für
+ * HMAC-Signatur lesbar bleiben." Die Schlussfolgerung war falsch und hat
+ * das Klartext-Secret in der Datenbank verursacht.
+ *
+ * Richtig ist: **hashen** ist bei einem HMAC-Secret unmoeglich (der Server
+ * muss selbst signieren — ein Hash kann kein HMAC-Schluessel sein).
+ * **Verschluesseln** ist aber moeglich: der Wert muss nicht *lesbar* sein,
+ * sondern nur *entschluesselbar*. Seit dem Fix liegt das Secret
+ * AES-256-GCM-verschluesselt in der Datenbank (Praefix "enc:v1:").
  */
 export class CreateWebhookSubscriptionDto {
   @ApiProperty({

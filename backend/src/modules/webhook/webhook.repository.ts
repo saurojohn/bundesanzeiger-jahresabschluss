@@ -84,6 +84,28 @@ export class WebhookRepository {
     });
   }
 
+  /**
+   * Schreibt das (verschluesselte) Secret einer Subscription.
+   *
+   * Nachtrag 2026-10-22: wird von der Selbstheilung benutzt — eine
+   * Altzeile, deren Secret noch im Klartext liegt, wird beim ersten
+   * Zugriff verschluesselt nachgeschrieben. `updateMany` mit `kanzleiId`
+   * im Filter (statt `update` mit `where: { id }`) haelt die
+   * Mandant-Trennung: eine fremde Kanzlei kann die Zeile nicht treffen.
+   */
+  async updateSubscriptionSecret(
+    id: string,
+    kanzleiId: string,
+    secret: string,
+  ): Promise<void> {
+    await (
+      this.prisma as unknown as WebhookPrismaClient
+    ).webhookSubscription.updateMany({
+      where: { id, kanzleiId },
+      data: { secret },
+    });
+  }
+
   async updateSubscriptionDeliveryStatus(
     id: string,
     status: number | null,

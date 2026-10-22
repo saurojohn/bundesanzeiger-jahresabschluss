@@ -3,13 +3,19 @@ import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 
 /**
- * AES-256-GCM Encryption für TOTP-Secrets.
+ * AES-256-GCM Encryption fuer Geheimnisse, die der Server wieder lesen
+ * muessen (TOTP-Secret, Webhook-HMAC-Secret).
  *
  * Dev-akzeptabel; wird in M2 durch ein dediziertes KMS (z.B. HashiCorp Vault
  * Transit) ersetzt. Master-Key wird aus JWT_SECRET per scrypt abgeleitet —
  * 32 Bytes Output für AES-256.
  *
  * Format: base64(iv).base64(authTag).base64(cipherText)
+ *
+ * WICHTIG: eine Rotation von JWT_SECRET macht alle damit verschluesselten
+ * Werte unlesbar. Fuer TOTP-Secrets bedeutet das "alle Nutzer melden sich
+ * neu an", fuer Webhook-Secrets "alle Zustellungen schlagen fehl" — beide
+ * brauchen einen Ablauf, der vor der Rotation angekündigt wird.
  */
 @Injectable()
 export class EncryptionService {
@@ -22,6 +28,9 @@ export class EncryptionService {
       throw new Error('JWT_SECRET nicht konfiguriert — TOTP-Encryption nicht möglich');
     }
     // Salt fest im Code — bewusst, weil in M2 durch KMS ersetzt.
+    // Wird seit 2026-10-22 auch fuer das Webhook-HMAC-Secret benutzt
+    // (Nachtrag 82). Der Salt-Wert bleibt unveraendert — eine Aenderung
+    // wuerde alle bisher verschluesselten Werte unlesbar machen.
     const salt = 'banz-jahresabschluss-totp-salt-v1';
     this.key = scryptSync(secret, salt, 32);
     this.logger.log('EncryptionService initialisiert (AES-256-GCM)');

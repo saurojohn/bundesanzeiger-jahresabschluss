@@ -7846,6 +7846,182 @@ aufgefallen.
 
 ---
 
+### Nachtrag 2026-10-22 (Nachtrag 82): Das Webhook-HMAC-Secret lag im Klartext in der Datenbank
+
+#### Der Befund
+
+`WebhookSubscription.secret` — das HMAC-Secret, mit dem **jede** ausgehende
+Webhook-Nachricht signiert wird — wurde unverändert gespeichert:
+
+```ts
+// webhook.service.ts, createSubscription()
+const plaintextSecret = args.secret ?? randomBytes(24).toString('base64url');
+const created = await this.repository.createSubscription({
+  ...
+  secret: plaintextSecret,
+```
+
+**Gemessen** an der laufenden API (nicht am Quelltext):
+
+```
+POST /api/webhook-subscriptions
+  {kanzleiId, url, events, secret: "MessSecretKlartext0123456789ABCDEFGH"}
+-> HTTP 201, plaintextSecret zurueckgegeben
+
+SELECT id, secret FROM webhook_subscription
+  89e69e71-… | MessSecretKlartext0123456789ABCDEFGH    <- byteweise identisch
+  861f04f1-… | EppjYUVXlZbKiJgwWqsq8FLOifulwmB-       <- servergeneriert, ebenfalls Klartext
+```
+
+Die Datenbank ist das aufbewahrungspflichtige System (§ 146 / § 147 AO,
+GoBD). Ein Dump davon — Backup, Restore, Leck — lieferte ein **vollständiges
+HMAC-Secret**. Damit ließ sich jede ausgehende Webhook-Nachricht fälschen:
+der Empfänger hätte eine scheinbar gültige Signatur gesehen, während die
+Meldung einen Veröffentlichungsvorgang behauptete, den es nicht gab.
+
+#### Die Begründung, die den Befund verursacht hat
+
+Im DTO stand wörtlich:
+
+> Das `secret` wird VOM Client gesetzt (32+ Zeichen) … Wird im Klartext
+> gespeichert (nicht hashen) — das Secret MUSS für HMAC-Signatur lesbar
+> bleiben.
+
+Die Schlussfolgerung „muss lesbar bleiben" ist **falsch**. Richtig ist nur
+die Hälfte davor: *hashen* ist bei einem HMAC-Secret tatsächlich unmöglich,
+weil der Server selbst signieren muss — ein Hash kann kein HMAC-Schlüssel
+sein. *Verschlüsseln* ist es nicht: der Wert muss nicht **lesbar** sein,
+sondern nur **entschlüsselbar**. Die Behauptung hat den Klartext-Speicher
+nicht begründet, sondern gerechtfertigt.
+
+#### Die Familie (gemessen, nicht angenommen)
+
+Alle geheimnis-ähnlichen Felder des Schemas wurden geprüft:
+
+| Geheimnis | Ablage | Bewertung |
+|---|---|---|
+| `User.passwordHash` | bcrypt-Hash | ✓ |
+| `User.totpSecret` | AES-256-GCM (`EncryptionService`) | ✓ — bereits verschlüsselt |
+| `User.mfaRecoveryCodes` | Feld existiert, **kein Schreibpfad** im Code | ✓ — kein Klartext in der Praxis |
+| `UserSession.refreshTokenHash` | SHA-256-Hash | ✓ |
+| `APIKey.keyHash` | SHA-256-Hash | ✓ |
+| `WebhookSubscription.secret` | **Klartext** | ✗ **der Befund** |
+
+Das Webhook-Secret war das **einzige** Klartext-Geheimnis im Projekt — und
+zugleich das einzige, bei dem ein Hash grundsätzlich unmöglich ist. Genau
+diese Kombination hat die falsche Begründung plausibel gemacht.
+
+Gegenproben am Klartext-Pfad selbst (gemessen, alle sauber): der
+Public-DTO liefert kein Secret, die Delivery-History liefert kein Secret,
+der Audit-Eintrag enthält kein Secret, der Response-Body des Ziels wird
+nicht persistiert.
+
+#### Die Behebung
+
+`common/utils/verschluesseltes-geheimnis.ts` (neu): `verschluesseln()` /
+`entschluesseln()` / `istVerschluesselt()` mit dem Marker `enc:v1:`.
+
+- `createSubscription()` legt das Secret **verschlüsselt** ab
+  (AES-256-GCM, derselbe `EncryptionService`, der das TOTP-Secret schützt).
+- `deliver()` entschlüsselt **an genau einer Stelle** — dort, wo signiert
+  wird. Der Klartext-Wert entsteht nur noch im Speicher.
+- Der Client bekommt das Plaintext-Secret unverändert **einmal** zurück; er
+  muss es selbst speichern, sonst kann er die Signatur nicht prüfen.
+
+Der Marker ist nicht Kosmetik: ein clientgewähltes Secret (32+ Zeichen, frei
+wählbar) könnte sonst wie ein Chiffretext aussehen. Er ermöglicht
+zugleich die Selbstheilung (s. u.).
+
+#### Zwei Fehlerfälle, die mit der Verschlüsselung erst entstehen
+
+**1. Unlesbares Secret → die Zustellung darf nicht hängen.** Chiffretext
+beschädigt oder Master-Key rotiert ⇒ `entschluesseln()` wirft. Vor dem Fix
+wäre die Signatur mit dem Chiffretext gerechnet worden (der Empfänger hätte
+jede Nachricht als unlesbar verworfen). Jetzt wird die Signatur **gar nicht
+erst erzeugt**, und die Delivery geht sichtbar auf `FAILED` → `DEAD_LETTER`
+mit `errorMessage: "HMAC-Secret nicht lesbar: …"`. Eine Zustellung, die auf
+`PENDING` stehen bleibt, wäre schlimmer als eine, die sichtbar fehlschlägt.
+
+**2. Altzeilen im Klartext → Selbstheilung.** Eine Zeile, deren Secret noch
+unverschlüsselt ist, wird beim ersten Zugriff erkannt, **sofort
+nachverschlüsselt** und nie stillschweigend weiterverwendet. Die Zustellung
+läuft weiter (der Wert ist gültig, er war nur ungeschützt abgelegt); das
+Nachschreiben ist Nacharbeit und blockiert den Auftrag nicht — ein Fehler
+dabei wird protokolliert.
+
+Warum kein harter Abbruch bei Altzeilen: es gibt keinen Rotations-Endpunkt.
+Ein Abbruch würde die Subscription unbrauchbar machen und die Kanzlei mit
+einer Sperre im Weg der Not stehen lassen (Neuanlage ist der einzige
+Ausweg). Der Ausweg existiert — er soll aber nicht erzwungen werden, solange
+der Klartext-Wert technisch in Ordnung ist.
+
+#### Die Negativproben (zwei Dimensionen)
+
+**Dimension 1 — der alte Schreibpfad** (`secret: plaintextSecret`):
+
+```
+e2e:  "das Secret darf nicht im Klartext abgelegt sein:
+        expected 'MessSecretKlartext0123456789ABCDEFGH' not to be
+                'MessSecretKlartext0123456789ABCDEFGH'"
+Unit: "das Secret darf nicht unveraendert in der Datenbank stehen" (identisch)
+Gegenprobe (Auslieferung/Audit): bleibt gruen — dieser Pfad war nie defekt
+```
+
+**Dimension 2 — der halb behobene Fall** (verschlüsselt schreiben, aber mit
+dem Chiffretext signieren). Das ist der teurere Fehler, weil er *aussieht*,
+als sei alles in Ordnung:
+
+```
+"signiert die Zustellung mit dem entschluesselten Secret":
+  expected 'enc:v1:SM9dRpnGr/7SillX.WYOsY4jnEvDx2…' to be
+         'MessSecretKlartext0123456789ABCDEFGH'
+"heilt eine Altzeile im Klartext selbst": updateSubscriptionSecret 0× statt 1×
+"laesst die Delivery bei unlesbarem Secret sichtbar fehlschlagen":
+  signWebhookPayload wurde aufgerufen, obwohl das Secret unlesbar war
+```
+
+#### Die Tests
+
+- `src/modules/webhook/services/webhook.service.spec.ts` (4 neue Fälle):
+  das Secret liegt nicht im Klartext ab **und** entschlüsselt sich zu genau
+  dem Secret, das die API dem Client gegeben hat; die Zustellung signiert mit
+  dem entschlüsselten Wert; die Altzeile wird selbst geheilt; ein unlesbares
+  Secret lässt die Delivery sichtbar fehlschlagen. Der `EncryptionService` ist
+  **echt** (kein Mock) — eine nachgebaute Verschlüsselung würde nur die
+  Nachbildung messen.
+- `e2e/webhook-secret-verschluesselt.e2e.spec.ts` (2 Tests): über die
+  laufende API anlegen, in der Datenbank nachsehen (nicht der Klartext,
+  als verschlüsselt markiert, **entschlüsselt sich zum selben Secret**), und
+  die Gegenprobe: weder Liste noch Delivery-History noch Audit-Eintrag
+  enthalten das Secret.
+
+**Merksatz:** „Muss lesbar bleiben" ist die Begründung für einen
+Klartext-Speicher — aber *lesbar* und *entschlüsselbar* sind verschiedene
+Dinge. Bei einem HMAC-Secret ist Hashen unmöglich (der Server muss selbst
+signieren), Verschlüsselen aber möglich und ausreichend. Wer eine
+Klartext-Ablage begründet, muss die Begründung an der **Alternative**
+messen, nicht an ihrer Plausibilität.
+
+**Merksatz:** Eine Verschlüsselung schafft einen neuen Fehlerfall (Chiffretext
+unlesbar, Master-Key rotiert). Dieser Fall muss **sichtbar** in den Zustand
+eingehen. „Der Fehler wirft" ist keine Behandlung — eine Zustellung, die auf
+`PENDING` stehen bleibt, sieht für den Betreiber wie eine ausstehende
+Zustellung aus.
+
+#### Offener Punkt für den Produktivbetrieb
+
+Ein Secret, das **einmal** im Klartext in der Datenbank lag, gilt als
+potenziell kompromittiert — ein alter Dump bleibt gültig. Es gibt bisher
+**keine produktiven Subscriptions** (die Plattform ist nicht produktiv
+deployt; es gibt kein `deploy/`-Verzeichnis und keine Produktions-DB), daher
+ist keine Rotation fällig. **Sollten zwischenzeitlich echte Subscriptions
+angelegt worden sein**, gilt: Subscription löschen und neu anlegen — der
+alte Secret wird dadurch ungültig, der neue ist verschlüsselt abgelegt. Eine
+Rotation ohne Neuanlage (eigener Endpunkt) ist nicht gebaut; sie wäre eine
+Produktentscheidung, keine Korrektur.
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

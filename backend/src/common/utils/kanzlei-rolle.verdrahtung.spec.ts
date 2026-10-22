@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
+import { ConfigService } from '@nestjs/config';
 import { WebhookService } from '../../modules/webhook/services/webhook.service';
 import { DomainVerificationService } from '../../modules/dns/services/domain-verification.service';
 import { ApiKeyService } from '../../modules/api/services/api-key.service';
 import { SubscriptionService } from '../../modules/subscription/services/subscription.service';
+import { EncryptionService } from '../../modules/auth/services/encryption.service';
 import type { AuthUser } from '../../modules/auth/types/auth-user.types';
 
 /**
@@ -26,6 +28,18 @@ const KANZLEI_A = 'aaaaaaaa-0000-4000-8000-00000000000a';
 const KANZLEI_B = 'bbbbbbbb-0000-4000-8000-00000000000b';
 const MANDANT_A = 'aaaaaaaa-1111-4111-8111-111111111111';
 const MANDANT_B = 'bbbbbbbb-2222-4222-8222-222222222222';
+
+/**
+ * Echter EncryptionService (Nachtrag 82): das Webhook-Secret wird
+ * verschluesselt abgelegt. Der Test prueft die Rollenbindung — der
+ * EncryptionService wird nicht gemockt, damit der Test nicht an einer
+ * nachgebauten Verschluesselung scheitert.
+ */
+function encryption(): EncryptionService {
+  return new EncryptionService(
+    new ConfigService({ JWT_SECRET: 'test-secret-nur-fuer-diesen-test' }),
+  );
+}
 
 /** Admin in A, nur Berater in B — die Konfiguration, die vorher durchrutschte. */
 function userMitGeteilterAdminRolle(): AuthUser {
@@ -120,6 +134,7 @@ describe('BEFUND 2026-10-11: Admin in A darf nicht in B schreiben', () => {
       repository as never,
       { record: vi.fn() } as never,
       { signWebhookPayload: vi.fn().mockReturnValue('sig') } as never,
+      encryption(),
     );
     // WICHTIG: die Signatur nimmt ein OBJEKT. Ein positionaler Aufruf
     // liefert `kanzleiId === undefined` — der Test waere dann aus dem
@@ -155,6 +170,7 @@ describe('BEFUND 2026-10-11: Admin in A darf nicht in B schreiben', () => {
       repository as never,
       { record: vi.fn() } as never,
       { signWebhookPayload: vi.fn().mockReturnValue('sig') } as never,
+      encryption(),
     );
     await service2.createSubscription(
       {

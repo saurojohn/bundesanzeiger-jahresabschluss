@@ -8994,6 +8994,135 @@ Ausführung ist die, die Belege erzeugt.
 
 ---
 
+### Nachtrag 2026-10-24 (Nachtrag 90): Eine Beteiligungsquote von 1 % wurde zu 100 % angewendet
+
+#### Der Befund
+
+Die Beteiligungsquote wird an mehreren Stellen gelesen — mit drei
+verschiedenen Lesarten derselben Zahl:
+
+| Stelle | Lesart |
+|---|---|
+| `normiereBeteiligungsquote(wert)` | `wert > 1 ? wert / 100 : wert` — **Prozent oder Bruchteil** |
+| `anteilEKEK = (ek * beteiligungsquote) / 100` | immer Prozent |
+| `anteilEK = (eigenkapital * quote) / 100` (Kontext) | immer Prozent |
+| `elimBetrag = (umsatzTochter * beteiligungsquote) / 100` | immer Prozent |
+
+Der **gespeicherte** Wert ist aber **immer Prozent**: das DTO begrenzt auf
+`@Min(0) @Max(100)`, die Spalte ist `Decimal(5,2)`, und das Frontend-Feld
+heißt „Beteiligungsquote (%)". Damit war der Wert 1 % (also `1`) nicht von
+100 % (als Bruchteil `1`) zu unterscheiden — und **1 % wurden zu 100 %**.
+
+#### Gemessen
+
+An der laufenden API (Tochter mit 1000 EUR Aktiva, Mutter ebenfalls 1000
+EUR; ausgewertet wird die Konzern-Position `B.IV.`):
+
+```
+Beteiligungsquote  1 %   -> Konzern-Bilanz 2000   (erwartet 1010)
+Beteiligungsquote  0,5 % -> Konzern-Bilanz 1500   (erwartet 1005)
+Beteiligungsquote 60 %   -> Konzern-Bilanz 1600   (erwartet 1600)   ok
+```
+
+Bei 1 % Beteiligung ging die Tochter **zu 100 %** in den Konzernabschluss
+ein: die Minderheitsbeteiligung war um das Hundertfache überhöht
+(§ 305 Abs. 1 HGB — der nicht kontrollierte Anteil wurde als
+Konzernvermögen ausgewiesen). Bei 0,5 % immerhin zur Hälfte.
+
+Der Standardfall (60 %, 100 %) war in Ordnung — und genau deshalb fiel
+nichts auf: die Fehlergrenze liegt bei einer Quote **unter 2 %**, also
+genau dort, wo Minderheitsbeteiligungen im echten Leben vorkommen.
+
+#### Der Test, der den Fehler festschrieb
+
+```ts
+it('normalisiert Prozent und Bruchteil', () => {
+  expect(n(100)).toBe(1);
+  expect(n(60)).toBeCloseTo(0.6);
+  expect(n(0.6)).toBeCloseTo(0.6);   // <-- ein Bruchteil gilt als Eingabe
+```
+
+Der Test behauptete, der Helper dürfe **beide** Formen annehmen. Genau
+diese Flexibilität machte den Wert 1 % mehrdeutig — und sie war der Grund,
+nicht die Ursache nebenbei. Der Test wurde umgeschrieben: die Quote ist
+Prozent, `1` ist `1 %`.
+
+#### Die Behebung
+
+**Eine Regel, eine Stelle.** `beteiligungsquoteAlsFaktor(wert)` ist der
+einzige Ort, an dem die Quote gelesen wird:
+
+- gespeichert wird **Prozent** (unverändert),
+- der Faktor ist immer `wert / 100`,
+- unplausible Werte (≤ 0, > 100 %) werden wie bisher auf 100 % gesetzt —
+  aber jetzt **protokolliert** (die Begründung „lieber zu viel einbezogen
+  (sichtbar falsch) als zu wenig (unsichtbar falsch)" verlangt, dass man
+  es auch sieht),
+- der Faktor wird **einmal** in `applyKonsolidierung` bestimmt und an
+  alle Verwendungen weitergegeben (Aggregation Bilanz, Aggregation GuV,
+  Kapitalkonsolidierung, Aufwand/Ertrag-Eliminierung, Salden-Report).
+
+Der Eliminations-Kontext trägt jetzt den **Faktor** statt der Prozentzahl —
+so kann sich dort keine eigene Lesart mehr einschleichen.
+
+Die Entscheidung „0 % bedeutet 100 %" ist **unverändert** geblieben: sie
+stand schon im Code und ist begründet. Neu ist nur, dass sie protokolliert
+wird und dass sie jetzt **überall** gilt (vorher rechnete die
+Kapitalkonsolidierung mit 0 %, die Aggregation mit 100 % — zwei
+verschiedene Ergebnisse für dieselbe Einheit).
+
+#### Die Negativprobe
+
+Alte Lesart wiederhergestellt → **zwei** Tests rot, jeder aus dem
+richtigen Grund:
+
+```
+e2e "1 % Beteiligung bringen 10 EUR der Tochter in den Konzern":
+    die Tochter ist zu 100 % eingeflossen (die Quote wurde als Bruchteil
+    gelesen): expected 2000 to be 1010
+Unit "liest die Quote als Prozent: 1 % ist 1 %, nicht 100 %":
+    expected 1 to be close to 0.01, received difference is 0.99
+```
+
+Die Gegenprobe (60 %) blieb in beiden Läufen grün — der Fix hat den
+funktionierenden Weg nicht verändert.
+
+#### Die Tests
+
+- `e2e/konsolidierung-beteiligungsquote.e2e.spec.ts` (2 Tests): 1 %
+  müssen 10 EUR der Tochter einbringen (1000 + 10 = 1010), 60 % dagegen
+  600 EUR (1000 + 600 = 1600).
+- `konsolidierung.service.spec.ts`: der umgeschriebene Helper-Test und
+  ein neuer Test, der den Faktor 0,01 an der Aggregation prüft.
+
+**Merksatz:** Eine Zahl, die an mehreren Stellen gelesen wird, braucht
+**eine** Stelle, an der sie gelesen wird. Hier durfte der Helper zwei
+Formen annehmen (Prozent *oder* Bruchteil) — damit wurde der Wert 1 %
+mehrdeutig, und die Mehrdeutigkeit entschied sich still zu 100 %.
+
+**Merksatz:** Ein Helper, der „flexibel" zwei Einheiten akzeptiert, ist
+selbst die Ursache des Fehlers — nicht die Stelle, die ihn aufruft. Eine
+enge, eindeutige Signatur (`prozent rein, faktor raus`) verhindert den
+Fehler an der Wurzel; die „Sicherheitsnetze" (`wert > 1 ? ... : ...`)
+verdecken ihn nur.
+
+**Merksatz:** Der Standardfall ist selten der Fehlerfall. 60 % und 100 %
+waren korrekt — der Fehler lag unter 2 %, also genau dort, wo
+Minderheitsbeteiligungen vorkommen. Eine Prüfung braucht den **Grenzfall**,
+nicht den Standardfall.
+
+#### Verifikation (Nachtrag 90)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **936/940** (124 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

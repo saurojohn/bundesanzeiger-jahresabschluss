@@ -69,15 +69,15 @@ const intern = (s: KonsolidierungService) =>
       kategorie: string,
       betrag: number,
     ) => void;
-    normiereBeteiligungsquote: (w: number) => number;
+    beteiligungsquoteAlsFaktor: (w: number) => number;
     aggregateBilanzPositionen: (
       map: Array<{ mandantId: string; bilanz: { positionen: Pos[] } }>,
-      quote: number,
+      quoteFaktor: number,
       mutter: string,
     ) => Pos[];
     aggregateGuvPositionen: (
       map: Array<{ mandantId: string; guv: { positionen: Pos[] } }>,
-      quote: number,
+      quoteFaktor: number,
       mutter: string,
     ) => Pos[];
     applyEliminationsToGuv: (
@@ -407,18 +407,64 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
 });
 
 describe('Konsolidierung: Beteiligungsquote', () => {
-  it('normalisiert Prozent und Bruchteil', () => {
+  /**
+   * BEFUND 2026-10-23 (Nachtrag 90): Der gespeicherte Wert ist **immer
+   * Prozent** (DTO 0–100, Spalte `Decimal(5,2)`, Frontend-Feld
+   * „Beteiligungsquote (%)"). Der Helper nahm vorher BEIDE Formen an
+   * (`wert > 1 ? wert/100 : wert`) — dadurch war 1 % (1) nicht von
+   * 100 % (als Bruchteil 1) zu unterscheiden.
+   *
+   * GEMESSEN an der laufenden API: 1 % Beteiligung -> die Tochter ging
+   * zu 100 % in den Konzernabschluss ein (Konzern-Bilanz 2000 statt
+   * 1010 bei 1000 EUR Tochter- und 1000 EUR Mutterbestand).
+   *
+   * DIESER TEST HAT DEN FEHLER FESTGESCHRIEBEN: `expect(n(0.6)).toBeCloseTo(0.6)`
+   * behauptete, ein Bruchteil sei eine gueltige Eingabe.
+   */
+  it('liest die Quote als Prozent: 1 % ist 1 %, nicht 100 %', () => {
     const { service } = svc();
-    const n = intern(service).normiereBeteiligungsquote.bind(intern(service));
+    const n = intern(service).beteiligungsquoteAlsFaktor.bind(intern(service));
     expect(n(100)).toBe(1);
     expect(n(60)).toBeCloseTo(0.6);
-    expect(n(0.6)).toBeCloseTo(0.6);
+    // 1 % ist EIN Prozent — nicht 100 %.
+    expect(n(1)).toBeCloseTo(0.01);
+    expect(n(0.5)).toBeCloseTo(0.005);
     // Unplausibel oder fehlend: 100 %, NICHT 0. Eine Quote von 0
     // wuerde die Tochter still aus dem Konzernabschluss entfernen.
     expect(n(0)).toBe(1);
     expect(n(-5)).toBe(1);
     expect(n(Number.NaN)).toBe(1);
     expect(n(500)).toBe(1);
+  });
+
+  it('eine Beteiligungsquote von 1 % ergibt einen Faktor von 0,01', () => {
+    const { service } = svc();
+    const map = [
+      {
+        mandantId: MUTTER,
+        bilanz: {
+          positionen: [
+            { seite: 'AKTIVA' as const, kontonummer: 'A.II.1.', bezeichnung: 'Grundstuecke', betragAktuell: 1000, reihenfolge: 1 },
+          ],
+        },
+      },
+      {
+        mandantId: TOCHTER,
+        bilanz: {
+          positionen: [
+            { seite: 'AKTIVA' as const, kontonummer: 'A.II.2.', bezeichnung: 'Maschinen', betragAktuell: 1000, reihenfolge: 2 },
+          ],
+        },
+      },
+    ];
+    // Der Faktor 0,01 entspricht 1 % Beteiligung.
+    const ergebnis = intern(service).aggregateBilanzPositionen(map, 0.01, MUTTER);
+    const mutter = ergebnis.find((p) => p.kontonummer === 'A.II.1.');
+    const tochter = ergebnis.find((p) => p.kontonummer === 'A.II.2.');
+    expect(mutter?.betragAktuell).toBe(1000);
+    // Vor dem Fix waere hier 1000 gestanden (die Quote wurde als
+    // Bruchteil gelesen) — 1 % Beteiligung als 100 %.
+    expect(tochter?.betragAktuell).toBe(10);
   });
 
   it('skaliert Tochterpositionen, Mutterpositionen bleiben voll (BUG vor dem Fix)', () => {
@@ -441,7 +487,7 @@ describe('Konsolidierung: Beteiligungsquote', () => {
         },
       },
     ];
-    const ergebnis = intern(service).aggregateBilanzPositionen(map, 60, MUTTER);
+    const ergebnis = intern(service).aggregateBilanzPositionen(map, 0.6, MUTTER);
     const mutter = ergebnis.find((p) => p.kontonummer === 'A.II.1.');
     const tochter = ergebnis.find((p) => p.kontonummer === 'A.II.2.');
     expect(mutter?.betragAktuell).toBe(100000);
@@ -455,7 +501,7 @@ describe('Konsolidierung: Beteiligungsquote', () => {
       { mandantId: MUTTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 100, reihenfolge: 1 }] } },
       { mandantId: TOCHTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 100, reihenfolge: 1 }] } },
     ];
-    const ergebnis = intern(service).aggregateGuvPositionen(map, 100, MUTTER);
+    const ergebnis = intern(service).aggregateGuvPositionen(map, 1, MUTTER);
     expect(ergebnis[0].betragAktuell).toBe(200);
   });
 
@@ -465,7 +511,7 @@ describe('Konsolidierung: Beteiligungsquote', () => {
       { mandantId: MUTTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 1000, reihenfolge: 1 }] } },
       { mandantId: TOCHTER, guv: { positionen: [{ kontonummer: '1.', bezeichnung: 'Erloese', kategorie: 'ERLOES', betragAktuell: 1000, reihenfolge: 1 }] } },
     ];
-    const ergebnis = intern(service).aggregateGuvPositionen(map, 50, MUTTER);
+    const ergebnis = intern(service).aggregateGuvPositionen(map, 0.5, MUTTER);
     // 1000 (Mutter) + 1000 × 0,5 (Tochter) = 1500
     expect(ergebnis[0].betragAktuell).toBe(1500);
   });
@@ -713,7 +759,7 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
     ctx: {
       anschaffungskosten: number;
       eigenkapitalTochter: number;
-      beteiligungsquote: number;
+      beteiligungsquoteFaktor: number;
     },
   ) {
     const { service } = (() => {
@@ -741,7 +787,7 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
           String(
             Math.abs(
               ctx.anschaffungskosten -
-                (ctx.eigenkapitalTochter * ctx.beteiligungsquote) / 100,
+                ctx.eigenkapitalTochter * ctx.beteiligungsquoteFaktor,
             ),
           ),
       } as never,
@@ -760,7 +806,7 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
     const p = anwenden(start(), {
       anschaffungskosten: 120000,
       eigenkapitalTochter: 100000,
-      beteiligungsquote: 100,
+      beteiligungsquoteFaktor: 1,
     });
     const goodwill = p.find((x) => x.kontonummer === 'A.I.3.');
     expect(goodwill, 'Goodwill muss ausgewiesen werden').toBeTruthy();
@@ -771,7 +817,7 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
     const p = anwenden(start(), {
       anschaffungskosten: 60000,
       eigenkapitalTochter: 100000,
-      beteiligungsquote: 100,
+      beteiligungsquoteFaktor: 1,
     });
     expect(p.find((x) => x.kontonummer === 'A.I.3.')).toBeUndefined();
     const diff = p.find((x) => x.kontonummer === 'A.V.');
@@ -781,12 +827,12 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
   it('die Bilanzgleichung hält in JEDEM Fall (KRITISCH)', () => {
     // Der eigentliche Nachweis: vorher 2 × betrag Differenz.
     const faelle = [
-      { anschaffungskosten: 0, eigenkapitalTochter: 0, beteiligungsquote: 100 },
-      { anschaffungskosten: 60000, eigenkapitalTochter: 100000, beteiligungsquote: 100 },
-      { anschaffungskosten: 100000, eigenkapitalTochter: 100000, beteiligungsquote: 100 },
-      { anschaffungskosten: 120000, eigenkapitalTochter: 100000, beteiligungsquote: 100 },
-      { anschaffungskosten: 300000, eigenkapitalTochter: 100000, beteiligungsquote: 60 },
-      { anschaffungskosten: 200000, eigenkapitalTochter: 250000, beteiligungsquote: 100 },
+      { anschaffungskosten: 0, eigenkapitalTochter: 0, beteiligungsquoteFaktor: 1 },
+      { anschaffungskosten: 60000, eigenkapitalTochter: 100000, beteiligungsquoteFaktor: 1 },
+      { anschaffungskosten: 100000, eigenkapitalTochter: 100000, beteiligungsquoteFaktor: 1 },
+      { anschaffungskosten: 120000, eigenkapitalTochter: 100000, beteiligungsquoteFaktor: 1 },
+      { anschaffungskosten: 300000, eigenkapitalTochter: 100000, beteiligungsquoteFaktor: 0.6 },
+      { anschaffungskosten: 200000, eigenkapitalTochter: 250000, beteiligungsquoteFaktor: 1 },
     ];
     for (const f of faelle) {
       const p = anwenden(start(), f);
@@ -802,7 +848,7 @@ describe('§ 301 HGB: Kapitalkonsolidierung erhaelt die Bilanzgleichung', () => 
     const p = start();
     // Kontext mit 0 = die Default-Werte einer ohne Angaben
     // angelegten Einheit.
-    anwenden(p, { anschaffungskosten: 0, eigenkapitalTochter: 0, beteiligungsquote: 100 });
+    anwenden(p, { anschaffungskosten: 0, eigenkapitalTochter: 0, beteiligungsquoteFaktor: 1 });
     expect(p.find((x) => x.kontonummer === 'A.I.3.')).toBeUndefined();
     expect(Math.abs(summe(p, 'AKTIVA') - summe(p, 'PASSIVA'))).toBeLessThan(0.01);
   });

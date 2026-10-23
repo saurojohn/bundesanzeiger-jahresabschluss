@@ -508,10 +508,18 @@ export class KonsolidierungService {
       );
     }
 
+    // BEFUND 2026-10-23 (Nachtrag 90): Die Beteiligungsquote wurde an
+    // mehreren Stellen gelesen — mit unterschiedlichen Lesarten (ein
+    // Helper, viermal `/100`, einmal `?? 100`). Der Faktor wird jetzt
+    // EINMAL hier bestimmt und ueberall verwendet.
+    const quoteFaktor = this.beteiligungsquoteAlsFaktor(
+      Number(einheit.beteiligungsquote),
+    );
+
     // 3. Konsolidierte Bilanz-Positionen erzeugen.
     const konsBilanzPositionen = this.aggregateBilanzPositionen(
       bilanzMap,
-      Number(einheit.beteiligungsquote),
+      quoteFaktor,
       einheit.mutterMandantId,
     );
     // Eliminations-Buchungen auf Bilanz anwenden (Soll-/Haben-Korrektur).
@@ -521,13 +529,13 @@ export class KonsolidierungService {
       // der Einheit, nicht in der Buchung — deshalb als Kontext.
       anschaffungskosten: Number(einheit.anschaffungskosten),
       eigenkapitalTochter: Number(einheit.eigenkapitalTochter),
-      beteiligungsquote: Number(einheit.beteiligungsquote),
+      beteiligungsquoteFaktor: quoteFaktor,
     });
 
     // 4. Konsolidierte GuV-Positionen erzeugen.
     const konsGuvPositionen = this.aggregateGuvPositionen(
       guvMap,
-      Number(einheit.beteiligungsquote),
+      quoteFaktor,
       einheit.mutterMandantId,
     );
     this.applyEliminationsToGuv(konsGuvPositionen, buchungen);
@@ -775,8 +783,13 @@ export class KonsolidierungService {
     // Goodwill/Badwill aus aktiver/passiver Differenz der Kapitalkonsolidierung.
     const anschaffungskosten = Number(einheit.anschaffungskosten);
     const eigenkapitalTochter = Number(einheit.eigenkapitalTochter);
-    const beteiligungsquote = Number(einheit.beteiligungsquote);
-    const anteilEKEK = (eigenkapitalTochter * beteiligungsquote) / 100;
+    // BEFUND 2026-10-23 (Nachtrag 90): Auch hier wird die Quote ueber DEN
+    // Helper gelesen — sonst weicht die ausgewiesene Zahl von der
+    // Elimination ab (zwei Lesarten derselben Quote).
+    const quoteFaktor = this.beteiligungsquoteAlsFaktor(
+      Number(einheit.beteiligungsquote),
+    );
+    const anteilEKEK = eigenkapitalTochter * quoteFaktor;
     const goodwill = Math.max(anschaffungskosten - anteilEKEK, 0);
     const badwill = Math.max(anteilEKEK - anschaffungskosten, 0);
 
@@ -979,8 +992,13 @@ export class KonsolidierungService {
     // 1) Kapitalkonsolidierung (§ 301 HGB)
     const ak = Number(einheit.anschaffungskosten);
     const ekTochter = Number(einheit.eigenkapitalTochter);
-    const beteiligungsquote = Number(einheit.beteiligungsquote);
-    const anteilEK = (ekTochter * beteiligungsquote) / 100;
+    // BEFUND 2026-10-23 (Nachtrag 90): Die Quote wird ueber DEN Helper
+    // gelesen — vorher stand hier ein eigenes `/100` neben dem Helper
+    // (drei Lesarten derselben Zahl).
+    const quoteFaktor = this.beteiligungsquoteAlsFaktor(
+      Number(einheit.beteiligungsquote),
+    );
+    const anteilEK = ekTochter * quoteFaktor;
 
     if (ak > 0 || ekTochter > 0) {
       const kapDef = KONSOLIDIERUNGS_BUCHUNGSARTEN.find(
@@ -1043,14 +1061,16 @@ export class KonsolidierungService {
       .flatMap((g) => g.guv.positionen)
       .filter((p) => p.kategorie === 'ERLOES')
       .reduce((s, p) => s + Number(p.betragAktuell), 0);
-    const elimBetrag = (umsatzTochter * beteiligungsquote) / 100;
+    const elimBetrag = umsatzTochter * quoteFaktor;
     if (elimBetrag > 0) {
       const aufwDef = KONSOLIDIERUNGS_BUCHUNGSARTEN.find(
         (b) => b.art === 'AUFWAND_ERTRAG',
       )!;
       inputs.push({
         buchungsArt: 'AUFWAND_ERTRAG',
-        beschreibung: `Eliminierung konzerninterner Umsatzerlöse (${elimBetrag.toFixed(2)} EUR, ${beteiligungsquote.toFixed(2)}% Beteiligung)`,
+        // Der Text nennt die ANGEWENDETE Quote — bei einem Ausnahme-
+        // wert (0 %, > 100 %) weicht sie vom gespeicherten Wert ab.
+        beschreibung: `Eliminierung konzerninterner Umsatzerlöse (${elimBetrag.toFixed(2)} EUR, ${(quoteFaktor * 100).toFixed(2)}% Beteiligung)`,
         kontoSoll: aufwDef.defaultKontoSoll,
         kontoHaben: aufwDef.defaultKontoHaben,
         betrag: elimBetrag,
@@ -1143,29 +1163,66 @@ export class KonsolidierungService {
   }
 
   /**
-   * Aggregiert Bilanz-Positionen aus allen Teilnehmern. Pro HGB-Position
-   * wird der höchste reihenfolge-Wert genutzt.
-   */
-  /**
-   * Bringt eine Beteiligungsquote in die Form 0…1.
+   * Die Beteiligungsquote als Faktor (0…1).
    *
-   * Das DTO erlaubt 1…100 (Prozent). Unplausible oder fehlende Werte
-   * werden auf 1 (=100 %) gesetzt — NICHT auf 0. Eine Quote von 0
-   * wuerde die Tochter vollstaendig aus dem Konzernabschluss
-   * entfernen, ohne dass jemand es bemerkt; das waere ein stiller
-   * Datenverlust. Lieber zu viel einbezogen (sichtbar falsch) als
-   * zu wenig (unsichtbar falsch).
+   * BEFUND 2026-10-23 (Nachtrag 90): Der gespeicherte Wert ist **immer
+   * Prozent** (DTO 0–100, Spalte `Decimal(5,2)`, Frontend-Feld
+   * „Beteiligungsquote (%)"). Der Helper nahm aber BEIDE Formen an
+   * (`wert > 1 ? wert/100 : wert`) — dadurch war der Wert 1 % (1) nicht
+   * von 100 % (als Bruchteil 1) zu unterscheiden.
+   *
+   * GEMESSEN an der laufenden API (Tochter mit 1000 EUR Aktiva, Mutter
+   * ebenfalls 1000 EUR):
+   *
+   *     Beteiligungsquote  1 %   -> Konzern-Bilanz 2000 (erwartet 1010)
+   *     Beteiligungsquote  0,5 % -> Konzern-Bilanz 1500 (erwartet 1005)
+   *     Beteiligungsquote 60 %   -> Konzern-Bilanz 1600 (erwartet 1600)  ok
+   *
+   * Bei 1 % ging die Tochter also zu 100 % in den Konzernabschluss ein
+   * (Minderheitsbeteiligung um das Hundertfache ueberhoeht, § 305 Abs. 1
+   * HGB), bei 0,5 % immerhin zur Haelfte.
+   *
+   * Es gibt jetzt **eine** Regel fuer diesen Wert: die gespeicherte Zahl
+   * ist Prozent, geteilt wird durch 100. Jede Lesart im Service geht
+   * ueber diesen Helper — vorher gab es drei (Helper, `/100` an vier
+   * Stellen, `?? 100`).
+   *
+   * Unplausible oder fehlende Werte werden auf 1 (=100 %) gesetzt — NICHT
+   * auf 0. Eine Quote von 0 wuerde die Tochter vollstaendig aus dem
+   * Konzernabschluss entfernen, ohne dass jemand es bemerkt; das waere
+   * ein stiller Datenverlust. Lieber zu viel einbezogen (sichtbar
+   * falsch) als zu wenig (unsichtbar falsch). Die Ausnahme wird
+   * **protokolliert**, damit sie nicht unbemerkt bleibt.
    */
-  private normiereBeteiligungsquote(wert: number): number {
-    if (!Number.isFinite(wert) || wert <= 0) return 1;
-    const quote = wert > 1 ? wert / 100 : wert;
-    if (quote > 1) return 1;
-    return quote;
+  private beteiligungsquoteAlsFaktor(wert: number): number {
+    if (!Number.isFinite(wert) || wert <= 0) {
+      this.logger.warn(
+        `Konsolidierung: Beteiligungsquote ${String(wert)} ist unplausible — ` +
+          'sie wird als 100 % angewendet (lieber zu viel einbezogen als zu wenig).',
+      );
+      return 1;
+    }
+    const faktor = wert / 100;
+    if (faktor > 1) {
+      this.logger.warn(
+        `Konsolidierung: Beteiligungsquote ${String(wert)} liegt ueber 100 % — ` +
+          'sie wird als 100 % angewendet.',
+      );
+      return 1;
+    }
+    return faktor;
   }
 
+  /**
+   * Aggregiert Bilanz-Positionen aus allen Teilnehmern. Pro HGB-Position
+   * wird der höchste reihenfolge-Wert genutzt.
+   *
+   * `quoteFaktor` ist der Faktor 0…1 der Beteiligung (siehe
+   * `beteiligungsquoteAlsFaktor`).
+   */
   private aggregateBilanzPositionen(
     bilanzMap: Array<{ mandantId: string; bilanz: NonNullable<Awaited<ReturnType<BilanzRepository['findWithPositionen']>>> }>,
-    beteiligungsquote: number,
+    quoteFaktor: number,
     mutterMandantId: string,
   ): Array<{
     seite: 'AKTIVA' | 'PASSIVA';
@@ -1196,7 +1253,13 @@ export class KonsolidierungService {
     //
     // Die Quote gilt fuer die TOCHTER, nicht fuer die Mutter (die
     // gehoert zu 100 % zum Konzern).
-    const quote = this.normiereBeteiligungsquote(beteiligungsquote);
+    //
+    // BEFUND 2026-10-23 (Nachtrag 90): Der Faktor kommt jetzt von aussen
+    // (einmal bestimmt in `applyKonsolidierung`) — vorher wurde er hier
+    // aus einem Wert berechnet, der BEIDE Formen annehmen durfte
+    // (Prozent oder Bruchteil). Bei 1 % Beteiligung wurde die Tochter
+    // dadurch zu 100 % einbezogen.
+    const quote = quoteFaktor;
 
     for (const { mandantId, bilanz } of bilanzMap) {
       const faktor = mandantId === mutterMandantId ? 1 : quote;
@@ -1227,10 +1290,13 @@ export class KonsolidierungService {
 
   /**
    * Aggregiert GuV-Positionen aus allen Teilnehmern.
+   *
+   * `quoteFaktor` ist der Faktor 0…1 der Beteiligung (siehe
+   * `beteiligungsquoteAlsFaktor`).
    */
   private aggregateGuvPositionen(
     guvMap: Array<{ mandantId: string; guv: NonNullable<Awaited<ReturnType<GuVRepository['findWithPositionen']>>> }>,
-    beteiligungsquote: number,
+    quoteFaktor: number,
     mutterMandantId: string,
   ): Array<{
     kontonummer: string;
@@ -1250,9 +1316,10 @@ export class KonsolidierungService {
       }
     >();
 
-    // Siehe `aggregateBilanzPositionen`: die Quote galt fuer die
-    // Tochter, wurde hier aber verworfen (`void beteiligungsquote`).
-    const quote = this.normiereBeteiligungsquote(beteiligungsquote);
+    // Siehe `aggregateBilanzPositionen`: die Quote gilt fuer die
+    // Tochter. BEFUND 2026-10-23 (Nachtrag 90): Der Faktor kommt von
+    // aussen (eine Regel fuer die Quote, eine Stelle).
+    const quote = quoteFaktor;
 
     for (const { mandantId, guv } of guvMap) {
       const faktor = mandantId === mutterMandantId ? 1 : quote;
@@ -1297,7 +1364,8 @@ export class KonsolidierungService {
     kapitalKonsolidierung?: {
       anschaffungskosten: number;
       eigenkapitalTochter: number;
-      beteiligungsquote: number;
+      /** Der Faktor 0…1 der Beteiligung (Nachtrag 90). */
+      beteiligungsquoteFaktor: number;
     },
   ): void {
     for (const b of buchungen) {
@@ -1336,10 +1404,13 @@ export class KonsolidierungService {
         //      Gleichung aufgeht und der Betrag fuer die
         //      Wirtschaftspruefung sichtbar ist statt zu
         //      verschwinden.
-        const quote = kapitalKonsolidierung?.beteiligungsquote ?? 100;
+        // BEFUND 2026-10-23 (Nachtrag 90): Der Kontext traegt den
+        // FAKTOR (0…1), nicht mehr die Prozentzahl — damit kann sich
+        // hier keine eigene Lesart mehr einschleichen.
+        const quote = kapitalKonsolidierung?.beteiligungsquoteFaktor ?? 1;
         const anschaffung = kapitalKonsolidierung?.anschaffungskosten ?? 0;
         const eigenkapital = kapitalKonsolidierung?.eigenkapitalTochter ?? 0;
-        const anteilEK = (eigenkapital * quote) / 100;
+        const anteilEK = eigenkapital * quote;
         const goodwill = Math.max(anschaffung - anteilEK, 0);
         const badwill = Math.max(anteilEK - anschaffung, 0);
 

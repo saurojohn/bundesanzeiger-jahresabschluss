@@ -47,6 +47,8 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
   let zweiterWpEmail = '';
   let mandantId = '';
   let anhangId = '';
+  let bilanzId = '';
+  let guvId = '';
   let abschlussId = '';
   let jahr = 0;
 
@@ -143,7 +145,7 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
         ],
       }),
     });
-    const bilanzId = ((await bilanzRes.json()) as { bilanz?: { id?: string } }).bilanz?.id ?? '';
+    bilanzId = ((await bilanzRes.json()) as { bilanz?: { id?: string } }).bilanz?.id ?? '';
 
     const guvRes = await fetch(`${BASE}/api/guv?mandantId=${mandantId}`, {
       method: 'POST', headers: auth(),
@@ -155,7 +157,7 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
       }),
     });
     const guvBody = (await guvRes.json()) as { guV?: { id?: string }; guv?: { id?: string } };
-    const guvId = guvBody.guV?.id ?? guvBody.guv?.id ?? '';
+    guvId = guvBody.guV?.id ?? guvBody.guv?.id ?? '';
 
     const anhangRes = await fetch(`${BASE}/api/anhang?mandantId=${mandantId}`, {
       method: 'POST', headers: auth(),
@@ -431,5 +433,34 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
       select: { bilanzierungsMethoden: true },
     });
     expect(inDb?.bilanzierungsMethoden).not.toBe('NACHTRAG nach der Einreichung');
+
+    // Dieselbe Regel gilt fuer die `hinweise` der Bilanz und der GuV —
+    // sie stehen ebenfalls im PDF.
+    for (const [bezeichnung, pfad, id] of [
+      ['Bilanz', '/api/bilanz', bilanzId],
+      ['GuV', '/api/guv', guvId],
+    ] as const) {
+      const patch2 = await fetch(`${BASE}${pfad}/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+          'x-mandant-id': mandantId,
+        },
+        body: JSON.stringify({ hinweise: 'NACHTRAG nach der Einreichung' }),
+      });
+      const text2 = await patch2.text();
+      expect(
+        patch2.status,
+        `die Hinweise der ${bezeichnung} duerfen nach der Einreichung nicht ` +
+          `geaendert werden — Antwort: ${text2.slice(0, 200)}`,
+      ).toBe(409);
+    }
+
+    const hinweiseInDb = await prisma.bilanz.findUnique({
+      where: { id: bilanzId },
+      select: { hinweise: true },
+    });
+    expect(hinweiseInDb?.hinweise).not.toBe('NACHTRAG nach der Einreichung');
   });
 });

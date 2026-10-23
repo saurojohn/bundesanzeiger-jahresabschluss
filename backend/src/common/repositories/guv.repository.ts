@@ -236,6 +236,24 @@ export class GuVRepository {
   }
 
   /**
+   * Der Status des Jahresabschlusses, zu dem die GuV gehoert.
+   *
+   * BEFUND 2026-10-24 (Nachtrag 95): Nach der Einreichung wird der
+   * Bestand nicht mehr fortgeschrieben — der Inhalt der Bestandteile
+   * (u. a. die `hinweise`, die im PDF stehen) ist dann eingefroren.
+   */
+  async findJahresabschlussStatusByGuVId(
+    guvId: string,
+  ): Promise<string | null> {
+    const abschluss = await this.prismaService.jahresabschluss.findFirst({
+      where: { guvId },
+      select: { status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return abschluss?.status ?? null;
+  }
+
+  /**
    * Erstellt eine GuV + zugehörige Positionen in einer Transaktion.
    */
   async createWithPositionen(

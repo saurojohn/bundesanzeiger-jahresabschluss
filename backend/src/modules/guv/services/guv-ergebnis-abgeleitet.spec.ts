@@ -67,6 +67,9 @@ function guvMitStatus(status: string) {
         positionen: [],
       }),
       updateWithPositionen,
+      // BEFUND 2026-10-24 (Nachtrag 95): der Status des Jahresabschlusses,
+      // zu dem die GuV gehoert — null = nicht eingereicht.
+      findJahresabschlussStatusByGuVId: vi.fn().mockResolvedValue(null),
     } as never,
     { record: vi.fn() } as never,
     { findArchivierung: vi.fn().mockResolvedValue({ archiviertAt: null, firmenname: 'X' }) } as never,

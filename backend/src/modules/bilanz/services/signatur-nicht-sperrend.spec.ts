@@ -73,6 +73,7 @@ function buildService() {
   };
   const repository = {
     findWithPositionen: vi.fn().mockResolvedValue(bilanz),
+    findJahresabschlussStatusByBilanzId: vi.fn().mockResolvedValue(null),
     updateWithPositionen: vi.fn().mockResolvedValue({
       ...bilanz,
       hinweise: 'nach der Signatur geaendert',
@@ -128,6 +129,7 @@ describe('Entscheidung 2026-10-10: Signatur sperrt die Daten NICHT', () => {
     };
     const repository = {
       findWithPositionen: vi.fn().mockResolvedValue(bilanz),
+    findJahresabschlussStatusByBilanzId: vi.fn().mockResolvedValue(null),
       updateWithPositionen: vi.fn(),
     };
     const service = new BilanzService(

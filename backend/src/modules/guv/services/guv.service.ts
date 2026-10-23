@@ -34,6 +34,10 @@ import {
   assertFreigabemarkerUnveraendert,
   assertKeinZuruecksetzenInBearbeitung,
 } from '../../../common/utils/status-transition';
+import {
+  eingereichtSperrtext,
+  istEingereicht,
+} from '../../../common/utils/einreichung-sperre';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
@@ -287,6 +291,19 @@ export class GuVService {
       throw new BadRequestException(
         'Positionen können nur in DRAFT-Phase geändert werden',
       );
+    }
+
+    // BEFUND 2026-10-24 (Nachtrag 95): Nach der Einreichung beim
+    // Bundesanzeiger wird der Datenbestand nicht mehr fortgeschrieben —
+    // die `hinweise` der GuV stehen im PDF und waren auch danach
+    // aenderbar (siehe die Begruendung im Bilanz-Service).
+    const abschlussStatus =
+      await this.guvRepository.findJahresabschlussStatusByGuVId(id);
+    if (
+      istEingereicht(abschlussStatus) &&
+      (dto.positionen !== undefined || dto.hinweise !== undefined)
+    ) {
+      throw new ConflictException(eingereichtSperrtext(abschlussStatus!));
     }
 
     // Re-berechne Jahresergebnis wenn Positionen sich ändern.

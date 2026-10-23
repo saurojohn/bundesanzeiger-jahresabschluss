@@ -299,6 +299,24 @@ export class BilanzRepository {
   }
 
   /**
+   * Der Status des Jahresabschlusses, zu dem die Bilanz gehoert.
+   *
+   * BEFUND 2026-10-24 (Nachtrag 95): Nach der Einreichung wird der
+   * Bestand nicht mehr fortgeschrieben — der Inhalt der Bestandteile
+   * (u. a. die `hinweise`, die im PDF stehen) ist dann eingefroren.
+   */
+  async findJahresabschlussStatusByBilanzId(
+    bilanzId: string,
+  ): Promise<string | null> {
+    const abschluss = await this.prismaService.jahresabschluss.findFirst({
+      where: { bilanzId },
+      select: { status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return abschluss?.status ?? null;
+  }
+
+  /**
    * Erstellt eine Bilanz + zugehörige Positionen in einer Transaktion.
    *
    * Garantiert: entweder beide Records erfolgreich oder keiner.

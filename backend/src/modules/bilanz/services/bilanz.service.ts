@@ -33,6 +33,10 @@ import {
   assertFreigabemarkerUnveraendert,
   assertKeinZuruecksetzenInBearbeitung,
 } from '../../../common/utils/status-transition';
+import {
+  eingereichtSperrtext,
+  istEingereicht,
+} from '../../../common/utils/einreichung-sperre';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
@@ -325,6 +329,27 @@ export class BilanzService {
       throw new BadRequestException(
         'Positionen können nur in DRAFT-Phase geändert werden',
       );
+    }
+
+    // BEFUND 2026-10-24 (Nachtrag 95): Nach der Einreichung beim
+    // Bundesanzeiger (SUBMITTED) bzw. der Veroeffentlichung (PUBLISHED)
+    // wird der Datenbestand nicht mehr fortgeschrieben. Die `hinweise`
+    // stehen im PDF (`bilanz.template.ts`) und waren — anders als die
+    // Positionen — auch nach der Einreichung aenderbar. Eine Aenderung
+    // konnte nie nachgezogen werden (eine erneute Signatur ist fuer einen
+    // eingereichten Abschluss gesperrt, Nachtrag 78) — der Datenbestand
+    // waere dauerhaft vom eingereichten Dokument abgewichen.
+    //
+    // BIS ZUR Einreichung bleibt der Korrekturvorgang offen (Entscheidung
+    // der Fachverantwortlichen vom 2026-10-14: das Signieren sperrt nicht
+    // gegen Aenderung).
+    const abschlussStatus =
+      await this.bilanzRepository.findJahresabschlussStatusByBilanzId(id);
+    if (
+      istEingereicht(abschlussStatus) &&
+      (dto.positionen !== undefined || dto.hinweise !== undefined)
+    ) {
+      throw new ConflictException(eingereichtSperrtext(abschlussStatus!));
     }
 
     const updated = await this.bilanzRepository.updateWithPositionen(

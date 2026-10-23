@@ -47,6 +47,7 @@ function bilanzRepository() {
       createdAt: new Date('2026-01-01'),
       updatedAt: new Date('2026-01-01'),
     }),
+    findJahresabschlussStatusByBilanzId: vi.fn().mockResolvedValue(null),
     updateWithPositionen: vi.fn().mockResolvedValue({
       id: ID,
       mandantId: MANDANT,
@@ -119,6 +120,7 @@ describe('Verdrahtung: alle drei Bestandteile prüfen den Archivzustand', () => 
       // Vollstaendiger Datensatz: sonst scheitert der Code VOR dem Fix an
       // `toAuditDto(undefined)` und die Negativprobe saehe nur die
       // Mock-Form statt des Verhaltens.
+    findJahresabschlussStatusByBilanzId: vi.fn().mockResolvedValue(null),
       updateWithPositionen: vi.fn().mockResolvedValue({
         id: ID,
         mandantId: MANDANT,

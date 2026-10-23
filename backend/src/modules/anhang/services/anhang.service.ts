@@ -28,6 +28,10 @@ import {
   assertFreigabemarkerUnveraendert,
   assertKeinZuruecksetzenInBearbeitung,
 } from '../../../common/utils/status-transition';
+import {
+  eingereichtSperrtext,
+  istEingereicht,
+} from '../../../common/utils/einreichung-sperre';
 import { assertMandantNichtArchiviert } from '../../../common/utils/mandant-archivierung';
 import { MandantRepository } from '../../../common/repositories/mandant.repository';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
@@ -349,8 +353,7 @@ export class AnhangService {
     // (Entscheidung der Fachverantwortlichen vom 2026-10-14).
     const abschlussStatus =
       await this.anhangRepository.findJahresabschlussStatusByAnhangId(id);
-    const eingereicht =
-      abschlussStatus === 'SUBMITTED' || abschlussStatus === 'PUBLISHED';
+    const eingereicht = istEingereicht(abschlussStatus);
     if (
       eingereicht &&
       (dto.bilanzierungsMethoden !== undefined ||
@@ -358,12 +361,7 @@ export class AnhangService {
         dto.sonstigePflichtangaben !== undefined ||
         dto.abschnitte !== undefined)
     ) {
-      throw new ConflictException(
-        `Der Jahresabschluss ist eingereicht (Status ${abschlussStatus}) — ` +
-          'der Anhanginhalt ist unveraenderlich. Die eingereichte Fassung ' +
-          'liegt beim Bundesanzeiger; eine Aenderung koennte nicht mehr ' +
-          'nachgezogen werden (§ 147 AO).',
-      );
+      throw new ConflictException(eingereichtSperrtext(abschlussStatus!));
     }
 
     const updated = await this.anhangRepository.updateWithAbschnitte(id, mandantId, {

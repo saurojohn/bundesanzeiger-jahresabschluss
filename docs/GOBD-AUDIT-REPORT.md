@@ -9543,12 +9543,26 @@ nahm eine Änderung an, die sie selbst nicht mehr verarbeiten konnte.
 
 #### Die Behebung
 
-Der Anhang-Service fragt jetzt den Status des Jahresabschlusses ab, zu
-dem der Anhang gehört (`findJahresabschlussStatusByAnhangId`):
+Die Regel steht jetzt **an einer Stelle**:
+`src/common/utils/einreichung-sperre.ts` — welche Abschluss-Status den
+Bestand einfrieren und was der Nutzer dann liest. Alle drei
+Bestandteile fragen sie ab:
 
-- `SUBMITTED` oder `PUBLISHED` → der **Inhalt** des Anhangs ist
-  eingefroren (409). Der Statuswechsel des Anhangs selbst bleibt
-  erlaubt — eine Archivierung ist keine Fortschreibung.
+| Bestandteil | Abgefragt über | Gesperrt nach der Einreichung |
+|---|---|---|
+| Anhang | `findJahresabschlussStatusByAnhangId` | Pflichtangaben + Abschnitte |
+| Bilanz | `findJahresabschlussStatusByBilanzId` | `hinweise` (die Positionen waren schon ab `VALIDATED` eingefroren) |
+| GuV | `findJahresabschlussStatusByGuVId` | `hinweise` (wie Bilanz) |
+
+Die `hinweise` standen dabei ebenfalls im PDF (`bilanz.template.ts`:
+„Hinweise: …") und waren — anders als die Positionen — auch nach der
+Einreichung änderbar. Dieselbe Lücke, derselbe Weg.
+
+Das Verhalten:
+
+- `SUBMITTED` oder `PUBLISHED` → der **Inhalt** ist eingefroren (409).
+  Der Statuswechsel des Anhangs selbst bleibt erlaubt — eine
+  Archivierung ist keine Fortschreibung.
 - `SIGNED` (oder alles andere) → der Korrekturvorgang bleibt offen, wie
   dokumentiert.
 
@@ -9572,15 +9586,25 @@ Unit "nach der Veroeffentlichung ist der Anhang-Inhalt ebenfalls eingefroren":
     promise resolved "{ …(8) }" instead of rejecting
 ```
 
+Für die Erweiterung auf Bilanz und GuV (zweite Probe, nur diese beiden
+Sperren ausgesetzt) meldet der e2e-Test:
+
+```
+die Hinweise der Bilanz duerfen nach der Einreichung nicht geaendert
+werden: expected 200 to be 409
+```
+
 #### Die Tests
 
 - `e2e/signatur-abweichung.e2e.spec.ts` (ein zusätzlicher Test): nach
   der erfolgreichen Einreichung (Abschluss `SUBMITTED`, Bestellnummer
-  gesetzt) ist der Anhang-Inhalt gesperrt, und der Text in der
-  Datenbank ist unverändert.
+  gesetzt) sind der Anhang-Inhalt **und** die `hinweise` der Bilanz und
+  der GuV gesperrt, und die Texte in der Datenbank sind unverändert.
 - `anhang-inhalt-regeln.spec.ts` (3 zusätzliche Tests): `SUBMITTED`
   und `PUBLISHED` sperren den Inhalt, `SIGNED` lässt den
   Korrekturvorgang offen.
+- `einreichung-sperre.spec.ts` (5 Tests): die Regel selbst — welche
+  Status sperren, welche nicht, und was der Text sagt.
 
 **Merksatz:** Eine Änderung, die die Anwendung annimmt, aber selbst
 nicht mehr verarbeiten kann, ist keine Freiheit, sondern ein Loch. Der
@@ -9599,7 +9623,7 @@ beim Bundesanzeiger liegt.
 |---|---|
 | `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
 | `npx eslint src --max-warnings 0` | 0 Warnungen |
-| `npx vitest run` | **963/967** (129 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx vitest run` | **968/972** (130 Dateien, 4 übersprungen, 0 Fehlschläge) |
 | `npx playwright test` | **80/80** |
 | `npx tsc --noEmit` (Frontend) | 0 Fehler |
 

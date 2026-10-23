@@ -124,6 +124,9 @@ function buildService(verfahren: string) {
     guvRepository,
     anhangRepository,
     auditService,
+    // BEFUND 2026-10-22 (Nachtrag 86): WORM-Archivierung der XBRL.
+    { uploadToWorm: vi.fn(), getConfig: vi.fn() } as never,
+    { create: vi.fn() } as never,
   );
 }
 

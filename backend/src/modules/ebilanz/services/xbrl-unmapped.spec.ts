@@ -66,6 +66,9 @@ function buildService(bilanzPos: Pos[], guvPos: Pos[]) {
       }),
     } as never,
     { record: vi.fn().mockResolvedValue(undefined) } as never,
+    // BEFUND 2026-10-22 (Nachtrag 86): WORM-Archivierung der XBRL.
+    { uploadToWorm: vi.fn(), getConfig: vi.fn() } as never,
+    { create: vi.fn() } as never,
   );
 }
 
@@ -250,6 +253,9 @@ describe('E-Bilanz-Mapping: unMapped wird berichtet', () => {
         }),
       } as never,
       { record } as never,
+      // BEFUND 2026-10-22 (Nachtrag 86): WORM-Archivierung der XBRL.
+      { uploadToWorm: vi.fn(), getConfig: vi.fn() } as never,
+      { create: vi.fn() } as never,
     );
 
     await service.generateEbilanzXbrl(

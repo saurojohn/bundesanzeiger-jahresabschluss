@@ -50,6 +50,15 @@ export interface EinreichenErgebnisDto {
   submissionId: string;
   /** SHA-256 der eingereichten Nutzlast. */
   payloadHash: string;
+  /**
+   * Das Format der eingereichten Nutzlast.
+   *
+   * BEFUND 2026-10-22 (Nachtrag 86): Der Wert stand vorher nicht in der
+   * Antwort. Der Beleg speicherte zwar `payloadFormat`, die API sagte es
+   * aber nicht — bei einem XML-Kanal war die gespeicherte Nutzlast (das
+   * PDF) damit nur im Datenbankzweig sichtbar.
+   */
+  payloadFormat: string;
 }
 
 /** Antwort nach dem Melden der Veroeffentlichung. */

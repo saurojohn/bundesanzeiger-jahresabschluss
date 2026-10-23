@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { CommonRepositoriesModule } from '../../common/repositories/common-repositories.module';
+import { StorageModule } from '../storage/storage.module';
 import { EbilanzController } from './controllers/ebilanz.controller';
 import { XbrlGeneratorService } from './services/xbrl-generator.service';
 import { XbrlValidatorService } from './services/xbrl-validator.service';
@@ -14,7 +15,9 @@ import { XbrlValidatorService } from './services/xbrl-validator.service';
  * - RBAC: STEUERBERATER / WIRTSCHAFTSPRUEFER / KANZLEI_ADMIN
  */
 @Module({
-  imports: [AuditModule, CommonRepositoriesModule],
+  // BEFUND 2026-10-22 (Nachtrag 86): StorageModule fuer die
+  // WORM-Archivierung der erzeugten XBRL (siehe `generateUndArchivieren`).
+  imports: [AuditModule, CommonRepositoriesModule, StorageModule],
   controllers: [EbilanzController],
   providers: [XbrlGeneratorService, XbrlValidatorService],
   exports: [XbrlGeneratorService, XbrlValidatorService],

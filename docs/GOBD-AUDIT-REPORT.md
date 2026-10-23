@@ -8479,6 +8479,137 @@ Male war die eigentliche Ursache eine fehlende Konfiguration.
 
 ---
 
+### Nachtrag 2026-10-23 (Nachtrag 86): Der Einreichungsbeleg enthielt nicht das eingereichte Dokument
+
+#### Der Befund
+
+Der Einreichungsbeleg (`BanzSubmission`) speicherte **immer** das signierte
+PDF — unabhängig davon, über welchen Kanal der Mandant veröffentlicht. Bei
+`XML_XBRL` und `EBILANZ_TAXONOMIE` (zwei der drei Seed-Mandanten) ist aber
+nicht das PDF eingereicht worden, sondern die **XBRL** — und die wurde
+nirgends aufbewahrt.
+
+**Gemessen** an der laufenden API (Mandant „Beispiel GmbH", Kanal
+`XML_XBRL`; kompletter Ablauf: Bilanz/GuV/Anhang → Abschluss → Vier-Augen →
+qeS-Signatur → Einreichung):
+
+```
+POST /api/jahresabschluss/<id>/einreichen
+  -> HTTP 200, channel: "XML_XBRL"
+
+SELECT "channel", "payloadFormat", "rawPayload" FROM banz_submission
+  channel        = XML_XBRL
+  payloadFormat  = PDF
+  rawPayload[0..8] = "%PDF-1.3"        (23.665 Bytes)
+```
+
+Der Beleg behauptet also, die **Rohdaten der Einreichung** zu enthalten —
+und enthält ein PDF, das bei diesem Kanal nie eingereicht wurde. Die
+Verfahrensdokumentation stuft den E-Bilanz-Upload ausdrücklich als
+„außerhalb der Anwendung" ein; die Anwendung konnte die Datei also gar nicht
+kennen.
+
+#### Die Familie: der Code widersprach dem eigenen Schema
+
+| Stelle | Aussage |
+|---|---|
+| `schema.prisma` | `rawPayload Bytes // Generierte XML/XBRL/PDF-Daten` |
+| `schema.prisma` | `payloadFormat String // "XML" \| "XBRL" \| "PDF" \| "ZIP"` |
+| `schema.prisma` (WormObject) | `entityType String // "BILANZ_PDF" \| … \| "BILANZ_XML" \| etc.` |
+| **Code** | `payloadFormat: 'PDF'` (hart verdrahtet), Nutzlast = PDF |
+
+Drei Stellen im Schema sahen XML/XBRL vor — der Code kannte nur PDF. Die
+XBRL-Archivierung existierte nicht: der Generator (`xbrl-generator.service.ts`)
+lief ins Leere, es gab **keinen** WORM-Upload, keinen Hash, kein Manifest.
+Die Datei existierte nur in der HTTP-Antwort des Export-Endpoints; nach dem
+Download beim Mandanten war sie nirgends mehr.
+
+#### Die Entscheidung (2026-10-23, Fachverantwortliche)
+
+**Option A — XML archivieren und als Nutzlast protokollieren.** Die beim
+Einreichen erzeugte XBRL wird im WORM abgelegt (zehn Jahre, eigener
+EntityType, Object-Lock COMPLIANCE, Legal Hold) und als Nutzlast des Belegs
+geführt (`payloadFormat: 'XBRL'`). Das signierte PDF bleibt als
+Beweisdokument im WORM, wo es bereits liegt.
+
+Verworfen wurden: „Beleg bleibt PDF, wird aber ehrlich markiert" (die
+eingereichten Daten blieben unaufbewahrt) und „Einreichung für XML-Kanäle
+ablehnen" (dann hätte die Anwendung gar keinen Beleg erzeugen können).
+
+#### Die Behebung
+
+1. **`XbrlGeneratorService.generateUndArchivieren()`** — erzeugt die XBRL
+   über **denselben** Erzeugungsweg (`generateEbilanzXbrl()`, keine
+   zweite Implementierung) und legt sie im WORM ab: eigener EntityType
+   `ABSCHLUSS_XBRL`, `retentionDays: 3650`, `objectLockMode: COMPLIANCE`,
+   `legalHold: true`, eigener Key `mandant/<id>/abschluss_xbrl/<gj>/<uuid>.xbrl`,
+   Audit-Eintrag auf `WormObject`.
+2. **`AbschlussService.einreichen()`** — die Nutzlast folgt dem Kanal:
+   - `PDF_DIRECT` → das signierte PDF (unveraendert)
+   - `XML_XBRL` / `EBILANZ_TAXONOMIE` → die XBRL, **frisch erzeugt** und
+     archiviert
+
+   Die XBRL wird **nach** der Abweichungsprüfung erzeugt: die Daten
+   entsprechen damit der signierten Fassung (§ 147 AO) — die protokollierte
+   Nutzlast ist die Fassung, die der Kanzlei zur Einreichung gedient hat.
+3. **Der reine Export archiviert nichts** — sonst erzeugte jeder
+   Vorschau-Klick einen zehnjährigen WORM-Objekt.
+4. **`payloadFormat` steht jetzt auch in der API-Antwort** — vorher
+   stand es nur im Datenbankzweig, für einen XML-Kanal also unsichtbar.
+
+#### Die Negativprobe
+
+Nutzlast wieder kanalunabhängig (das PDF) → **ein** Test rot, aus dem
+richtigen Grund:
+
+```
+e2e "XML-Kanal: der Beleg enthaelt die XBRL — und sie liegt im WORM":
+    expected 'PDF' to be 'XBRL'
+Gegenprobe (PDF-Kanal): bleibt gruen
+```
+
+Ein erster Negativprobe-Versuch war **nicht** verwertbar: `if (false && …)`
+brachte den TypeScript-Compiler zum Scheitern, der Server startete nicht,
+und der e2e-Test wurde **übersprungen** statt ausgeführt. Ein
+übersprungener Test ist kein fehlgeschlagener Test — die Negativprobe
+gilt erst mit übersetztem Code.
+
+#### Die Tests
+
+- `e2e/einreichungsbeleg-kanal.e2e.spec.ts` (2 Tests): der Beleg eines
+  XML-Kanals enthält die XBRL (`<?xml`, der Hash passt zur Nutzlast), und
+  die Datei liegt im WORM (3650 Tage, Legal Hold, COMPLIANCE, eigener Key);
+  **Gegenprobe**: beim PDF-Kanal bleibt es beim PDF.
+- `src/modules/ebilanz/services/xbrl-archivierung.spec.ts` (4 Fälle): der
+  Upload (EntityType, Key, Content-Type, die Nutzlast ist XML), das
+  Manifest (Retention, Legal Hold, Lock-Modus), der Audit-Eintrag — und die
+  Gegenprobe, dass der **reine Export** nichts archiviert.
+
+**Merksatz:** Ein Beleg, der etwas anderes enthaelt als das, was
+eingereicht wurde, ist keine Luecke in der Nachvollziehbarkeit — er ist
+eine **falsche Aussage** im Audit-Trail. Die Verfahrensdokumentation sagte
+„E-Bilanz-Upload ausserhalb der Anwendung"; das Schema sagte
+„Generierte XML/XBRL/PDF-Daten"; nur der Code kannte PDF. Drei Stellen
+sagten dasselbe, und keine davon wurde abgeglichen.
+
+**Merksatz:** Ein Schema, das Werte aufzaehlt, die der Code nie erzeugt,
+ist ein **Befund**, kein Kommentar. `payloadFormat: "XML" | "XBRL" | "PDF"
+| "ZIP"` neben `payloadFormat: 'PDF'` im Code ist eine offene Frage, die
+niemand beantwortet — genau wie der Nachtrag-38-Kommentar („ist bewusst
+nicht enthalten"), der in Wahrheit falsch war.
+
+#### Verifikation (Nachtrag 86)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **920/924** (119 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

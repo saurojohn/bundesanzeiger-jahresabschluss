@@ -25,6 +25,7 @@ import { GuVService } from '../../guv/services/guv.service';
 import { AnhangService } from '../../anhang/services/anhang.service';
 import { WormObjectRepository } from '../../storage/repositories/worm-object.repository';
 import { StorageService } from '../../storage/services/storage.service';
+import { XbrlGeneratorService } from '../../ebilanz/services/xbrl-generator.service';
 import type { AuthUser } from '../../auth/types/auth-user.types';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
 
@@ -72,6 +73,13 @@ export class AbschlussService {
     // Einreichungs-Datensaetze braucht es die **Nutzlast** selbst — das
     // signierte PDF aus dem WORM-Speicher.
     private readonly storageService: StorageService,
+    /**
+     * BEFUND 2026-10-22 (Nachtrag 86): Fuer Mandanten mit Kanal
+     * `XML_XBRL` / `EBILANZ_TAXONOMIE` ist die eingereichte Nutzlast die
+     * **XBRL** — nicht das signierte PDF. Der Generator erzeugt sie und legt
+     * sie im WORM ab (§ 147 AO).
+     */
+    private readonly xbrlGenerator: XbrlGeneratorService,
   ) {}
 
   /**
@@ -626,9 +634,67 @@ export class AbschlussService {
       'Jahresabschluss einreichen',
     );
 
-    const payload = await this.storageService.downloadFromWorm(
-      signiertesPdf.objectKey,
-    );
+    // 5. Die Nutzlast haengt am **Kanal** des Mandanten.
+    //
+    // BEFUND 2026-10-22 (Nachtrag 86): Der Beleg trug fuer JEDEN Kanal das
+    // signierte PDF — auch bei `XML_XBRL` und `EBILANZ_TAXONOMIE`. Gemessen:
+    //
+    //     channel       = XML_XBRL
+    //     payloadFormat = PDF
+    //     rawPayload[0..8] = "%PDF-1.3"
+    //
+    // Das PDF war bei diesem Kanal nie eingereicht worden (der E-Bilanz-Upload
+    // findet laut Verfahrensdokumentation ausserhalb der Anwendung statt) —
+    // der Beleg behauptete also etwas Falsches. Das Schema sagt dagegen
+    // "rawPayload: Generierte XML/XBRL/PDF-Daten" und
+    // "payloadFormat: XML | XBRL | PDF | ZIP".
+    //
+    // ENTSCHEIDUNG der Fachverantwortlichen (2026-10-23): Die beim
+    // Einreichen erzeugte XBRL wird im WORM abgelegt (zehn Jahre, eigener
+    // EntityType) und als Nutzlast protokolliert. Das signierte PDF bleibt
+    // als Beweisdokument im WORM (dort liegt es bereits).
+    const istXmlKanal =
+      mandant.publishChannel === 'XML_XBRL' ||
+      mandant.publishChannel === 'EBILANZ_TAXONOMIE';
+
+    let payload: Buffer;
+    let payloadFormat: string;
+    let payloadHash: string;
+    let payloadWormKey: string | null = null;
+
+    if (istXmlKanal) {
+      const abschluss = await this.prisma.jahresabschluss.findUnique({
+        where: { id },
+        select: { bilanzId: true, guvId: true, anhangId: true },
+      });
+      if (!abschluss) throw new NotFoundException('Jahresabschluss nicht gefunden');
+
+      // Die XBRL wird HIER erzeugt — nach der Abweichungspruefung oben. Die
+      // Daten entsprechen damit der signierten Fassung (§ 147 AO): die
+      // Nutzlast, die protokolliert wird, ist die Fassung, die der Kanzlei
+      // zur Einreichung gedient hat.
+      const xbrl = await this.xbrlGenerator.generateUndArchivieren(
+        {
+          mandantId,
+          bilanzId: abschluss.bilanzId,
+          guvId: abschluss.guvId,
+          anhangId: abschluss.anhangId,
+          jahresabschlussId: id,
+        },
+        user,
+        { ip: context.ip ?? null, userAgent: context.userAgent ?? null },
+      );
+      payload = xbrl.bytes;
+      payloadFormat = 'XBRL';
+      payloadHash = xbrl.sha256Hash;
+      payloadWormKey = xbrl.wormObjectKey;
+    } else {
+      payload = await this.storageService.downloadFromWorm(
+        signiertesPdf.objectKey,
+      );
+      payloadFormat = 'PDF';
+      payloadHash = signiertesPdf.sha256Hash;
+    }
 
     const jetzt = new Date();
     let submissionId: string;
@@ -646,8 +712,8 @@ export class AbschlussService {
             submittedAt: jetzt,
             banzBestellnummer: dto.banzBestellnummer,
             rawPayload: payload,
-            payloadFormat: 'PDF',
-            payloadHash: signiertesPdf.sha256Hash,
+            payloadFormat,
+            payloadHash,
             createdById: user.id,
           },
           select: { id: true },
@@ -691,8 +757,12 @@ export class AbschlussService {
         banzBestellnummer: dto.banzBestellnummer,
         channel: mandant.publishChannel,
         submissionId,
-        payloadHash: signiertesPdf.sha256Hash,
+        payloadFormat,
+        payloadHash,
         payloadGroesse: payload.length,
+        // Bei XML-Kanaelen: der WORM-Schluessel der eingereichten Datei.
+        // Das signierte PDF bleibt davon unberuehrt im WORM (Beweisdokument).
+        payloadWormKey,
       } as unknown as Prisma.JsonValue,
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,
@@ -710,7 +780,8 @@ export class AbschlussService {
       banzBestellnummer: dto.banzBestellnummer,
       channel: mandant.publishChannel,
       submissionId,
-      payloadHash: signiertesPdf.sha256Hash,
+      payloadFormat,
+      payloadHash,
     };
   }
 

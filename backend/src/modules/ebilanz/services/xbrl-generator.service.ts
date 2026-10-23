@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { create } from 'xmlbuilder2';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/services/audit.service';
@@ -35,6 +36,8 @@ import {
 } from '../mappings/hgb-kt-v6.types';
 import { saldoStimmt, SALDO_TOLERANZ_CENTS } from '../../../common/utils/saldo';
 import { assertMandantAccess } from '../../../common/utils/mandant-zugriff';
+import { StorageService } from '../../storage/services/storage.service';
+import { WormObjectRepository } from '../../storage/repositories/worm-object.repository';
 
 export interface XbrlGeneratorContext {
   ip?: string | null;
@@ -111,6 +114,14 @@ export class XbrlGeneratorService {
     private readonly guvRepository: GuVRepository,
     private readonly anhangRepository: AnhangRepository,
     private readonly auditService: AuditService,
+    /**
+     * BEFUND 2026-10-22 (Nachtrag 86): Die erzeugte XBRL muss **aufbewahrt**
+     * werden — sie ist das Dokument, das beim Bundesanzeiger eingereicht
+     * wird (§ 147 AO). Der Generator legte sie nur in der Antwort ab; im
+     * WORM-Archiv existierte sie nie.
+     */
+    private readonly storageService: StorageService,
+    private readonly wormObjectRepository: WormObjectRepository,
   ) {}
 
   /**
@@ -299,6 +310,127 @@ export class XbrlGeneratorService {
       xbrlBase64: xbrlBytes.toString('base64'),
       metadata,
     };
+  }
+
+  /**
+   * Erzeugt die E-Bilanz-XBRL **und legt sie im WORM-Archiv ab**.
+   *
+   * BEFUND 2026-10-22 (Nachtrag 86): Die erzeugte XBRL war nirgends
+   * aufbewahrt. Fuer einen Mandanten mit Kanal `XML_XBRL` oder
+   * `EBILANZ_TAXONOMIE` ist die XBRL aber das **eingereichte Dokument** —
+   * sie muss nach § 147 AO zehn Jahre verwahrt werden. Vorher existierte
+   * sie nur in der HTTP-Antwort des Export-Endpoints; nach dem Download
+   * beim Mandanten, ohne jeden Beleg in der Anwendung.
+   *
+   * Der Einreichungsbeleg trug stattdessen das **signierte PDF** — ein
+   * Dokument, das bei diesem Kanal gar nicht eingereicht wurde (gemessen:
+   * `channel=XML_XBRL`, `rawPayload` began mit `%PDF-1.3`).
+   *
+   * Entscheidung der Fachverantwortlichen (2026-10-23): Die beim Einreichen
+   * erzeugte XBRL wird im WORM abgelegt (eigener EntityType, zehn Jahre,
+   * Object-Lock COMPLIANCE, Legal Hold) und als Nutzlast des Belegs
+   * protokolliert. Das signierte PDF bleibt als Beweisdokument im WORM.
+   *
+   * Die Erzeugung selbst laeuft ueber `generateEbilanzXbrl()` — es gibt
+   * genau **einen** Erzeugungsweg.
+   */
+  async generateUndArchivieren(
+    args: GeneratorInput & { jahresabschlussId: string },
+    user: AuthUser,
+    context: XbrlGeneratorContext,
+  ): Promise<{
+    bytes: Buffer;
+    sha256Hash: string;
+    wormObjectKey: string;
+    metadata: EbilanzMetadata;
+  }> {
+    const ergebnis = await this.generateEbilanzXbrl(args, user, context);
+    const bytes = Buffer.from(ergebnis.xbrlBase64, 'base64');
+    const hash = WormObjectRepository.sha256Of(bytes);
+
+    const objectKey = this.buildXbrlObjectKey(
+      args.mandantId,
+      args.jahresabschlussId,
+      ergebnis.metadata.geschaeftsjahr,
+    );
+
+    const meta = await this.storageService.uploadToWorm({
+      objectKey,
+      entityType: 'ABSCHLUSS_XBRL',
+      entityId: args.jahresabschlussId,
+      mandantId: args.mandantId,
+      data: bytes,
+      contentType: 'application/xml',
+    });
+    const finalHash = meta.sha256Hash ?? hash;
+
+    const storageConfig = this.storageService.getConfig();
+    const manifest = await this.wormObjectRepository.create({
+      objectKey,
+      entityType: 'ABSCHLUSS_XBRL',
+      entityId: args.jahresabschlussId,
+      mandantId: args.mandantId,
+      sha256Hash: finalHash,
+      sizeBytes: meta.sizeBytes,
+      objectLockMode: storageConfig.lockMode,
+      retentionDays: storageConfig.retentionDays,
+      retentionExpiresAt: meta.retentionExpiresAt,
+      uploadedById: user.id,
+      // Ein Beleg ist ein Beweis — Legal Hold wie bei den PDFs.
+      legalHold: true,
+    });
+
+    await this.auditService.record({
+      userId: user.id,
+      mandantId: args.mandantId,
+      jahresabschlussId: args.jahresabschlussId,
+      action: 'CREATE',
+      entityType: 'WormObject',
+      entityId: manifest.id,
+      newState: {
+        domainEntityType: 'ABSCHLUSS_XBRL',
+        domainEntityId: args.jahresabschlussId,
+        objectKey: manifest.objectKey,
+        sha256Hash: finalHash,
+        sizeBytes: manifest.sizeBytes,
+        objectLockMode: manifest.objectLockMode,
+        retentionDays: manifest.retentionDays,
+        retentionExpiresAt: manifest.retentionExpiresAt.toISOString(),
+        taxonomieVersion: ergebnis.metadata.taxonomieVersion,
+        geschaeftsjahr: ergebnis.metadata.geschaeftsjahr,
+      } as Prisma.JsonValue,
+      ipAddress: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+
+    this.logger.log(
+      `XBRL archiviert: Jahresabschluss ${args.jahresabschlussId} → ${objectKey} ` +
+        `(${manifest.sizeBytes}B, hash=${finalHash.slice(0, 12)}…)`,
+    );
+
+    return {
+      bytes,
+      sha256Hash: finalHash,
+      wormObjectKey: manifest.objectKey,
+      metadata: ergebnis.metadata,
+    };
+  }
+
+  /**
+   * Deterministischer Object-Key fuer die XBRL — Schema wie bei den PDFs:
+   * `mandant/<mandantId>/abschluss_xbrl/<gj>/<uuid>.xbrl`
+   *
+   * Die UUID macht jede Fassung eindeutig: die XBRL wird bei jeder
+   * Einreichung neu erzeugt, und kein Object wird ueberschrieben (ein
+   * Object-Lock-Objekt darf es ohnehin nicht).
+   */
+  private buildXbrlObjectKey(
+    mandantId: string,
+    jahresabschlussId: string,
+    geschaeftsjahr: number,
+  ): string {
+    const uuid = randomUUID();
+    return `mandant/${mandantId}/abschluss_xbrl/${String(geschaeftsjahr)}/${uuid}.xbrl`;
   }
 
   /**

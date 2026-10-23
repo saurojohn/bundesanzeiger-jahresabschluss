@@ -65,6 +65,9 @@ function buildService(aktiva: number, passiva: number): XbrlGeneratorService {
       }),
     } as never,
     { record: vi.fn().mockResolvedValue(undefined) } as never,
+    // BEFUND 2026-10-22 (Nachtrag 86): WORM-Archivierung der XBRL.
+    { uploadToWorm: vi.fn(), getConfig: vi.fn() } as never,
+    { create: vi.fn() } as never,
   );
 }
 
@@ -179,6 +182,9 @@ describe('E-Bilanz-Generierung: Saldo-Gate', () => {
         }),
       } as never,
       { record } as never,
+      // BEFUND 2026-10-22 (Nachtrag 86): WORM-Archivierung der XBRL.
+      { uploadToWorm: vi.fn(), getConfig: vi.fn() } as never,
+      { create: vi.fn() } as never,
     );
 
     await expect(

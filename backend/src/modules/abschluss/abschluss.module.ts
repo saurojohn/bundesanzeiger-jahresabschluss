@@ -4,6 +4,7 @@ import { BilanzModule } from '../bilanz/bilanz.module';
 import { GuVModule } from '../guv/guv.module';
 import { AnhangModule } from '../anhang/anhang.module';
 import { StorageModule } from '../storage/storage.module';
+import { EbilanzModule } from '../ebilanz/ebilanz.module';
 import { AbschlussController } from './controllers/abschluss.controller';
 import { AbschlussService } from './services/abschluss.service';
 
@@ -14,7 +15,9 @@ import { AbschlussService } from './services/abschluss.service';
  * es unter `abschluss/`. Siehe Nachtrag 27 des GoBD-Audit-Reports.
  */
 @Module({
-  imports: [AuditModule, BilanzModule, GuVModule, AnhangModule, StorageModule],
+  // BEFUND 2026-10-22 (Nachtrag 86): EbilanzModule fuer die XBRL als
+  // Einreichungs-Nutzlast bei XML-Kanaelen (siehe `einreichen`).
+  imports: [AuditModule, BilanzModule, GuVModule, AnhangModule, StorageModule, EbilanzModule],
   controllers: [AbschlussController],
   providers: [AbschlussService],
   exports: [AbschlussService],

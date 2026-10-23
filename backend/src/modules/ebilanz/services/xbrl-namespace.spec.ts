@@ -71,6 +71,9 @@ function buildService(): XbrlGeneratorService {
     { findWithPositionen: vi.fn().mockResolvedValue(guv) } as unknown as GuVRepository,
     { findWithAbschnitte: vi.fn().mockResolvedValue(anhang) } as unknown as AnhangRepository,
     { record: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+    // BEFUND 2026-10-22 (Nachtrag 86): WORM-Archivierung der XBRL.
+    { uploadToWorm: vi.fn(), getConfig: vi.fn() } as never,
+    { create: vi.fn() } as never,
   );
 }
 

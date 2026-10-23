@@ -327,6 +327,45 @@ export class AnhangService {
       );
     }
 
+    // BEFUND 2026-10-24 (Nachtrag 95): Nach der EINREICHUNG beim
+    // Bundesanzeiger (SUBMITTED) bzw. nach der Veroeffentlichung
+    // (PUBLISHED) war der Anhang-Inhalt weiterhin aenderbar.
+    //
+    // GEMESSEN an der laufenden API (Abschluss SUBMITTED, Bestellnummer
+    // MESS-…):
+    //     PATCH /api/anhang/<id> { bilanzierungsMethoden: '…' } -> HTTP 200
+    //     in der Datenbank: "NACHTRAG nach der Einreichung"
+    //     Signatur-Status: ABWEICHEND
+    //
+    // Das ist ein Loch mit Folgen: eine erneute Signatur ist fuer einen
+    // eingereichten Abschluss gesperrt (Nachtrag 78), der Einreichungs-
+    // weg setzt den Status SIGNED voraus — die Aenderung konnte also
+    // **nie** nachgezogen werden. Der Datenbestand wuerde dauerhaft vom
+    // eingereichten Dokument abweichen (§ 147 AO: das eingereichte
+    // Dokument ist die Fassung).
+    //
+    // DERSELBE Weg bleibt offen: nach der SIGNATUR (SIGNED) ist die
+    // Aenderung erlaubt — das ist der dokumentierte Korrekturvorgang
+    // (Entscheidung der Fachverantwortlichen vom 2026-10-14).
+    const abschlussStatus =
+      await this.anhangRepository.findJahresabschlussStatusByAnhangId(id);
+    const eingereicht =
+      abschlussStatus === 'SUBMITTED' || abschlussStatus === 'PUBLISHED';
+    if (
+      eingereicht &&
+      (dto.bilanzierungsMethoden !== undefined ||
+        dto.bewertungsMethoden !== undefined ||
+        dto.sonstigePflichtangaben !== undefined ||
+        dto.abschnitte !== undefined)
+    ) {
+      throw new ConflictException(
+        `Der Jahresabschluss ist eingereicht (Status ${abschlussStatus}) — ` +
+          'der Anhanginhalt ist unveraenderlich. Die eingereichte Fassung ' +
+          'liegt beim Bundesanzeiger; eine Aenderung koennte nicht mehr ' +
+          'nachgezogen werden (§ 147 AO).',
+      );
+    }
+
     const updated = await this.anhangRepository.updateWithAbschnitte(id, mandantId, {
       status: dto.status ?? undefined,
       bilanzierungsMethoden: dto.bilanzierungsMethoden ?? undefined,

@@ -9504,6 +9504,108 @@ muss. Ein Eintrag, der nur den neuen Stand nennt, belegt die Behauptung
 
 ---
 
+### Nachtrag 2026-10-24 (Nachtrag 95): Nach der Einreichung war der Anhang-Inhalt weiterhin änderbar
+
+#### Der Befund
+
+Nachtrag 93 hat gezeigt, dass die drei Pflichtangaben des Anhangs
+abweichend zu den Abschnitten behandelt werden — und dass das der
+dokumentierte Korrekturvorgang ist (Entscheidung der
+Fachverantwortlichen vom 2026-10-14). Die Frage, die blieb: **bis
+wann** ist dieser Korrekturweg offen?
+
+#### Gemessen
+
+Im bestehenden Signatur-Ablauf (Anhang ändern → neu signieren →
+einreichen) wurde danach der Anhang erneut geändert:
+
+```
+Abschluss-Status nach der Einreichung: SUBMITTED
+Bestellnummer: MESS-1792796813448
+
+PATCH Anhang (bilanzierungsMethoden) -> 200
+  {"id":"87c3235f-…","status":"VALIDATED",
+   "bilanzierungsMethoden":"NACHTRAG nach der Einreichung", …}
+in der Datenbank: NACHTRAG nach der Einreichung
+
+Signatur-Status: {"status":"ABWEICHEND","geaendertNachSignatur":true, …}
+```
+
+Die Änderung wurde also angenommen, der Abweichungsindikator schlug an
+— und die Änderung konnte **nie** nachgezogen werden: eine erneute
+Signatur ist für einen eingereichten Abschluss gesperrt (Nachtrag 78),
+der Einreichungsweg setzt den Status `SIGNED` voraus. Der Datenbestand
+wäre dauerhaft vom eingereichten Dokument abgewichen (§ 147 AO: das
+eingereichte Dokument ist die Fassung).
+
+⇒ Das ist ein Loch **mit Folgen**, kein Freiheitsraum: Die Anwendung
+nahm eine Änderung an, die sie selbst nicht mehr verarbeiten konnte.
+
+#### Die Behebung
+
+Der Anhang-Service fragt jetzt den Status des Jahresabschlusses ab, zu
+dem der Anhang gehört (`findJahresabschlussStatusByAnhangId`):
+
+- `SUBMITTED` oder `PUBLISHED` → der **Inhalt** des Anhangs ist
+  eingefroren (409). Der Statuswechsel des Anhangs selbst bleibt
+  erlaubt — eine Archivierung ist keine Fortschreibung.
+- `SIGNED` (oder alles andere) → der Korrekturvorgang bleibt offen, wie
+  dokumentiert.
+
+Die Regel folgt aus den bestehenden Entscheidungen: Nachtrag 78
+(„SUBMITTED/PUBLISHED bleiben gesperrt"), Nachtrag 76/77 (der Bestand
+wird nach der Einreichung nicht fortgeschrieben; die Sichtbarkeit der
+Abweichung ist Pflicht) und § 147 AO.
+
+#### Die Negativprobe
+
+Die Sperre ausgesetzt → **drei** Tests rot, jeder aus dem richtigen
+Grund:
+
+```
+e2e "nach der Einreichung ist der Anhang-Inhalt eingefroren":
+    nach der Einreichung darf der Anhang-Inhalt nicht mehr geaendert
+    werden: expected 200 to be 409
+Unit "nach der Einreichung ist der Anhang-Inhalt eingefroren":
+    promise resolved "{ …(8) }" instead of rejecting
+Unit "nach der Veroeffentlichung ist der Anhang-Inhalt ebenfalls eingefroren":
+    promise resolved "{ …(8) }" instead of rejecting
+```
+
+#### Die Tests
+
+- `e2e/signatur-abweichung.e2e.spec.ts` (ein zusätzlicher Test): nach
+  der erfolgreichen Einreichung (Abschluss `SUBMITTED`, Bestellnummer
+  gesetzt) ist der Anhang-Inhalt gesperrt, und der Text in der
+  Datenbank ist unverändert.
+- `anhang-inhalt-regeln.spec.ts` (3 zusätzliche Tests): `SUBMITTED`
+  und `PUBLISHED` sperren den Inhalt, `SIGNED` lässt den
+  Korrekturvorgang offen.
+
+**Merksatz:** Eine Änderung, die die Anwendung annimmt, aber selbst
+nicht mehr verarbeiten kann, ist keine Freiheit, sondern ein Loch. Der
+Test dafür: Was passiert mit der Änderung **danach**? Kann sie noch
+eingereicht werden? Wenn nein, darf sie nicht angenommen werden.
+
+**Merksatz:** „Der Korrekturvorgang ist erlaubt" braucht eine Grenze.
+Hier ist sie die Einreichung: bis dahin darf korrigiert werden (und
+wer neu signiert, reicht nach), danach nicht mehr — weil die Fassung
+beim Bundesanzeiger liegt.
+
+
+#### Verifikation (Nachtrag 95)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **963/967** (129 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

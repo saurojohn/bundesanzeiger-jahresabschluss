@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { AnhangService } from './anhang.service';
 
 /**
@@ -23,7 +23,7 @@ describe('Anhang: die Inhaltsregeln gelten für Abschnitte UND Pflichtangaben (N
   const MANDANT = '11111111-1111-4111-8111-111111111111';
   const ANHANG = '22222222-2222-4222-8222-222222222222';
 
-  function svcMitAnhang(status: string) {
+  function svcMitAnhang(status: string, abschlussStatus: string | null = null) {
     const anhang = {
       id: ANHANG,
       mandantId: MANDANT,
@@ -37,6 +37,9 @@ describe('Anhang: die Inhaltsregeln gelten für Abschnitte UND Pflichtangaben (N
     const anhangRepository = {
       findWithAbschnitte: vi.fn().mockResolvedValue(anhang),
       updateWithAbschnitte: vi.fn().mockResolvedValue(anhang),
+      // BEFUND 2026-10-24 (Nachtrag 95): der Status des Jahresabschlusses,
+      // zu dem der Anhang gehoert.
+      findJahresabschlussStatusByAnhangId: vi.fn().mockResolvedValue(abschlussStatus),
     };
     // Der Konstruktor: (anhangRepository, auditService, mandantRepository).
     // Der Mandant wird gebraucht — `assertMandantBearbeitbar` schlaegt an,
@@ -119,6 +122,56 @@ describe('Anhang: die Inhaltsregeln gelten für Abschnitte UND Pflichtangaben (N
       ANHANG,
       MANDANT,
       { status: 'ARCHIVED' } as never,
+      user,
+      { ip: null, userAgent: null },
+    );
+    expect(anhangRepository.updateWithAbschnitte).toHaveBeenCalled();
+  });
+
+  it('nach der Einreichung ist der Anhang-Inhalt eingefroren (BUG vor dem Fix)', async () => {
+    // BEFUND 2026-10-24 (Nachtrag 95): Nach der Einreichung beim
+    // Bundesanzeiger (SUBMITTED) war der Anhang-Inhalt weiterhin
+    // aenderbar — obwohl eine erneute Signatur fuer einen eingereichten
+    // Abschluss gesperrt ist (Nachtrag 78). Die Aenderung konnte also nie
+    // nachgezogen werden.
+    const { service, anhangRepository, user } = svcMitAnhang('VALIDATED', 'SUBMITTED');
+    await expect(
+      service.update(
+        ANHANG,
+        MANDANT,
+        { bilanzierungsMethoden: 'NACHTRAG nach der Einreichung.' } as never,
+        user,
+        { ip: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(
+      anhangRepository.updateWithAbschnitte,
+      'es darf nichts geschrieben werden',
+    ).not.toHaveBeenCalled();
+  });
+
+  it('nach der Veroeffentlichung ist der Anhang-Inhalt ebenfalls eingefroren', async () => {
+    const { service, user } = svcMitAnhang('VALIDATED', 'PUBLISHED');
+    await expect(
+      service.update(
+        ANHANG,
+        MANDANT,
+        { sonstigePflichtangaben: 'NACHTRAG nach der Veroeffentlichung.' } as never,
+        user,
+        { ip: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('der Korrekturvorgang nach der Signatur bleibt moeglich (SIGNED)', async () => {
+    // Entscheidung der Fachverantwortlichen vom 2026-10-14: das Signieren
+    // sperrt NICHT gegen Aenderung — der Korrekturvorgang braucht einen
+    // aenderbaren Bestandteil.
+    const { service, anhangRepository, user } = svcMitAnhang('VALIDATED', 'SIGNED');
+    await service.update(
+      ANHANG,
+      MANDANT,
+      { bilanzierungsMethoden: 'Korrektur nach der Signatur.' } as never,
       user,
       { ip: null, userAgent: null },
     );

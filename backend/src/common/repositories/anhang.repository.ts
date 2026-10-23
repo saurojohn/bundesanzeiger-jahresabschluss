@@ -223,6 +223,29 @@ export class AnhangRepository {
     });
   }
 
+  /**
+   * Der Status des Jahresabschlusses, zu dem der Anhang gehoert.
+   *
+   * BEFUND 2026-10-24 (Nachtrag 95): Nach der EINREICHUNG (SUBMITTED) war
+   * der Anhang-Inhalt weiterhin aenderbar — obwohl die eingereichte
+   * Fassung im WORM liegt und eine erneute Signatur fuer einen
+   * eingereichten Abschluss gesperrt ist (Nachtrag 78). Eine Aenderung
+   * nach der Einreichung kann damit **nie** nachgezogen werden.
+   *
+   * @returns der Status oder null, wenn der Anhang zu keinem
+   *          Jahresabschluss gehoert.
+   */
+  async findJahresabschlussStatusByAnhangId(
+    anhangId: string,
+  ): Promise<string | null> {
+    const abschluss = await this.prismaService.jahresabschluss.findFirst({
+      where: { anhangId },
+      select: { status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return abschluss?.status ?? null;
+  }
+
   async createWithAbschnitte(input: AnhangCreateInput): Promise<AnhangEntity> {
     return this.prismaService.$transaction(async (tx) => {
       const anhang = await tx.anhang.create({

@@ -392,4 +392,44 @@ describe('Abweichungsindikator nach der Signatur (Nachtrag 77)', () => {
         `Antwort: ${body.slice(0, 220)}`,
     ).toBe(200);
   });
+
+  // BEFUND 2026-10-24 (Nachtrag 95): Nach der EINREICHUNG beim
+  // Bundesanzeiger war der Anhang-Inhalt weiterhin aenderbar. Die
+  // eingereichte Fassung liegt im WORM, und eine erneute Signatur ist
+  // fuer einen eingereichten Abschluss gesperrt (Nachtrag 78) — die
+  // Aenderung konnte also NIE nachgezogen werden. Der Datenbestand
+  // wuerde dauerhaft vom eingereichten Dokument abweichen.
+  it('nach der Einreichung ist der Anhang-Inhalt eingefroren (BUG vor dem Fix)', async () => {
+    const abschluss = await prisma.jahresabschluss.findUnique({
+      where: { id: abschlussId },
+      select: { status: true, banzBestellnummer: true },
+    });
+    expect(abschluss?.status, 'der Abschluss steht auf SUBMITTED').toBe('SUBMITTED');
+    expect(abschluss?.banzBestellnummer, 'die Einreichung hat eine Bestellnummer').toBeTruthy();
+
+    const patch = await fetch(`${BASE}/api/anhang/${anhangId}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        'x-mandant-id': mandantId,
+      },
+      body: JSON.stringify({
+        bilanzierungsMethoden: 'NACHTRAG nach der Einreichung',
+      }),
+    });
+    const text = await patch.text();
+    expect(
+      patch.status,
+      'nach der Einreichung darf der Anhang-Inhalt nicht mehr geaendert werden — ' +
+        `Antwort: ${text.slice(0, 220)}`,
+    ).toBe(409);
+
+    // Und der Text ist unveraendert.
+    const inDb = await prisma.anhang.findUnique({
+      where: { id: anhangId },
+      select: { bilanzierungsMethoden: true },
+    });
+    expect(inDb?.bilanzierungsMethoden).not.toBe('NACHTRAG nach der Einreichung');
+  });
 });

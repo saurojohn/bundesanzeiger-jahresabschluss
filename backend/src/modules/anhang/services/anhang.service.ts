@@ -137,8 +137,34 @@ export class AnhangService {
    * Jahresabschluss der Ort, an dem die Vollstaendigkeit geprueft wird —
    * dort waere die Sperre am richtigen Ort.
    */
-  offenePlatzhalter(abschnitte: Array<{ inhalt: string }>): string[] {
-    const inhalt = abschnitte.map((a) => a.inhalt ?? '').join('\n');
+  /**
+   * Die offenen Platzhalter im Anhang — Abschnitte **und** Pflichtangaben.
+   *
+   * BEFUND 2026-10-24 (Nachtrag 93): Geprüft wurden nur die Abschnitte.
+   * Die drei Pflichtangaben (§ 284 Abs. 2 Nr. 1/2, § 285 HGB) stehen
+   * genauso im PDF (`anhang.template.ts:78-80`) — ein "[Ort]" dort blieb
+   * unentdeckt.
+   *
+   * GEMESSEN an der laufenden API: Anhang mit
+   * `bilanzierungsMethoden = "Lineare Abschreibung, Sitz [Ort]"` und
+   * `sonstigePflichtangaben = "Steuernummer [Steuernummer]"` →
+   * die Detailantwort meldete `offenePlatzhalter: []`.
+   *
+   * Dieselben Platzhalter in einem Abschnitt werden gemeldet — die Regel
+   * galt also nur für einen Teil des Anhangs.
+   */
+  offenePlatzhalter(anhang: {
+    abschnitte: Array<{ inhalt: string }>;
+    bilanzierungsMethoden?: string | null;
+    bewertungsMethoden?: string | null;
+    sonstigePflichtangaben?: string | null;
+  }): string[] {
+    const inhalt = [
+      ...anhang.abschnitte.map((a) => a.inhalt ?? ''),
+      anhang.bilanzierungsMethoden ?? '',
+      anhang.bewertungsMethoden ?? '',
+      anhang.sonstigePflichtangaben ?? '',
+    ].join('\n');
     return ANHANG_VORLAGEN_PLATZHALTER.filter((p) => inhalt.includes(`[${p}]`));
   }
 
@@ -249,7 +275,7 @@ export class AnhangService {
     // die Platzhalter unaufgeloest und liefert trotzdem ein PDF (HTTP 200).
     // Damit der Anwender das vor der Veroeffentlichung sieht, haengt die
     // Liste an der Detailantwort — dort, wo er ohnehin arbeitet.
-    return { ...anhang, offenePlatzhalter: this.offenePlatzhalter(anhang.abschnitte) };
+    return { ...anhang, offenePlatzhalter: this.offenePlatzhalter(anhang) };
   }
 
   async update(
@@ -271,6 +297,30 @@ export class AnhangService {
     // (APPROVED) darf nicht weggeraeumt werden — er steht im signierten
     // Dokument.
     assertFreigabemarkerUnveraendert(previous.status, dto.status, 'Anhang');
+    // BEFUND 2026-10-24 (Nachtrag 93): Die DRAFT-Sperre gilt für die
+    // ABSCHNITTE. Für die drei Pflichtangaben gilt sie **nicht** — und das
+    // ist so gewollt:
+    //
+    // Entscheidung der Fachverantwortlichen vom 2026-10-14 (Nachtrag 77):
+    // „Soll das Signieren die Bilanz/GuV/Anhang gegen Änderung sperren?"
+    // → **Nein**. „Ein Korrekturvorgang erzeugt zwingend eine neue Signatur,
+    // und der alte WORM-Satz darf nicht gelöscht werden. Stattdessen muss
+    // SICHTBAR sein, wenn die vorgelegten Daten nicht mehr der signierten
+    // Fassung entsprechen."
+    //
+    // Die Positionen der Bilanz und der GuV sind ab VALIDATED eingefroren.
+    // Damit sind die drei Pflichtangaben-Felder der **einzige** Weg, einen
+    // Korrekturvorgang am signierten Jahresabschluss zu erzeugen
+    // (Nachtrag 78: Re-Signatur; der Abweichungsindikator zeigt die
+    // Abweichung an, die Einreichung wird gesperrt).
+    //
+    // GEMESSEN an der laufenden API (Anhang auf VALIDATED):
+    //     Abschnitte ändern      -> HTTP 400 (gesperrt)
+    //     bilanzierungsMethoden  -> HTTP 200 (änderbar — Korrekturvorgang)
+    //
+    // Eine Sperre für die drei Felder würde den Korrekturvorgang
+    // unmöglich machen. Deshalb bleibt es hier bei der Asymmetrie — sie
+    // ist dokumentiert und getestet, nicht vergessen.
     if (previous.status !== 'DRAFT' && dto.abschnitte !== undefined) {
       throw new BadRequestException(
         'Abschnitte können nur in DRAFT-Phase geändert werden',

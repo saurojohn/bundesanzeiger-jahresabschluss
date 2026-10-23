@@ -9256,6 +9256,148 @@ und zeigte eine unausgeglichene Bilanz.
 
 ---
 
+### Nachtrag 2026-10-24 (Nachtrag 93): Der Anhang — geprüft, und was sich als Fehler herausstellte
+
+#### Der Kandidat
+
+Der Anhang hat zwei Sorten von Inhalt: die **Abschnitte** und die drei
+**Pflichtangaben** (`bilanzierungsMethoden` § 284 Abs. 2 Nr. 1 HGB,
+`bewertungsMethoden` § 284 Abs. 2 Nr. 2 HGB, `sonstigePflichtangaben`
+§ 285 HGB). Beide stehen im PDF — `anhang.template.ts:78-80` rendert die
+drei Felder als eigene Abschnitte:
+
+```ts
+{ titel: 'Bilanzierungsmethoden (§ 284 Abs. 2 Nr. 1 HGB)', inhalt: anhang.bilanzierungsMethoden },
+{ titel: 'Bewertungsmethoden (§ 284 Abs. 2 Nr. 2 HGB)', inhalt: anhang.bewertungsMethoden },
+{ titel: 'Sonstige Pflichtangaben (§ 285 HGB)', inhalt: anhang.sonstigePflichtangaben },
+```
+
+Der Verdacht: die Regeln gelten nur für die Abschnitte.
+
+#### Gemessen (Teil 1: die Sperre)
+
+An der laufenden API (Anhang angelegt, dann auf `VALIDATED` gesetzt):
+
+```
+Gegenprobe: Abschnitte aendern  -> HTTP 400
+    "Abschnitte können nur in DRAFT-Phase geändert werden"
+
+bilanzierungsMethoden            -> HTTP 200   << veraenderbar
+bewertungsMethoden               -> HTTP 200   << veraenderbar
+sonstigePflichtangaben           -> HTTP 200   << veraenderbar
+```
+
+#### Die Prüfung: das ist keine Lücke, das ist die Entscheidung
+
+Der erste Reflex war, auch die drei Felder ab `VALIDATED` zu sperren.
+Der Fix brach **zwei bestehende Wächter** — und die brachen aus dem
+richtigen Grund:
+
+```
+e2e "meldet eine Aenderung eines Bestandteils nach der Signatur":
+    Anhang aendern: expected 400 to be 200
+```
+
+Der Grund steht in der Projektdokumentation (Nachtrag 77, zitiert die
+**Entscheidung der Fachverantwortlichen vom 2026-10-14**):
+
+> „Soll das Signieren die Bilanz/GuV/Anhang gegen Änderung sperren?" →
+> **Nein**. „Ein Korrekturvorgang erzeugt zwingend eine neue Signatur,
+> und der alte WORM-Satz darf nicht gelöscht werden. Stattdessen muss
+> **SICHTBAR** sein, wenn die vorgelegten Daten nicht mehr der signierten
+> Fassung entsprechen."
+
+Und die Faktenlage: die **Positionen** der Bilanz und der GuV sind ab
+`VALIDATED` eingefroren. Damit sind die drei Pflichtangaben-Felder der
+**einzige** Weg, einen Korrekturvorgang am signierten Jahresabschluss zu
+erzeugen (Nachtrag 78: Re-Signatur; der Abweichungsindikator zeigt die
+Abweichung an, die Einreichung wird gesperrt).
+
+Eine Sperre der drei Felder hätte diese dokumentierte Entscheidung
+unserer Fachverantwortlichen ausgehebelt — und zwar nicht sichtbar,
+sondern still, in einer Code-Änderung mit dem Titel „Anhang: Inhalt
+festschreiben".
+
+⇒ **Der Sperr-Teil bleibt, wie er ist.** Er ist jetzt ausdrücklich
+kommentiert (mit dem Zitat der Entscheidung) und **getestet**: die drei
+Felder müssen auch nach der Freigabe änderbar bleiben. Wer die
+Änderbarkeit entfernt, zerstört den Korrekturvorgang — das sagt der
+Test jetzt laut.
+
+#### Gemessen (Teil 2: die Platzhalterprüfung) — das ist der Defekt
+
+```
+bilanzierungsMethoden : "Lineare Abschreibung, Sitz [Ort]"
+sonstigePflichtangaben: "Steuernummer [Steuernummer]"
+gemeldete offene Platzhalter: []
+```
+
+Dieselben Platzhalter in einem **Abschnitt** werden gemeldet. Die
+Platzhalterprüfung sah also nur einen Teil des Anhangs — ein
+veröffentlichungsfähiger Anhang hätte `[Ort]` im PDF tragen können.
+
+#### Die Behebung
+
+`offenePlatzhalter()` sieht jetzt den **ganzen** Anhang: die Abschnitte
+und die drei Pflichtangaben. Sie bleibt (wie dokumentiert) eine
+**Meldung** und keine Sperre; die Sperre für die Veröffentlichung liegt
+beim Jahresabschluss (§ 314 HGB). Die Aufrufer wurden entsprechend
+angepasst (`findOne` und die Vollständigkeitsprüfung des
+Jahresabschlusses übergeben den Anhang als Ganzes).
+
+#### Die Negativprobe
+
+Für Teil 1 (die Sperre) gibt es **keine** Negativprobe — dort wird
+nichts geändert, sondern die bestehende Entscheidung festgeschrieben.
+Für Teil 2 (die Platzhalterprüfung): die alte Prüfung wiederhergestellt
+→ **zwei** Tests rot, jeder aus dem richtigen Grund:
+
+```
+e2e "ein Platzhalter in den Pflichtangaben wird gemeldet":
+    die Platzhalter der Pflichtangaben werden gemeldet:
+    expected [] to deeply equal [ 'Ort', 'Steuernummer' ]
+Unit "die Platzhalterpruefung sieht auch die Pflichtangaben":
+    expected [] to deeply equal [ 'Ort', 'Steuernummer' ]
+```
+
+#### Die Tests
+
+- `e2e/anhang-pflichtangaben.e2e.spec.ts` (3 Tests): die drei Felder
+  bleiben auch nach der Freigabe änderbar (der Korrekturvorgang), im
+  DRAFT bleibt alles änderbar, ein Platzhalter in den Pflichtangaben
+  wird gemeldet.
+- `anhang-inhalt-regeln.spec.ts` (6 Tests): die Änderbarkeit je Feld
+  (Wächter der Entscheidung vom 2026-10-14), der erlaubte
+  Statuswechsel und die Platzhalterprüfung.
+
+**Merksatz:** Ein Test, der nach einem Fix rot wird, ist nicht immer ein
+Fehler im Fix — manchmal ist er der Beweis, dass der Fix eine
+**dokumentierte Entscheidung** ausgehebelt hätte. Der erste Reflex
+„das ist eine Lücke" muss die Entscheidungsgrundlage prüfen, bevor er
+Code ändert.
+
+**Merksatz:** „Eine Regel, die für einen Teil eines Dokuments gilt, gilt
+für das Dokument nicht" — das stimmt für Regeln, die man selbst
+erfunden hat. Für Regeln, die eine Fachentscheidung tragen, ist die
+Asymmetrie der dokumentierte Korrekturweg. Man muss sie lesen, bevor
+man sie glättet.
+
+**Merksatz:** Eine Prüfung, die nur einen Teil des geprüften Gegenstands
+sieht, ist eine halbe Prüfung. Die Platzhalterprüfung sah die
+Abschnitte und nicht die Pflichtangaben — beide landen im selben PDF.
+
+#### Verifikation (Nachtrag 93)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **959/963** (129 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

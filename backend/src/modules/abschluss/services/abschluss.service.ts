@@ -298,8 +298,10 @@ export class AbschlussService {
     });
 
     // 3) Anhang: keine offenen Platzhalter
+    // BEFUND 2026-10-24 (Nachtrag 93): Der Anhang wird als GANZES
+    // geprueft — Abschnitte und die drei Pflichtangaben (§ 284/285 HGB).
     const offenePlatzhalter = this.anhangService.offenePlatzhalter(
-      abschluss.anhang.abschnitte,
+      abschluss.anhang,
     );
     pruefungen.push({
       gegenstand: 'Anhang',

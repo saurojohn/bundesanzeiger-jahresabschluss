@@ -40,16 +40,16 @@ describe('Anhang.offenePlatzhalter', () => {
   });
 
   it('ein aus der Vorlage angelegter Anhang meldet seine offenen Platzhalter', () => {
-    const offen = svc.offenePlatzhalter([
+    const offen = svc.offenePlatzhalter({ abschnitte: [
       { inhalt: 'Sitz: [Ort], HRB [Nummer], Steuernummer [Steuernummer], Inhaber [Name], Mitarbeiter [Anzahl]' },
-    ]);
+    ] });
     expect(offen.sort()).toEqual([...ANHANG_VORLAGEN_PLATZHALTER].sort());
   });
 
   it('nach dem Ausfuellen ist die Liste leer', () => {
-    const offen = svc.offenePlatzhalter([
+    const offen = svc.offenePlatzhalter({ abschnitte: [
       { inhalt: 'Sitz: Berlin, HRB 123456, Steuernummer 123/456/789, Inhaber: Max Mustermann, Mitarbeiter: 42' },
-    ]);
+    ] });
     expect(offen).toEqual([]);
   });
 
@@ -58,17 +58,17 @@ describe('Anhang.offenePlatzhalter', () => {
     // Eine Mustererkennung auf eckige Klammern wuerde hier anschlagen und
     // den Anwender mit einem Fehler behelligen, der keiner ist. Genau
     // deshalb ist es eine Liste und kein Muster.
-    const offen = svc.offenePlatzhalter([
+    const offen = svc.offenePlatzhalter({ abschnitte: [
       { inhalt: 'Vgl. [Anlage zum Anhang] und [Anlage 1]' },
-    ]);
+    ] });
     expect(offen).toEqual([]);
   });
 
   it('nur die Abschnitte, die den Platzhalter wirklich enthalten, zaehlen', () => {
-    const offen = svc.offenePlatzhalter([
+    const offen = svc.offenePlatzhalter({ abschnitte: [
       { inhalt: 'Sitz: [Ort]' },
       { inhalt: 'Allgemeine Angaben ohne Platzhalter.' },
-    ]);
+    ] });
     expect(offen).toEqual(['Ort']);
   });
 });

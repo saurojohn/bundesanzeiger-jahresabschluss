@@ -170,13 +170,24 @@ export class DatevCsvParser {
    *     getrennt summiert.
    *   - Saldo = Σ Soll - Σ Haben, gerundet auf 2 Nachkommastellen.
    *
-   * Konvention:
-   *   - Bei einer typischen DATEV-Buchung gibt es zwei Zeilen: Soll und Haben,
-   *     die den gleichen Absolutbetrag (mit unterschiedlichem Vorzeichen) haben.
-   *     `umsatz` ist in beiden Zeilen der **Betrag mit Vorzeichen** (positiv für
-   *     Soll, negativ für Haben) — also summieren wir einfach `umsatz`.
-   *   - Alternativ-Logik (Separat nach Soll/Haben-Flag) wird auch unterstützt,
-   *     falls `umsatz` als Absolutbetrag geliefert wird.
+   * Konvention des **Sachkonten-Buchungsstapels**:
+   *   - **Eine Zeile = eine Buchung.** Sie nennt beide Seiten: `konto` (Soll)
+   *     und `gegenkonto` (Haben). Das Soll/Haben-Kennzeichen (`SH`) gilt dem
+   *     **Umsatz** dieser Zeile.
+   *   - Deshalb wird der Absolutbetrag je Seite getrennt nach `SH` summiert:
+   *     `konto` auf der SH-Seite der Zeile, `gegenkonto` auf der anderen
+   *     Seite (doppelte Buchfuehrung — der Gegenkonto ist immer die andere
+   *     Seite).
+   *
+   * BEFUND 2026-10-23 (Nachtrag 87): Dieser Kommentar beschrieb eine
+   * **andere** Konvention, als der Code implementiert: "Bei einer typischen
+   * DATEV-Buchung gibt es zwei Zeilen: Soll und Haben … also summieren wir
+   * einfach `umsatz`". Nach dieser Lesart wuerde jede Buchung doppelt
+   * gezaehlt — jede Zeile bucht beide Seiten, zwei Zeilen buchen also
+   * zweimal. Der Code hat immer die **eine** Zeile je Buchung gerechnet (und
+   * damit richtig); der Kommentar hat das Gegenteil behauptet. Genau diese
+   * Fehlvorstellung hat beim Export zu den Doppelzeilen gefuehrt (siehe
+   * `datev-export.service.ts`).
    */
   static calculateSaldovortrag(
     buchungsZeilen: ParsedBuchungsZeile[],

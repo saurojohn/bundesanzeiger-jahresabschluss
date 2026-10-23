@@ -9123,6 +9123,139 @@ nicht den Standardfall.
 
 ---
 
+### Nachtrag 2026-10-24 (Nachtrag 91): Der DATEV-Override legte Passiva-Positionen auf die Aktiva-Seite
+
+#### Der Befund
+
+Der User-Override des DATEV-Imports (die manuelle Zuordnung eines
+DATEV-Kontos zu einer HGB-Position) hat die **Bilanzseite** aus dem
+Nummernformat abgeleitet:
+
+```ts
+const isBilanzAktiva  = hgbPosition.startsWith('A.') || 'B.' || 'C.';
+const isBilanzPassiva = hgbPosition.startsWith('PA'..'PE')
+                     || hgbPosition === 'A.I.' || 'A.II.' || 'A.III.' || 'A.IV.' || 'A.V.';
+if (isBilanzPassiva && !isBilanzAktiva) → PASSIVA
+else if (B.IV.)                        → AKTIVA
+else if (isBilanzAktiva)               → AKTIVA
+```
+
+Die zweite Zeile ist **toter Code**: 'A.I.' beginnt zugleich mit 'A.',
+`isBilanzPassiva && !isBilanzAktiva` ist also nie wahr. Die
+EK-Erkennung hat nie ausgelöst.
+
+#### Gemessen
+
+An der laufenden API (DATEV-Konto '3300' = Verbindlichkeiten aus
+Lieferungen und Leistungen, 1000 EUR):
+
+```
+Gegenprobe: Auto-Mapping (3300 -> C.4.)
+    AKTIVA  B.IV.    1000.00
+    PASSIVA C.4.     1000.00
+    Aktiva 1000.00 | Passiva 1000.00 | ausgeglichen: ja
+
+BUG: User-Override (3300 -> C.4.)
+    AKTIVA  B.IV.    1000.00
+    AKTIVA  C.4.     1000.00
+    Aktiva 2000.00 | Passiva 0.00   | ausgeglichen: NEIN
+```
+
+'C.4.' beginnt mit 'C.' — die Heuristik machte daraus **AKTIVA**. Die
+Verbindlichkeiten standen auf der Aktivseite, die Bilanz war nicht
+ausgeglichen, und der Import meldete `importedCount=2,
+skippedCount=0` **ohne jede Warnung**. Dieselbe Position, derselbe
+Import — nur der Weg unterschied sich.
+
+Dasselbe mit 'A.V.' (Sonstige Eigenkapitalposten, § 266 Abs. 3 HGB):
+wieder AKTIVA.
+
+#### Das Grundproblem: die Kontonummer bestimmt die Seite nicht
+
+Nach § 266 HGB verwenden **beide** Bilanzseiten dieselben Buchstaben:
+A./B./C. stehen auf Aktiva (Anlagevermögen, Umlaufvermögen,
+Rechnungsabgrenzungsposten) **und** auf Passiva (Eigenkapital,
+Rückstellungen, Verbindlichkeiten).
+
+Das ist auch in dieser Anwendung so: der Seed legt `A.III.1.` als AKTIVA
+(„Anteile an verbundenen Unternehmen", § 266 Abs. 2) **und** als PASSIVA
+(„Gesetzliche Rücklage", § 266 Abs. 3) an — dieselbe Nummer, zwei
+Seiten. **Die Seite ist Teil der Identität einer Position.**
+
+Eine Regel, die die Seite aus dem Nummernformat liest, kann deshalb
+nicht stimmen — sie kann nur zufällig sometimes stimmen.
+
+#### Die Behebung
+
+Neu: `src/modules/datev-import/mappings/hgb-position-auflosung.ts`. Die
+Seite kommt aus den Quellen, die in der Anwendung **eindeutig** sind:
+
+1. **Die SKR04-Reverse-Tabelle** — die gepflegte Konvention der
+   Anwendung, in der jede HGB-Position genau eine Seite trägt:
+   'A.I.' → PASSIVA (Gezeichnetes Kapital), 'B.IV.' → AKTIVA,
+   'C.4.' → PASSIVA. (Widerspruchsfrei geprüft: keine Position kommt
+   mit zwei Seiten vor.)
+2. **Der HGB-Bilanz-Katalog** (§ 266), wenn die Position dort nur auf
+   einer Seite steht.
+3. **GuV-Positionen** (Ziffern wie '1.', '5a.') — keine Bilanzseite.
+4. Sonst: **mehrdeutig** (steht auf beiden Seiten, in keiner Tabelle)
+   oder **unbekannt** → der Override wird **abgelehnt** (fail-closed),
+   das Konto übersprungen, und der Grund genannt.
+
+Zusätzlich: **jedes** übersprungene Konto erzeugt jetzt eine Warnung
+mit Begründung. Vorher war der Skip beim Override **stumm** — das
+Konto verschwand, ohne dass der Import einen Grund nannte.
+
+#### Die Negativprobe
+
+Alte Heuristik wiederhergestellt (und der Server mit ihr neu gestartet)
+→ **zwei** e2e-Tests rot, jeder aus dem richtigen Grund:
+
+```
+"der User-Override auf C.4. legt die Position auf die Passiva-Seite":
+    C.4. (Verbindlichkeiten aus L+L) ist eine Passiva-Position:
+    expected 'AKTIVA' to be 'PASSIVA'
+"eine mehrdeutige Position wird abgelehnt — mit Begründung":
+    die mehrdeutige Position darf nicht importiert werden:
+    expected { …(11) } to be undefined
+```
+
+Die Gegenprobe (Auto-Mapping) blieb grün.
+
+#### Die Tests
+
+- `e2e/datev-override-seite.e2e.spec.ts` (3 Tests): der Override legt
+  'C.4.' auf PASSIVA **und** die Bilanz ist ausgeglichen; das
+  Auto-Mapping legt dieselbe Position auf dieselbe Seite; eine
+  mehrdeutige Position wird abgelehnt und der Grund genannt.
+- `hgb-position-auflosung.spec.ts` (7 Tests): die Auflösung selbst
+  (Passiva-, Aktiva-, GuV-, mehrdeutige und unbekannte Positionen).
+
+**Merksatz:** Nicht das Format entscheidet, sondern die **Tabelle**.
+Dasselbe Konto auf zwei Wegen unterschiedlich zu behandeln, ist kein
+Zufall, sondern zwei Regeln an zwei Stellen — die zweite war geraten.
+
+**Merksatz:** Ein Nummernkreis, der auf beiden Seiten eines Formulars
+vorkommt (A./B./C. auf Aktiva und Passiva), kann eine Seite **nicht**
+aus der Nummer ableiten. Wer es versucht, rät — und rät falsch, sobald
+die Ausnahme auftaucht.
+
+**Merksatz:** Ein übersprungener Datensatz ohne Begründung ist eine
+stille Datenlücke. Der Import meldete „2 importiert, 0 übersprungen"
+und zeigte eine unausgeglichene Bilanz.
+
+#### Verifikation (Nachtrag 91)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **946/950** (126 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

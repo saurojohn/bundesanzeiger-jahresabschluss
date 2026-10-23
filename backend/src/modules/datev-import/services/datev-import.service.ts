@@ -51,6 +51,7 @@ import {
   getReverseMapping,
   getUnmappedKonten,
 } from '../mappings/skr04-reverse-map';
+import { bestimmeHgbPosition } from '../mappings/hgb-position-auflosung';
 import type {
   HgbKategorie,
   MappedPosition,
@@ -436,15 +437,18 @@ export class DatevImportService {
 
       if (userOverride) {
         // User-Override anwenden
-        const overrideMapping = this.buildOverrideMapping(
-          entry.konto,
-          userOverride,
-        );
+        const { mapping: overrideMapping, warnung: overrideWarnung } =
+          this.buildOverrideMapping(entry.konto, userOverride);
         if (overrideMapping) {
           mapping = overrideMapping;
           userOverrideApplied = true;
         } else {
-          warning = `User-Override "${userOverride}" konnte nicht als gültige HGB-Position interpretiert werden`;
+          // BEFUND 2026-10-24 (Nachtrag 91): Der Grund wird genannt —
+          // "mehrdeutig" und "unbekannt" verlangen verschiedene
+          // Handlungen des Nutzers.
+          warning =
+            overrideWarnung ??
+            `User-Override "${userOverride}" konnte nicht als gültige HGB-Position interpretiert werden`;
         }
       } else if (autoMapping && autoMapping.confidence >= AUTO_MAPPING_CONFIDENCE_THRESHOLD) {
         autoMapped = true;
@@ -472,60 +476,68 @@ export class DatevImportService {
   /**
    * Baut ein Reverse-Mapping aus einem User-Override (datevKonto → hgbPosition).
    *
-   * Heuristik: hgbPosition ist die HGB-Kontonummer (z. B. "1.", "5a.", "B.IV.").
-   * Wir leiten kategorie/side aus dem Format ab.
+   * BEFUND 2026-10-24 (Nachtrag 91): Die Seite wurde aus dem Nummernformat
+   * abgeleitet (`startsWith('A.')` → AKTIVA). Nach § 266 HGB stehen A./B./C.
+   * auf BEIDEN Bilanzseiten — die Nummer allein bestimmt die Seite nicht.
+   *
+   * GEMESSEN an der laufenden API (Override '3300' → 'C.4.'):
+   *
+   *     Auto-Mapping : AKTIVA B.IV. 1000.00 | PASSIVA C.4. 1000.00 (ausgeglichen)
+   *     User-Override: AKTIVA B.IV. 1000.00 | AKTIVA  C.4. 1000.00 (NICHT ausgeglichen)
+   *
+   * Die Seite kommt jetzt aus `bestimmeHgbPosition` (SKR04-Reverse-Tabelle
+   * bzw. HGB-Bilanz-Katalog). Ist die Position mehrdeutig oder unbekannt,
+   * wird der Override **abgelehnt** (fail-closed) — geraten wird nicht.
    */
   private buildOverrideMapping(
     datevKonto: string,
     hgbPosition: string,
-  ): ReverseMapping | null {
-    // HGB-Position → Kategorie + Side
-    const isBilanzAktiva =
-      hgbPosition.startsWith('A.') ||
-      hgbPosition.startsWith('B.') ||
-      hgbPosition.startsWith('C.');
-    const isBilanzPassiva =
-      hgbPosition.startsWith('PA') ||
-      hgbPosition.startsWith('PB') ||
-      hgbPosition.startsWith('PC') ||
-      hgbPosition.startsWith('PD') ||
-      hgbPosition.startsWith('PE') ||
-      // HGB-Passiva verwendet dieselben A./B./C. wie Aktiva — daher Side über
-      // HGB-Bilanz-Schema ableiten, falls möglich.
-      hgbPosition === 'A.I.' ||
-      hgbPosition === 'A.II.' ||
-      hgbPosition === 'A.III.' ||
-      hgbPosition === 'A.IV.' ||
-      hgbPosition === 'A.V.';
+  ): { mapping: ReverseMapping | null; warnung?: string } {
+    const aufloesung = bestimmeHgbPosition(hgbPosition);
+
+    if (aufloesung.art === 'MEHRDEUTIG') {
+      const warnung =
+        `User-Override "${hgbPosition}" für Konto "${datevKonto}" ist mehrdeutig — ` +
+        `die Position existiert auf beiden Seiten der Bilanz ` +
+        `(Aktiva: "${aufloesung.aktiva}", Passiva: "${aufloesung.passiva}"). ` +
+        'Bitte eine eindeutige Position wählen.';
+      this.logger.warn(warnung);
+      return { mapping: null, warnung };
+    }
+
+    if (aufloesung.art === 'UNBEKANNT') {
+      const warnung =
+        `User-Override "${hgbPosition}" für Konto "${datevKonto}" ist keine bekannte ` +
+        'HGB-Position — der Override wurde abgelehnt.';
+      this.logger.warn(warnung);
+      return { mapping: null, warnung };
+    }
 
     let kategorie: HgbKategorie;
     let side: 'AKTIVA' | 'PASSIVA' | 'NEUTRAL';
 
-    if (isBilanzPassiva && !isBilanzAktiva) {
-      kategorie = 'BILANZ_PASSIVA';
-      side = 'PASSIVA';
-    } else if (hgbPosition.startsWith('B.IV.') || hgbPosition === 'B.IV.') {
-      kategorie = 'BILANZ_AKTIVA';
-      side = 'AKTIVA';
-    } else if (isBilanzAktiva) {
-      kategorie = 'BILANZ_AKTIVA';
-      side = 'AKTIVA';
-    } else {
-      // GuV-Position
+    if (aufloesung.art === 'GUV') {
+      // GuV-Position (Ziffern wie '1.', '5a.') — keine Bilanzseite.
       kategorie = this.guessGuVKategorie(hgbPosition);
       side = 'NEUTRAL';
+    } else {
+      kategorie =
+        aufloesung.seite === 'AKTIVA' ? 'BILANZ_AKTIVA' : 'BILANZ_PASSIVA';
+      side = aufloesung.seite;
     }
 
     return {
-      datevKonto,
-      datevKontoName: `Konto ${datevKonto}`,
-      hgbPosition,
-      hgbKontoNr: hgbPosition,
-      kategorie,
-      side,
-      isPflicht: false,
-      confidence: USER_OVERRIDE_CONFIDENCE,
-      notes: 'Manuell durch Kanzlei zugeordnet',
+      mapping: {
+        datevKonto,
+        datevKontoName: `Konto ${datevKonto}`,
+        hgbPosition,
+        hgbKontoNr: hgbPosition,
+        kategorie,
+        side,
+        isPflicht: false,
+        confidence: USER_OVERRIDE_CONFIDENCE,
+        notes: 'Manuell durch Kanzlei zugeordnet',
+      },
     };
   }
 
@@ -584,17 +596,35 @@ export class DatevImportService {
       const userOverride = userOverrides[entry.konto];
 
       let mapping: ReverseMapping | null = null;
+      let grund = '';
       if (userOverride) {
-        mapping = this.buildOverrideMapping(entry.konto, userOverride);
+        // BEFUND 2026-10-24 (Nachtrag 91): Ein Override, der nicht
+        // aufloesbar ist (mehrdeutige oder unbekannte Position), wird
+        // abgelehnt — und der Grund wird genannt.
+        const ergebnis = this.buildOverrideMapping(entry.konto, userOverride);
+        mapping = ergebnis.mapping;
+        grund = ergebnis.warnung ?? '';
       } else if (autoMapping && autoMapping.confidence >= AUTO_MAPPING_CONFIDENCE_THRESHOLD) {
         mapping = autoMapping;
       }
 
       if (!mapping) {
         skippedCount += 1;
-        if (!userOverride && !autoMapping) {
+        // BEFUND 2026-10-24 (Nachtrag 91): Der Skip war beim Override
+        // **stumm** — ein Konto verschwand, ohne dass der Import einen
+        // Grund nannte. Jetzt wird JEDER übersprungene Konto-Auftritt
+        // mit Begründung gemeldet.
+        if (grund) {
+          warnings.push(`DATEV-Konto "${entry.konto}" wurde übersprungen. ${grund}`);
+        } else if (!userOverride && !autoMapping) {
           warnings.push(
             `DATEV-Konto "${entry.konto}" wurde übersprungen (kein Mapping)`,
+          );
+        } else {
+          warnings.push(
+            `DATEV-Konto "${entry.konto}" wurde übersprungen ` +
+              `(Auto-Mapping mit zu niedriger Confidence: ` +
+              `${autoMapping?.confidence.toFixed(2) ?? '0.00'})`,
           );
         }
         continue;

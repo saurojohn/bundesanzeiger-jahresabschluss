@@ -9398,6 +9398,112 @@ Abschnitte und nicht die Pflichtangaben — beide landen im selben PDF.
 
 ---
 
+### Nachtrag 2026-10-24 (Nachtrag 94): Die IDW-Prüfung protokollierte ihre Mutation als Lesezugriff
+
+#### Der Befund
+
+Die Plausibilitätsprüfung (IDW PS 880) schreibt ihre Ergebnisse:
+
+```ts
+// idw-pruefung.service.ts:105
+const result = await this.evaluateAndPersist(regel, bilanz, …);   // → upsertPruefungsResult
+
+// idw-pruefung.service.ts:109-123
+await this.auditService.record({
+  action: 'READ',                       // <-- es wurde geschrieben
+  entityType: 'BilanzPruefungsResult',
+  entityId: args.bilanzId,
+  newState: { …, anzahlRegeln, statusVerteilung },
+  // previousState fehlt vollständig
+});
+```
+
+Im Audit-Trail stand damit eine **Mutation**, die als **Lesezugriff**
+auftrat — und der Zustand **vor** der Prüfung war nirgends
+dokumentiert. § 147 AO verlangt die Aufzeichnung, wer was wann geändert
+hat; ein Schreibvorgang, der als `READ` protokolliert wird, ist
+gerade die Aufzeichnung, die dort fehlt.
+
+#### Gemessen
+
+An der laufenden API (WP, Regeln laufen lassen, dann den Audit-Trail
+gelesen):
+
+```
+BilanzPruefungsResult-Zeilen VOR dem Lauf : 5
+Lauf: HTTP 201
+BilanzPruefungsResult-Zeilen NACH dem Lauf: 5
+
+Audit-Eintraege (entityType = BilanzPruefungsResult):
+  action        : READ
+  previousState : null
+  newState      : {"guvId":null,"bilanzId":"…","anzahlRegeln":5,
+                    "statusVerteilung":{"PASSED":5,"WARNUNG":0,"KRITISCH":0}}
+```
+
+Fünf Zeilen wurden geschrieben, protokolliert wurde ein Lesezugriff.
+
+#### Die Behebung
+
+Die Action folgt jetzt der Mutation:
+
+- `CREATE`, wenn es vorher keine Ergebnisse gab,
+- `UPDATE`, wenn der Lauf ein vorhandenes Ergebnis ersetzt hat (der
+  Lauf schreibt per Upsert auf `(bilanzId, regelCode)` — dieselbe
+  Semantik wie beim Repository).
+
+Dazu kommt der **vorherige Zustand**: `previousState` hält den Stand
+**vor** dem Lauf (Regel, Status, berechneter Wert, Schwellwert, Meldung
+je Ergebnis). Damit beantwortet der Audit-Eintrag die Frage, die § 147
+AO stellt: was war vorher, was ist nachher.
+
+Der `newState` nennt jetzt ebenfalls die einzelnen Ergebnisse statt
+nur deren Anzahl — vorher standen dort fünf Ergebnisse als „anzahlRegeln:
+5", ohne den Wert, der je Regel zugrunde lag.
+
+#### Die Negativprobe
+
+Alte Action und `previousState: null` wiederhergestellt → **drei**
+Tests rot, jeder aus dem richtigen Grund:
+
+```
+"protokolliert die Mutation als UPDATE, nicht als READ":
+    ein Schreibvorgang ist kein READ: expected 'READ' to be 'UPDATE'
+"protokolliert den ersten Lauf als CREATE":
+    expected 'READ' to be 'CREATE'
+"dokumentiert den Zustand VOR der Pruefung (previousState)":
+    der Zustand vor der Pruefung fehlt: expected null not to be null
+```
+
+#### Die Tests
+
+`src/modules/wp/services/idw-pruefung-audit.spec.ts` (4 Tests): die
+Action folgt der Mutation (UPDATE bei vorhandenen Ergebnissen, CREATE
+beim ersten Lauf), `previousState` dokumentiert den Stand vor dem Lauf,
+und `newState` nennt die einzelnen Ergebnisse.
+
+**Merksatz:** Eine Mutation, die als `READ` protokolliert wird, ist
+schlimmer als eine Mutation ohne Audit-Eintrag — sie sieht im Trail
+wie eine harmlose Leseaktion aus. Die Aktion muss die **Wirkung**
+bezeichnen, nicht den HTTP-Methodenstil des Aufrufers.
+
+**Merksatz:** `previousState` ist nicht die Formalie, sondern der
+Inhalt: „was war vorher" ist die Frage, die ein Prüfprotokoll beantworten
+muss. Ein Eintrag, der nur den neuen Stand nennt, belegt die Behauptung
+— nicht die Änderung.
+
+#### Verifikation (Nachtrag 94)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **959/963** (129 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

@@ -100,6 +100,13 @@ export class IdwPruefungService {
       throw new NotFoundException('Bilanz nicht gefunden');
     }
 
+    // BEFUND 2026-10-24 (Nachtrag 94): Der Zustand VOR dem Lauf war nicht
+    // dokumentiert — der Audit-Eintrag nannte nur das Ergebnis. Der
+    // vorherige Stand wird jetzt VOR der Berechnung gelesen, damit der
+    // Eintrag den tatsächlichen Wechsel dokumentiert.
+    const vorherigeErgebnisse =
+      await this.wpRepository.findPruefungsResultsByBilanz(args.bilanzId);
+
     const results: BilanzPruefungsResultEntity[] = [];
     for (const regel of IDW_STANDARDREgeln) {
       const result = await this.evaluateAndPersist(regel, bilanz, args.guvId ?? null);
@@ -109,20 +116,56 @@ export class IdwPruefungService {
     await this.auditService.record({
       userId: user.id,
       mandantId: bilanzMandantId,
-      action: 'READ',
+      // BEFUND 2026-10-24 (Nachtrag 94): Der Lauf SCHREIBT die
+      // Pruefungsergebnisse (`upsertPruefungsResult`) — er wurde aber als
+      // 'READ' protokolliert. Im Audit-Trail stand damit eine Mutation,
+      // die als Lesezugriff auftrat (§ 147 AO: "wer hat was wann
+      // geaendert"). Die Action folgt jetzt der Mutation: 'CREATE', wenn
+      // es vorher keine Ergebnisse gab, sonst 'UPDATE'.
+      action: vorherigeErgebnisse.length > 0 ? 'UPDATE' : 'CREATE',
       entityType: 'BilanzPruefungsResult',
       entityId: args.bilanzId,
-      newState: {
-        bilanzId: args.bilanzId,
-        guvId: args.guvId ?? null,
-        anzahlRegeln: results.length,
-        statusVerteilung: this.summarizeStatus(results),
-      } as unknown as Prisma.JsonValue,
+      previousState:
+        vorherigeErgebnisse.length > 0
+          ? (this.toAuditState(args.bilanzId, args.guvId ?? null, vorherigeErgebnisse) as unknown as Prisma.JsonValue)
+          : null,
+      newState: this.toAuditState(
+        args.bilanzId,
+        args.guvId ?? null,
+        results,
+      ) as unknown as Prisma.JsonValue,
       ipAddress: context.ip ?? null,
       userAgent: context.userAgent ?? null,
     });
 
     return results;
+  }
+
+  /**
+   * Der Zustand der Pruefungsergebnisse fuer den Audit-Trail.
+   *
+   * BEFUND 2026-10-24 (Nachtrag 94): Der Eintrag nannte nur die Anzahl
+   * der Regeln und ihre Statusverteilung. Welcher Wert welcher Regel
+   * zugrunde lag — und wie er VOR dem Lauf war — blieb unsichtbar.
+   */
+  private toAuditState(
+    bilanzId: string,
+    guvId: string | null,
+    results: BilanzPruefungsResultEntity[],
+  ): Record<string, unknown> {
+    return {
+      bilanzId,
+      guvId,
+      anzahlRegeln: results.length,
+      statusVerteilung: this.summarizeStatus(results),
+      ergebnisse: results.map((r) => ({
+        regelCode: r.regelCode,
+        status: r.status,
+        berechneterWert: Number(r.berechneterWert),
+        schwellwert: Number(r.schwellwert),
+        meldung: r.meldung,
+      })),
+    };
   }
 
   /**

@@ -188,7 +188,17 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
     guvsVorhanden: string[],
   ) {
     const service = new KonsolidierungService(
-      {} as never, // prisma
+      {
+        // BEFUND 2026-10-23 (Nachtrag 89): `applyKonsolidierung` prueft
+        // vor dem Rechnen, ob ein beteiligter Mandant archiviert ist — der
+        // Service liest dafuer die Archivzeitpunkte.
+        mandant: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: MUTTER, archiviertAt: null },
+            { id: TOCHTER, archiviertAt: null },
+          ]),
+        },
+      } as never,
       {
         findByIdForUser: vi.fn().mockResolvedValue(null),
         updateStatus: vi.fn().mockResolvedValue({}),
@@ -276,13 +286,32 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
     expect(warn).toHaveBeenCalled();
   });
 
+  /**
+   * Der Prisma-Mock fuer die apply-Tests.
+   *
+   * BEFUND 2026-10-23 (Nachtrag 89): `applyKonsolidierung` prueft vor dem
+   * Rechnen, ob ein beteiligter Mandant archiviert ist, und liest dafuer
+   * die Archivzeitpunkte. Die Tests muessen das beantworten koennen — sonst
+   * scheitern sie an der Mock-Form statt am Verhalten.
+   */
+  function prismaOhneArchivierte() {
+    return {
+      mandant: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: MUTTER, archiviertAt: null },
+          { id: TOCHTER, archiviertAt: null },
+        ]),
+      },
+    } as never;
+  }
+
   it('apply() VERWEIGERT ohne Einzelabschlüsse der Mutter', async () => {
     const bilanzCreate = vi.fn();
     // Das ist der eigentliche Nachweis: `apply` liefert die falsche
     // Konzern-Bilanz zurueck und meldet Erfolg mit Salden. Der Test
     // muss den Weg durch `apply` gehen, nicht nur die Loader.
     const service = new KonsolidierungService(
-      {} as never, // prisma
+      prismaOhneArchivierte(), // prisma
       {} as never, // konsolidierungRepository
       {
         findByMandantAndJahr: vi.fn().mockResolvedValue([]), // KEINE Bilanzen
@@ -330,7 +359,7 @@ describe('Konsolidierung: fehlende Eingangsdaten werden NICHT stillschweigend ig
 
   it('die Fehlermeldung nennt den Grund und den Code', async () => {
     const service = new KonsolidierungService(
-      {} as never,
+      prismaOhneArchivierte(),
       {} as never,
       { findByMandantAndJahr: vi.fn().mockResolvedValue([]), findWithPositionen: vi.fn() } as never,
       { findByMandantAndJahr: vi.fn().mockResolvedValue([]), findWithPositionen: vi.fn() } as never,

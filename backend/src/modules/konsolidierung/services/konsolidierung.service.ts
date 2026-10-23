@@ -371,6 +371,33 @@ export class KonsolidierungService {
   ): Promise<ApplyKonsolidierungResponseDto> {
     const einheit = await this.loadEinheitForUser(einheitId, user);
 
+    // BEFUND 2026-10-23 (Nachtrag 89): Die Archivsperre stand nur im
+    // **Anlege-Pfad** (`createEinheit`). `applyKonsolidierung` legt aber die
+    // Konzern-Bilanz UND die Konzern-GuV an — zwei neue Saetze mit Status
+    // VALIDATED fuer einen Mandanten, der nicht mehr fortgeschrieben
+    // werden darf.
+    //
+    // Gemessen (Mutter archivieren, dann anwenden):
+    //
+    //     PATCH /api/mandant/<M>/archivierung        -> HTTP 200
+    //     POST  /api/bilanz?mandantId=<M>            -> HTTP 403  (Gegenprobe ✓)
+    //     POST  /api/konsolidierung/einheiten/<E>/apply
+    //       -> HTTP 201, {"konzernBilanzId":"…","konzernGuvId":"…"}
+    //     SELECT id, geschaeftsjahr, status FROM bilanz
+    //       WHERE mandantId='<M>' AND konzernEinheitId='<E>'
+    //       -> [{"status":"VALIDATED"}]        <- neue Belege fuer einen
+    //                                          archivierten Mandanten
+    //
+    // Das ist KEINE neue Fachfrage: die Regel steht in
+    // `common/utils/mandant-archivierung.ts` ("Der Bestand bleibt zur
+    // Nachvollziehbarkeit erhalten (§ 147 AO), wird aber nicht fortgeschrieben")
+    // — sie wurde nur an einem der beiden Schreibpfade eingeloest. Fuer die
+    // TOCHTER gilt dasselbe.
+    await this.assertKeinArchivierterBeteiligter(
+      einheit,
+      'Konsolidierung anwenden',
+    );
+
     if (einheit.status === 'COMPLETED' || einheit.status === 'VALIDATED') {
       throw new BadRequestException(
         'Konsolidierung wurde bereits angewendet',
@@ -839,6 +866,29 @@ export class KonsolidierungService {
     }
     this.assertBeteiligung(einheit, user);
     return einheit;
+  }
+
+  /**
+   * Kein beteiligter Mandant darf archiviert sein.
+   *
+   * BEFUND 2026-10-23 (Nachtrag 89): Die Archivsperre stand nur im
+   * Anlege-Pfad; `applyKonsolidierung` legt neue Saetze an und war dadurch
+   * die Hintertuer. Dieser Helfer macht die Regel fuer **beide** Schreib-
+   * pfade identisch.
+   */
+  private async assertKeinArchivierterBeteiligter(
+    einheit: { mutterMandantId: string; tochterMandantIds: string[] },
+    aktion: string,
+  ): Promise<void> {
+    const mandanten = await this.prisma.mandant.findMany({
+      where: {
+        id: { in: [einheit.mutterMandantId, ...einheit.tochterMandantIds] },
+      },
+      select: { id: true, firmenname: true, archiviertAt: true },
+    });
+    for (const mandant of mandanten) {
+      assertMandantNichtArchiviert(mandant.archiviertAt, aktion);
+    }
   }
 
   /**

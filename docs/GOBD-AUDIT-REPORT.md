@@ -8895,6 +8895,105 @@ Gemeinsam mit Nachtrag 89 in einem Lauf über den Gesamtstand gemessen.
 
 ---
 
+### Nachtrag 2026-10-23 (Nachtrag 89): Die Archivsperre stand nur im Anlege-Pfad der Konsolidierung
+
+#### Der Befund
+
+Die Archivregel („Der Bestand bleibt zur Nachvollziehbarkeit erhalten
+(§ 147 AO), wird aber nicht fortgeschrieben") war in der Konsolidierung an
+**einem** von zwei Schreibpfaden eingelöst: `createEinheit` ✓ sperrt,
+`applyKonsolidierung` ✗ nicht — und `applyKonsolidierung` legt die
+**Konzern-Bilanz und die Konzern-GuV** an, also zwei neue Sätze mit Status
+`VALIDATED`.
+
+**Gemessen** an der laufenden API (Mutter archivieren, dann anwenden):
+
+```
+PATCH /api/mandant/<M>/archivierung                    -> HTTP 200
+POST  /api/bilanz?mandantId=<M>                         -> HTTP 403   (Gegenprobe ✓)
+POST  /api/konsolidierung/einheiten/<E>/apply
+  -> HTTP 201 {"konzernBilanzId":"…","konzernGuvId":"…","salden":{…}}
+SELECT id, geschaeftsjahr, status FROM bilanz
+  WHERE mandantId='<M>' AND konzernEinheitId='<E>'
+  -> [{"geschaeftsjahr":2087,"status":"VALIDATED"}]
+```
+
+⇒ Ein **archivierter** Mandant bekam doch wieder neue Belege — genau die
+Regel, die Nachtrag 13/15 eingeführt und Nachtrag 75/76 an den PDF- und
+Einreichungspfaden durchgesetzt hat.
+
+#### Die Besonderheit: der Test kannte den Befund und prüfte ihn nicht
+
+Der Kopfkommentar des vorhandenen Tests
+(`konsolidierung-archiv.spec.ts`) benennt `applyKonsolidierung` **wörtlich**
+als betroffenen Pfad:
+
+> „Die Archivierung wurde in Bilanz, GuV, Anhang und DATEV-Import verdrahtet.
+> `konsolidierung.service` nicht — obwohl `applyKonsolidierung` über
+> `createWithPositionen` eine neue Konzern-Bilanz UND eine Konzern-GuV
+> anlegt."
+
+Getestet wurde nur `createEinheit`. Die Regel war also **beschrieben** und
+an einer Stelle eingelöst — ein Kommentar, der den Befund benennt, ist noch
+kein Wächter. Der Test wurde um die beiden apply-Fälle ergänzt.
+
+#### Die Behebung
+
+`applyKonsolidierung` prüft jetzt **vor** der Rechnung, ob ein beteiligter
+Mandant archiviert ist (`assertKeinArchivierterBeteiligter` — Mutter **und**
+Tochter, wie im Anlege-Pfad). Der Helper lädt die Archivzeitpunkte in einer
+Query; die Regel steht damit an beiden Schreibpfaden am selben Ort.
+
+#### Die Negativprobe
+
+Guard entfernt → **drei** Tests rot, jeder aus dem richtigen Grund:
+
+```
+e2e "ein archivierter Mandant bekommt keine neuen Belege":
+    Antwort: {"konzernBilanzId":"c958ca42-…","konzernGuvId":"9f710294-…"}
+    expected 201 to be 409
+Unit "eine archivierte MUTTER wird beim Anwenden abgelehnt":
+    expected BadRequestException: Konsolidierung nicht anwendbar …
+    to be an instance of ConflictException
+Unit "eine archivierte TOCHTER wird beim Anwenden abgelehnt":
+    dito
+```
+
+Der Unit-Test prüft zusätzlich, dass die **Berechnung nicht startet**
+(`findByMandantAndJahr` wurde nicht aufgerufen) — die Sperre greift vor der
+Rechnung, nicht danach. Ohne diese Zusatzprüfung wären die Unit-Tests aus
+dem falschen Grund rot gelaufen (sie wären in ungemockte Pfade weitergelaufen).
+
+#### Die Tests
+
+- `e2e/konsolidierung-archiv-apply.e2e.spec.ts` (2 Tests): der Normalweg
+  (aktive Mandanten → `apply` → 201 **mit** Konzern-Sätzen) und der
+  Archivfall (→ 409, **keine** neuen Sätze in der Datenbank).
+- `konsolidierung-archiv.spec.ts` (2 neue Fälle): Mutter und Tochter beim
+  Anwenden.
+
+**Merksatz:** Ein Kommentar, der einen Befund benennt, ist noch kein
+Wächter. Hier stand der Satz „`applyKonsolidierung` legt eine neue
+Konzern-Bilanz UND eine Konzern-GuV an" seit 2026-10-12 im Test — getestet
+wurde der andere Pfad. Wer einen Befund beschreibt, muss ihn **am
+genannten Ort** absichern.
+
+**Merksatz:** Eine Regel an **einem** von zwei Schreibpfaden ist keine
+Regel. Der Anlege-Pfad wurde gesperrt, der Ausführungspfad nicht — und die
+Ausführung ist die, die Belege erzeugt.
+
+#### Verifikation (Nachtrag 89)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **933/937** (123 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

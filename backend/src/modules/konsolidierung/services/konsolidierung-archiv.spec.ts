@@ -50,9 +50,20 @@ function build(opts: { mutterArchiviert?: Date | null; tochterArchiviert?: Date 
 
 
   const prisma = {
+    // `loadEinheitForUser` loest die Kanzlei des Users auf (SYSTEM_ADMIN:
+    // die erste Kanzlei) — der apply-Pfad braucht das, sonst scheitert der
+    // Test an der Mock-Form statt an der Regel.
+    kanzlei: {
+      findFirst: vi.fn().mockResolvedValue({ id: KANZLEI }),
+    },
     mandant: {
       findUnique: vi.fn().mockResolvedValue(mutter),
-      findMany: vi.fn().mockResolvedValue([tochter]),
+      // BEFUND 2026-10-23 (Nachtrag 89): `applyKonsolidierung` laedt die
+      // Archivzeitpunkte von MUTTER **und** TOCHTER, der Anlege-Pfad nur die
+      // Toechter. Der Mock beantwortet deshalb je nach Abfrage.
+      findMany: vi.fn().mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.length > 1 ? [mutter, tochter] : [tochter],
+      ),
     },
   };
   const repository = {
@@ -101,14 +112,27 @@ function build(opts: { mutterArchiviert?: Date | null; tochterArchiviert?: Date 
   const auditService = { record: vi.fn().mockResolvedValue(undefined) };
   // Reihenfolge: prisma, konsolidierungRepository, bilanzRepository,
   // guvRepository, auditService.
+  // Die Bilanz-/GuV-Repositories werden mitgegeben, damit der Test am
+  // VERHALTEN scheitert (die Berechnung darf nicht starten) und nicht an
+  // einer Mock-Luecke.
+  const bilanzRepository = {
+    findByMandantAndJahr: vi.fn().mockResolvedValue([]),
+    findWithPositionen: vi.fn(),
+    createWithPositionen: vi.fn(),
+  };
+  const guvRepository = {
+    findByMandantAndJahr: vi.fn().mockResolvedValue([]),
+    findWithPositionen: vi.fn(),
+    createWithPositionen: vi.fn(),
+  };
   const service = new KonsolidierungService(
     prisma as never,
     repository as never,
-    {} as never,
-    {} as never,
+    bilanzRepository as never,
+    guvRepository as never,
     auditService as never,
   );
-  return { service, repository };
+  return { service, repository, bilanzRepository, guvRepository };
 }
 
 const dto = {
@@ -148,5 +172,55 @@ describe('BEFUND 2026-10-12: Konsolidierung auf archivierten Mandanten', () => {
     await service.createEinheit(dto, admin, ctx);
 
     expect(repository.create).toHaveBeenCalled();
+  });
+});
+
+/**
+ * BEFUND 2026-10-23 (Nachtrag 89): Die Archivsperre stand nur im
+ * **Anlege-Pfad** — `applyKonsolidierung` war die Hintertuer.
+ *
+ * Der Kopfkommentar dieses Tests benannte `applyKonsolidierung` bereits als
+ * betroffenen Pfad ("obwohl `applyKonsolidierung` ueber
+ * `createWithPositionen` eine neue Konzern-Bilanz UND eine Konzern-GuV
+ * anlegt") — getestet wurde aber nur `createEinheit`. Die Regel war also
+ * beschrieben und an **einer** der beiden Stellen eingeloest.
+ *
+ * Gemessen an der laufenden Anwendung (Mutter archivieren, dann anwenden):
+ *
+ *     PATCH /api/mandant/<M>/archivierung              -> HTTP 200
+ *     POST  /api/bilanz?mandantId=<M>                  -> HTTP 403 (Gegenprobe)
+ *     POST  /api/konsolidierung/einheiten/<E>/apply
+ *       -> HTTP 201 {"konzernBilanzId":"…","konzernGuvId":"…"}
+ *     SELECT status FROM bilanz
+ *       WHERE mandantId='<M>' AND konzernEinheitId='<E>'
+ *       -> VALIDATED            <- neue Belege fuer einen archivierten Mandanten
+ */
+describe('BEFUND 2026-10-23: Konsolidierung anwenden auf archivierten Mandanten', () => {
+  it('eine archivierte MUTTER wird beim Anwenden abgelehnt', async () => {
+    const { service, bilanzRepository } = build({ mutterArchiviert: ARCHIVIERT });
+
+    await expect(service.applyKonsolidierung('e1', admin, ctx)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    // Und es darf **nicht** gerechnet werden: die Sperre greift vor der
+    // Berechnung, nicht danach.
+    expect(
+      bilanzRepository.findByMandantAndJahr,
+      'die Berechnung darf bei einem archivierten Mandanten nicht starten',
+    ).not.toHaveBeenCalled();
+  });
+
+  it('eine archivierte TOCHTER wird beim Anwenden abgelehnt', async () => {
+    // Nur die Tochter archiviert genügt zur Ablehnung — sonst wäre die
+    // Sperre über eine Seitenlücke umgehbar.
+    const { service, bilanzRepository } = build({ tochterArchiviert: ARCHIVIERT });
+
+    await expect(service.applyKonsolidierung('e1', admin, ctx)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(
+      bilanzRepository.findByMandantAndJahr,
+      'die Berechnung darf bei einem archivierten Mandanten nicht starten',
+    ).not.toHaveBeenCalled();
   });
 });

@@ -8598,6 +8598,135 @@ ist ein **Befund**, kein Kommentar. `payloadFormat: "XML" | "XBRL" | "PDF"
 niemand beantwortet — genau wie der Nachtrag-38-Kommentar („ist bewusst
 nicht enthalten"), der in Wahrheit falsch war.
 
+---
+
+### Nachtrag 2026-10-23 (Nachtrag 87): Der DATEV-Export erzeugte eine Datei ohne Buchungswirkung
+
+#### Der Befund
+
+Der DATEV-Export schrieb **zwei Zeilen je GuV-Position**: eine Soll-Zeile
+und eine Haben-Zeile — mit **identischen** Konto-/Gegenkonto-Angaben.
+
+Im Sachkonten-Buchungsstapel (den die Datei deklariert: Spalten `Umsatz`,
+`SH`, `WKZ`, `Konto`, `Gegenkonto`, …) ist **eine Zeile = eine Buchung**:
+Konto auf der Soll-Seite, Gegenkonto auf der Haben-Seite, beide in derselben
+Zeile. Die zweite Zeile war deshalb nicht „die Gegenseite", sondern eine
+**zweite Buchung** — mit demselben Konto-Paar und dem negierten Betrag.
+
+**Gemessen** (Export einer GuV mit 1.000 Erlöse + 400 Materialaufwand, dann
+der Import der Anwendung darauf):
+
+```
+Export:
+  "1000,00";"S";…;"1800";"4400";…      <- Soll-Zeile
+  "-1000,00";"H";…;"1800";"4400";…     <- Haben-Zeile, GLEICHE Konten
+  "400,00";"S";…;"5000";"1800";…
+  "-400,00";"H";…;"5000";"1800";…     <- dito
+
+Import derselben Datei:
+  importedCount: 0, skippedCount: 3, warnings: []
+```
+
+Jedes Konto saldiert auf 0:
+
+```
+4400: Soll +1000 (Zeile 1) + Haben +1000 (Zeile 2) = 0
+1800: Haben +1000 (Zeile 1) + Soll +1000 (Zeile 2) = 0
+```
+
+Der Import überspringt Konten mit Saldo 0 („kein Buchungseffekt") — die
+exportierte Datei war damit **ohne Buchungswirkung**. In einer echten
+DATEV-Software heben sich die beiden Zeilen genauso auf: die Kanzlei
+übernimmt eine Datei, in der jede Buchung doppelt und damit wirkungslos
+steht. Die Schnittstelle, deren Zweck die Übernahme in die EDV der Kanzlei
+ist, lieferte eine wertlose Datei.
+
+#### Der zweite Teil: der Import schwieg
+
+`skippedCount: 3` — und `warnings: []`. Der Import übersprang die drei
+Konten **stumm**. Ein Konto, dessen Soll- und Habenbuchungen sich
+aufheben, ist genau das Bild einer doppelt exportierten Buchung; der Import
+hat darauf nicht hingewiesen. Deshalb blieb der Fehler im Export
+unentdeckt: der Import meldete „3 übersprungen" und keine Begründung.
+
+#### Der dritte Teil: der Fehler war testgeschrieben
+
+`e2e/datev.e2e.spec.ts` hatte einen eigenen Test dafür:
+
+```ts
+it('Generierte CSV hat 2 Zeilen pro GuV-Position (Soll + Haben)', …)
+expect(body.metadata.buchungsZeilenCount % 2).toBe(0);
+expect(sCount).toBe(hCount);          // gleich viele S- und H-Zeilen
+```
+
+Der Defekt war damit nicht nur unbemerkt — er war **als richtig
+festgeschrieben**. Ein grüner Test, der das Falsche beschreibt, ist
+schlimmer als kein Test: Er verspricht Schutz für eine Regel, die es nicht
+gibt, und er zwingt jede spätere Korrektur in die Rolle eines
+„Regelbruchs". Der Test ist jetzt gegen das richtige Verhalten umgestellt
+(eine Zeile je Position, beide Seiten in derselben Zeile, keine gespiegelte
+H-Zeile) — mit der Begründung im Kommentar, damit die Änderung nachvollziehbar
+bleibt.
+
+#### Die Behebung
+
+1. **Eine Zeile je Buchung.** Der Export schreibt jetzt je Position genau
+   eine Zeile: Ertrag → `Soll Bank / Haben Ertrag`, Aufwand → `Soll
+   Aufwandskonto / Haben Bank`. Beide Seiten stehen damit in derselben
+   Zeile — wie es das Format und der Import der Anwendung verlangen.
+   Nebeneffekt: das Limit `DATEV_MAX_BUCHUNGS_ZEILEN` (99.999) galt vorher
+   gegen **Doppelzeilen** und war damit effektiv halbiert.
+2. **Der Import warnt bei Nullsalden.** Ein Konto mit Saldo 0 wird
+   weiterhin übersprungen (diese Regel ist richtig: es hat keinen
+   Buchungseffekt) — aber es wird **begründet**: „Soll und Haben gleichen
+   sich aus. Die Buchung hebt sich auf und wurde nicht übernommen."
+
+#### Die Negativprobe
+
+Die zweite Zeile wieder eingebaut → der e2e-Test rot, aus dem richtigen
+Grund:
+
+```
+e2e "exportiert eine Buchung je Position — und sie kommt wieder an":
+    je Position genau eine Buchungszeile (gefunden: 4)
+```
+
+#### Die Tests
+
+- `e2e/datev-roundtrip.e2e.spec.ts` (1 Test): der **Round-Trip** über die
+  laufende Anwendung — exportieren, die Datei mit dem Import der
+  Anwendung einlesen, und prüfen, dass die importierten Positionen
+  1.400 EUR tragen (statt 0). Zusätzlich die Zeilenstruktur (Umsatz,
+  Soll/Haben, Konto, Gegenkonto).
+- `src/modules/datev/services/datev-export.service.spec.ts` (5 Fälle): eine
+  Zeile je Position, die Buchungsseiten, die Gegenprobe (eine Nullposition
+  erzeugt keine Zeile) und die Zeilenzahl in den Metadaten.
+
+**Merksatz:** Ein Export ist nur so gut wie sein **Round-Trip**. Der
+DATEV-Export und der DATEV-Import derselben Anwendung wurden nie
+gegeneinander geprüft — jeder hatte seine eigenen Tests. Der Import liest
+das Format, das der Export schreibt; beide können denselben Fehler machen
+und sich trotzdem "testen".
+
+**Merksatz:** Zwei Zeilen mit identischen Konto-/Gegenkonto-Angaben sind
+**keine** doppelte Buchführung, sondern zwei Buchungen. Das Format trägt
+beide Seiten in **einer** Zeile; wer sie auf zwei Zeilen verteilt, hat
+jedes Konto auf 0 saldiert.
+
+**Merksatz:** Ein „stummer Skip" ist ein Befund, kein Detail. Der Import
+hat die Konten korrekt übersprungen (Saldo 0 = kein Buchungseffekt) — aber
+er hat nicht **gesagt**, warum. Die Begründung wäre der Hinweis gewesen,
+an dem der Fehler im Export auffällt.
+
+#### Verifikation (Nachtrag 87)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **926/930** (121 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+
 #### Verifikation (Nachtrag 86)
 
 | Prüfung | Ergebnis |

@@ -566,6 +566,17 @@ export class DatevImportService {
       // Skip Null-Salden (kein Buchungseffekt)
       if (Math.abs(entry.saldo) < 0.005) {
         skippedCount += 1;
+        // BEFUND 2026-10-23 (Nachtrag 87): Der Skip war **stumm** — das
+        // Konto verschwand ohne jede Begruendung. Ein Konto, dessen Soll-
+        // und Habenbuchungen sich aufheben, ist genau das Bild einer
+        // doppelt exportierten Buchung (siehe `datev-export.service.ts`).
+        // Genau deshalb blieb der Fehler im Export unentdeckt: der Import
+        // meldete "3 uebersprungen" und keine Warnung.
+        warnings.push(
+          `DATEV-Konto "${entry.konto}" hat den Saldo 0 — Soll und Haben ` +
+            'gleichen sich aus. Die Buchung hebt sich auf und wurde nicht ' +
+            'uebernommen. Bitte die Buchungszeilen pruefen.',
+        );
         continue;
       }
 

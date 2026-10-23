@@ -200,30 +200,37 @@ export class DatevExportService {
 
       const absBetrag = Math.abs(betrag);
 
+      //
+      // BEFUND 2026-10-23 (Nachtrag 87): Hier stand ein **Paar** — eine
+      // Soll-Zeile und eine Haben-Zeile mit **identischen** Konten. Im
+      // Sachkonten-Buchungsstapel ist aber **eine Zeile = eine Buchung**:
+      // Umsatz, Soll/Haben, Konto (Soll-Seite) und Gegenkonto (Haben-Seite)
+      // stehen in derselben Zeile. Die zweite Zeile war deshalb nicht
+      // "die Gegenseite", sondern eine **zweite Buchung** — mit demselben
+      // Konto-Paar und dem negierten Betrag. Jedes Konto saldierte damit
+      // auf 0:
+      //
+      //     Konto 4400: Soll +1000 (Zeile 1) + Haben +1000 (Zeile 2) = 0
+      //     Konto 1800: Haben +1000 (Zeile 1) + Soll +1000 (Zeile 2) = 0
+      //
+      // **Gemessen** (Round-Trip ueber den Import der Anwendung):
+      //
+      //     Export einer GuV mit 1.000 Erloes + 400 Materialaufwand
+      //       -> 4 Zeilen (je zwei mit identischen Konten)
+      //     Import derselben Datei
+      //       -> importedCount: 0, skippedCount: 3
+      //
+      // Der Import ueberspringt Konten mit Saldo 0 ("kein Buchungseffekt") —
+      // die exportierte Datei war damit **ohne Buchungswirkung**. In einer
+      // echten DATEV-Software heben sich die beiden Zeilen genauso auf.
+      //
+      // Korrekt ist **eine Zeile je Buchung**: das Konto auf der Soll-Seite,
+      // das Gegenkonto auf der Haben-Seite.
       if (istErtrag) {
-        // Soll: Bankkonto, Haben: Ertragskonto
+        // Ertrag: Soll Bankkonto, Haben Ertragskonto — eine Zeile.
         writer.writeRow([
           this.formatBetrag(absBetrag),
           'S',
-          DEFAULT_WKZ,
-          '',
-          '',
-          '',
-          bankKonto,
-          konto,
-          skrKonto.buschluesselDefault ?? DEFAULT_BU_SCHLUESSEL,
-          belegdatum,
-          belegfeld1,
-          '',
-          '',
-          buchungstext,
-          '0',
-          '',
-          '',
-        ]);
-        writer.writeRow([
-          this.formatBetrag(-absBetrag),
-          'H',
           DEFAULT_WKZ,
           '',
           '',
@@ -241,7 +248,7 @@ export class DatevExportService {
           '',
         ]);
       } else {
-        // Aufwand: Soll: Aufwandskonto, Haben: Bankkonto
+        // Aufwand: Soll Aufwandskonto, Haben Bankkonto — eine Zeile.
         writer.writeRow([
           this.formatBetrag(absBetrag),
           'S',
@@ -261,27 +268,8 @@ export class DatevExportService {
           '',
           '',
         ]);
-        writer.writeRow([
-          this.formatBetrag(-absBetrag),
-          'H',
-          DEFAULT_WKZ,
-          '',
-          '',
-          '',
-          konto,
-          bankKonto,
-          skrKonto.buschluesselDefault ?? DEFAULT_BU_SCHLUESSEL,
-          belegdatum,
-          belegfeld1,
-          '',
-          '',
-          buchungstext,
-          '0',
-          '',
-          '',
-        ]);
       }
-      buchungsZeilenCount += 2;
+      buchungsZeilenCount += 1;
     }
 
     if (buchungsZeilenCount > DATEV_MAX_BUCHUNGS_ZEILEN) {

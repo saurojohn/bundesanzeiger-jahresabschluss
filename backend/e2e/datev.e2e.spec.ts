@@ -11,7 +11,7 @@
  *   3.  POST /api/datev/generate-buchungsstapel mit Cross-Mandant GuV → 404
  *   4.  POST /api/datev/generate-buchungsstapel mit GKV-GuV → 200 + CSV
  *   5.  Generierte CSV beginnt mit Header-Spaltennamen
- *   6.  Generierte CSV hat 2 Zeilen pro GuV-Position (Soll + Haben)
+ *   6.  Generierte CSV hat EINE Zeile pro GuV-Position (beide Seiten in einer Zeile)
  *   7.  CSV verwendet Semikolon als Trenner
  *   8.  CSV ist UTF-8 encoded (kein BOM)
  *   9.  CSV enthält SKR04-Konten (z.B. 4400 für Ertrag)
@@ -244,9 +244,23 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
   });
 
   // ===========================================================================
-  // 6. Generierte CSV hat 2 Zeilen pro GuV-Position (Soll + Haben)
+  // 6. Generierte CSV hat EINE Zeile pro GuV-Position (beide Seiten in einer Zeile)
+  //
+  // BEFUND 2026-10-23 (Nachtrag 87): Dieser Test schrieb den Fehler fest —
+  // "2 Zeilen pro GuV-Position (Soll + Haben)" und "gleich viele S- und
+  // H-Zeilen". Im Sachkonten-Buchungsstapel ist aber **eine Zeile = eine
+  // Buchung**: Konto auf der Soll-, Gegenkonto auf der Haben-Seite, beide in
+  // derselben Zeile.
+  //
+  // Die zweite Zeile war deshalb keine "Gegenseite", sondern eine **zweite
+  // Buchung** mit denselben Konten und dem negierten Betrag: jedes Konto
+  // saldierte auf 0. Gemessen ueber den Import der Anwendung: die
+  // exportierte Datei lieferte importedCount 0, skippedCount 3 — ohne
+  // Buchungswirkung.
+  //
+  // Der Test ist jetzt gegen das richtige Verhalten geschrieben.
   // ===========================================================================
-  it('Generierte CSV hat 2 Zeilen pro GuV-Position (Soll + Haben)', async () => {
+  it('Generierte CSV hat EINE Zeile pro GuV-Position (beide Seiten in einer Zeile)', async () => {
     const loginRes = await loginAs('steuerberater@kanzlei.de', 'Demo123!');
     const mandant = loginRes.user.mandanten.find((m) => m.firmenname === 'Demo GmbH');
     if (!mandant) throw new Error('Demo GmbH nicht gefunden');
@@ -263,18 +277,27 @@ describe('DATEV E2E (M2 Sprint 3)', () => {
       }),
     });
     const body = (await res.json()) as GenerateDatevResponse;
-    expect(body.metadata.buchungsZeilenCount % 2).toBe(0);
-    // buchungsZeilenCount muss >= 2 sein (mindestens 1 GuV-Position).
-    expect(body.metadata.buchungsZeilenCount).toBeGreaterThanOrEqual(2);
+    // buchungsZeilenCount muss >= 1 sein (mindestens 1 GuV-Position).
+    expect(body.metadata.buchungsZeilenCount).toBeGreaterThanOrEqual(1);
 
-    // In den Buchungs-Zeilen müssen gleich viele "S"- und "H"-Vorkommen sein.
+    // Jede Buchungszeile traegt das Soll-Kennzeichen und **beide** Konten.
+    // Es gibt keine zweite, gespiegelte Zeile — sie waere eine zweite
+    // Buchung und hebte die erste auf (Nachtrag 87).
     const csv = Buffer.from(body.csvBase64, 'base64').toString('utf-8');
     const buchungsZeilen = csv.split('\r\n').slice(3); // Skip Header (3 Zeilen)
     const validBuchungsZeilen = buchungsZeilen.filter((l) => l.startsWith('"') || /^-?\d/.test(l));
     const sCount = validBuchungsZeilen.filter((l) => l.includes(';"S";')).length;
     const hCount = validBuchungsZeilen.filter((l) => l.includes(';"H";')).length;
-    expect(sCount).toBe(hCount);
+    expect(hCount, 'es darf keine gespiegelte H-Zeile geben').toBe(0);
     expect(sCount).toBeGreaterThanOrEqual(1);
+    expect(body.metadata.buchungsZeilenCount).toBe(sCount);
+
+    // Und jede Zeile nennt beide Seiten der Buchung.
+    for (const zeile of validBuchungsZeilen) {
+      const felder = zeile.split(';').map((f) => f.replace(/"/g, ''));
+      expect(felder[6], 'Konto (Soll-Seite) muss belegt sein').not.toBe('');
+      expect(felder[7], 'Gegenkonto (Haben-Seite) muss belegt sein').not.toBe('');
+    }
   });
 
   // ===========================================================================

@@ -8600,6 +8600,18 @@ nicht enthalten"), der in Wahrheit falsch war.
 
 ---
 
+#### Verifikation (Nachtrag 86)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **920/924** (119 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ### Nachtrag 2026-10-23 (Nachtrag 87): Der DATEV-Export erzeugte eine Datei ohne Buchungswirkung
 
 #### Der Befund
@@ -8738,6 +8750,8 @@ hat die Konten korrekt übersprungen (Saldo 0 = kein Buchungseffekt) — aber
 er hat nicht **gesagt**, warum. Die Begründung wäre der Hinweis gewesen,
 an dem der Fehler im Export auffällt.
 
+---
+
 #### Verifikation (Nachtrag 87)
 
 | Prüfung | Ergebnis |
@@ -8746,16 +8760,6 @@ an dem der Fehler im Export auffällt.
 | `npx eslint src --max-warnings 0` | 0 Warnungen |
 | `npx vitest run` | **926/930** (121 Dateien, 4 übersprungen, 0 Fehlschläge) |
 | `npx playwright test` | **80/80** |
-
-#### Verifikation (Nachtrag 86)
-
-| Prüfung | Ergebnis |
-|---|---|
-| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
-| `npx eslint src --max-warnings 0` | 0 Warnungen |
-| `npx vitest run` | **920/924** (119 Dateien, 4 übersprungen, 0 Fehlschläge) |
-| `npx playwright test` | **80/80** |
-| `npx tsc --noEmit` (Frontend) | 0 Fehler |
 
 ---
 

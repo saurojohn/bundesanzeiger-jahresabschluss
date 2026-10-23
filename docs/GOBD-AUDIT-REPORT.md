@@ -8668,6 +8668,26 @@ gibt, und er zwingt jede spätere Korrektur in die Rolle eines
 H-Zeile) — mit der Begründung im Kommentar, damit die Änderung nachvollziehbar
 bleibt.
 
+#### Der vierte Teil: der Kommentar, der die Fehlvorstellung erzeugt hat
+
+Der Docstring von `calculateSaldovortrag()` im Import behauptete:
+
+> „Bei einer typischen DATEV-Buchung gibt es zwei Zeilen: Soll und Haben,
+> die den gleichen Absolutbetrag (mit unterschiedlichem Vorzeichen) haben …
+> also summieren wir einfach `umsatz`."
+
+Der Code rechnet aber **eine** Zeile je Buchung — `konto` auf der
+SH-Seite, `gegenkonto` auf der anderen Seite (doppelte Buchführung). Das ist
+die Konvention des Sachkonten-Buchungsstapels, den der Export selbst
+deklariert.
+
+Nach der **beschriebenen** Lesart wäre jede Buchung doppelt gezählt worden.
+Genau diese Fehlvorstellung hat beim Export zu den Doppelzeilen geführt:
+Die zweite Zeile war nicht „die Gegenseite", sondern eine zweite Buchung,
+die die erste aufhob. Der Kommentar ist damit nicht Kosmetik — er war die
+Quelle des Fehlers, und er ist jetzt auf das korrigiert, was der Code tut
+(und was das Format vorgibt).
+
 #### Die Behebung
 
 1. **Eine Zeile je Buchung.** Der Export schreibt jetzt je Position genau

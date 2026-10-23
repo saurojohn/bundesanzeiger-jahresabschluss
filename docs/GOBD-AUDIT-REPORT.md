@@ -8763,6 +8763,138 @@ an dem der Fehler im Export auffällt.
 
 ---
 
+### Nachtrag 2026-10-23 (Nachtrag 88): Die öffentliche API meldete die Vorgangsnummer nie — und verschwieg, dass die Liste abgeschnitten war
+
+#### Der Befund
+
+`GET /api/v1/mandanten/:id/banz-submissions` hatte **zwei** Fehler, die
+sich gegenseitig die Sichtbarkeit genommen haben.
+
+**Gemessen** an der laufenden API (drei Einreichungsbelege, `pageSize=2`):
+
+```
+GET /api/v1/mandanten/<id>/banz-submissions?pageSize=2 -> 200
+  items       : 2
+  total       : 3
+  hasMore     : false        <-- bei 3 Sätzen und pageSize 2
+  nextCursor  : null
+  Submission …: status=SUBMITTED banzVorgangsnummer=null
+
+  DB: banzBestellnummer  = ["MESS-BESTELL-1","MESS-BESTELL-2","MESS-BESTELL-3"]
+  DB: banzVorgangsnummer = [null,null,null]
+```
+
+#### Teil 1: die Nummer kam aus dem falschen Feld
+
+Die API las `banzVorgangsnummer` — ein Feld, das **niemand schreibt**. Die
+Einreichung schreibt seit Nachtrag 62 (2026-10-20) `banzBestellnummer`: das
+eindeutige Feld (`@unique`), das die Bestellnummer des Bundesanzeigers
+trägt. `banzVorgangsnummer` existiert nur noch im Schema und wird
+ausschließlich **gelesen** — von dieser einen Stelle.
+
+Damit meldete die öffentliche API für jede Einreichung
+`banzVorgangsnummer: null`, während der Datensatz die Nummer sehr trug. Ein
+externes ERP (DATEV, Addison) konnte die Einreichung **nicht zuordnen** —
+die Nummer, die das Portal vergeben hat, kam nicht an.
+
+Zwei Felder für dieselbe Sache, von denen nur eines beschrieben wird: der
+`_`-Kern des Fehlers ist die Divergenz, nicht der Lesefehler.
+
+#### Teil 2: `hasMore: false` trotz abgeschnittener Datensätze
+
+Die Liste wurde als **Gesamtliste** geladen und im Service auf `pageSize`
+gekürzt — ohne Cursor. Also:
+
+```
+items: 2, total: 3, hasMore: false, nextCursor: null
+```
+
+Der dritte Beleg war für den Client **unerreichbar**, und die API sagte ihm
+zugleich, es sei alles geliefert. Ein Client, der `hasMore` vertraut (wie
+die Doku es beschreibt), beendet die Schleife nach der ersten Seite.
+
+Das war die **einzige** Liste der öffentlichen API ohne Cursor-Paging —
+Mandanten, Bilanzen, GuV und Anhang nutzen alle `take: pageSize + 1` mit
+echtem Cursor. Die Ausnahme fiel erst auf, weil das Fehlerbild so
+sichtbar war.
+
+#### Teil 3: der Kommentar, der das begründete
+
+```ts
+// (Praktisch entschaerft: `prisma.banzSubmission` wird im Repository an
+//  KEINER Stelle geschrieben — die Tabelle ist bislang leer. Der Weg zu
+//  echter Paginierung ist, zuerst die Submission-Erzeugung zu
+//  implementieren, …)
+```
+
+**Falsch** — seit dem 2026-10-20 existiert die Submission-Erzeugung
+(`abschluss.service.ts` → `tx.banzSubmission.create({…})`). Der Kommentar
+beschrieb einen Zustand, der zwei Wochen älter war als der Code, und er
+begründete genau das falsche Verhalten. Wer den nächsten Ausbau angeht, liest
+diese Begründung — und lässt die Liste so, wie sie ist.
+
+#### Die Behebung
+
+1. **Die richtige Quelle.** Der Repository-Eintrag liest `banzBestellnummer`.
+   Der **öffentliche** Feldname `banzVorgangsnummer` bleibt (API-Vertrag, so
+   in der Swagger-Dokumentation beschrieben) — geändert wird die Quelle.
+2. **Echtes Cursor-Paging.** Neu im Repository:
+   `findBanzSubmissionsByMandantPaginated({mandantId, cursor, pageSize})`
+   (`take: pageSize + 1`, Sortierung `preparedAt` + `id` — die Submissions
+   haben kein `updatedAt`) und `countBanzSubmissionsByMandant()`. Der
+   Controller nimmt den Cursor jetzt an; `hasMore` und `nextCursor` werden
+   wie in den übrigen Listen berechnet.
+3. **Der Kommentar** ist korrigiert — er behauptet keine Zukunft mehr.
+
+#### Die Negativprobe
+
+Feldquelle und Paging zurückgebaut → **drei** Tests rot, jeder aus dem
+richtigen Grund:
+
+```
+"meldet die Vorgangsnummer — nicht null":
+    .toMatch() expects to receive a string, but got object   (null)
+"meldet hasMore und liefert einen Cursor":
+    bei 3 Sätzen und pageSize 2 gibt es mehr: expected false to be true
+"der Cursor führt zum Rest der Liste":
+    die zweite Seite muss den dritten Beleg liefern: expected 2 to be 1
+```
+
+#### Die Tests
+
+`e2e/public-api-submissions.e2e.spec.ts` (3 Tests): die Vorgangsnummer wird
+gemeldet (nicht `null`), `hasMore` stimmt und ein Cursor wird geliefert, und
+der Cursor führt zum dritten Beleg — also ist kein Datensatz unerreichbar.
+
+**Merksatz:** Zwei Felder für dieselbe Sache sind eine Einladung, das
+falsche zu lesen. Hier las die API das Legacy-Feld (niemand schrieb es),
+das die Einreichung nicht mehr füllt — die öffentliche Sicht war damit
+dauerhaft leer, ohne dass ein Fehler auftrat.
+
+**Merksatz:** Ein Kommentar, der eine Begründung liefert, ist ein
+**Fakt**, kein Geräusch. "Die Tabelle ist bislang leer" hat den Fehler
+zwei Wochen lang am Leben gehalten — und der Kommentar war zwei Wochen
+älter als der Code, der daneben stand.
+
+**Merksatz:** Ein einzelner Endpunkt ohne Paging ist in einer API, die
+sonst überall paged, kein Detail: er ist die Stelle, an der `hasMore`
+gelogen hat. Die Ausnahme von der Regel ist fast immer die fehlerhafte
+Stelle.
+
+#### Verifikation (Nachtrag 88)
+
+Gemeinsam mit Nachtrag 89 in einem Lauf über den Gesamtstand gemessen.
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` (src + e2e + prisma + Tools) | 0 Fehler |
+| `npx eslint src --max-warnings 0` | 0 Warnungen |
+| `npx vitest run` | **933/937** (123 Dateien, 4 übersprungen, 0 Fehlschläge) |
+| `npx playwright test` | **80/80** |
+| `npx tsc --noEmit` (Frontend) | 0 Fehler |
+
+---
+
 ## 9. Externe Audit-Empfehlung
 
 Vor externem GoBD-Audit bitte folgende Vorbereitungen treffen:

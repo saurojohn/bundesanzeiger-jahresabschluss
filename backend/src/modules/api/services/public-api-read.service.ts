@@ -55,9 +55,16 @@ export class PublicApiReadService {
    * beschreibt), bekam aber nie eine zweite Seite. Zusaetzlich wuchs der
    * Speicherbedarf mit der Mandantengroesse.
    */
-  private toCursorPage<T extends { id: string; updatedAt: Date }>(
+  private toCursorPage<T extends { id: string; updatedAt?: Date }>(
     rows: Array<T & { wormObjectKey?: string | null }>,
     pageSize: number,
+    /**
+     * Der Sortierwert, der in den Cursor wandert. Standard ist `updatedAt`
+     * (so arbeiten Mandanten, Bilanzen, GuV und Anhang) — die Einreichungs-
+     * belegte haben kein `updatedAt`, sondern `preparedAt` (Nachtrag 88).
+     */
+    sortValue: (row: T) => string = (row) =>
+      (row.updatedAt ?? new Date(0)).toISOString(),
   ): { items: T[]; nextCursor: string | null; hasMore: boolean } {
     const hasMore = rows.length > pageSize;
     const page = rows.slice(0, pageSize);
@@ -66,7 +73,7 @@ export class PublicApiReadService {
       items: page,
       hasMore,
       nextCursor:
-        hasMore && last ? CursorCodec.encode(last.id, last.updatedAt.toISOString()) : null,
+        hasMore && last ? CursorCodec.encode(last.id, sortValue(last)) : null,
     };
   }
 
@@ -231,30 +238,44 @@ export class PublicApiReadService {
   async listBanzSubmissions(
     ctx: APIKeyContext,
     mandantId: string,
-    pagination: { pageSize?: number },
+    pagination: { cursor?: string; pageSize?: number },
   ): Promise<PaginatedResult<PublicBanzSubmissionDto>> {
     await this.assertMandantInKanzlei(ctx, mandantId);
 
-    // Ehrlich statt vorgetaeuscht: fuer BAnz-Submissions gibt es aktuell KEIN
-    // Cursor-Paging im Repository. `cursor` wird deshalb nicht angeboten, und
-    // `hasMore` beschreibt nur den Slice dieser einen Antwort — ein Client
-    // kann die naechste Seite nicht abrufen.
+    // BEFUND 2026-10-23 (Nachtrag 88): Diese Liste war die **einzige** der
+    // oeffentlichen API ohne Cursor-Paging. Sie wurde als Gesamtliste
+    // geladen und im Service auf `pageSize` gekuerzt — und meldete
+    // `hasMore: false` und `nextCursor: null`. Bei drei Einreichungen und
+    // `pageSize=2` war das gemessene Ergebnis:
     //
-    // (Praktisch entschaerft: `prisma.banzSubmission` wird im Repository an
-    //  KEINER Stelle geschrieben — die Tabelle ist bislang leer. Der Weg zu
-    //  echter Paginierung ist, zuerst die Submission-Erzeugung zu
-    //  implementieren, dann das Repository um findByMandantPaginated zu
-    //  erweitern. Beides gehoert nicht in einen Review-Fix hinein.)
+    //     items: 2, total: 3, hasMore: false, nextCursor: null
+    //
+    // Der dritte Beleg war fuer den Client **unerreichbar** — und die API
+    // sagte ihm, es sei alles geliefert.
+    //
+    // Der Kommentar, der das begruendete ("die Tabelle ist bislang leer"),
+    // war **falsch**: die Einreichung schreibt seit Nachtrag 62 (2026-10-20)
+    // `BanzSubmission`-Datensaetze. Ein Kommentar, der eine Tatsache aus
+    // der Zukunft behauptet, haelt den Fehler am Leben.
     const pageSize = Math.min(pagination.pageSize ?? 20, 100);
-    const items = await this.konsolidierungRepository.findBanzSubmissionsByMandant(
+
+    const rows = await this.konsolidierungRepository.findBanzSubmissionsByMandantPaginated({
       mandantId,
+      cursor: pagination.cursor,
+      pageSize: pageSize + 1,
+    });
+    const page = this.toCursorPage(rows, pageSize, (row) =>
+      row.preparedAt.toISOString(),
     );
+    const [total] = await Promise.all([
+      this.konsolidierungRepository.countBanzSubmissionsByMandant({ mandantId }),
+    ]);
 
     return {
-      items: items.slice(0, pageSize).map(this.toPublicBanzSubmissionDto),
-      nextCursor: null,
-      total: items.length,
-      hasMore: false,
+      items: page.items.map(this.toPublicBanzSubmissionDto),
+      nextCursor: page.nextCursor,
+      total,
+      hasMore: page.hasMore,
     };
   }
 

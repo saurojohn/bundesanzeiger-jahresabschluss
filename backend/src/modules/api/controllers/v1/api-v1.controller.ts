@@ -193,9 +193,14 @@ export class ApiV1Controller {
   async listBanzSubmissions(
     @CurrentApiKey() ctx: APIKeyContext,
     @Param('id', new ParseUUIDPipe({ version: '4' })) mandantId: string,
+    @Query('cursor') cursor?: string,
     @Query('pageSize') pageSizeRaw?: string,
   ): Promise<PublicBanzSubmissionListResponse> {
     return this.readService.listBanzSubmissions(ctx, mandantId, {
+      // BEFUND 2026-10-23 (Nachtrag 88): Der Cursor war nicht annehmbar —
+      // es gab kein Cursor-Paging. Die Liste ist jetzt auf echtes
+      // Cursor-Paging umgestellt (wie Mandanten/Bilanzen/GuV/Anhang).
+      cursor,
       pageSize: this.parsePageSize(pageSizeRaw, 20),
     });
   }

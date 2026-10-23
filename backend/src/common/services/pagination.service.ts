@@ -107,7 +107,7 @@ export class PaginationService {
    */
   static cursorCondition(
     cursor: string | undefined,
-    sortField: 'updatedAt' | 'createdAt' | 'firmenname',
+    sortField: 'updatedAt' | 'createdAt' | 'firmenname' | 'preparedAt',
     richtung: 'asc' | 'desc',
     idRichtung: 'asc' | 'desc',
     cast?: (wert: string) => Date,

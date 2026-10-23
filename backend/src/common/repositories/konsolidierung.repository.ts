@@ -1,6 +1,7 @@
 import { NotFoundException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaginationService } from '../services/pagination.service';
 
 /**
  * Typen für Konsolidierungs-spezifische Entities.
@@ -317,40 +318,112 @@ export class KonsolidierungRepository {
   }
 
   /**
-   * Liefert alle BAnz-Submissions eines Mandanten (für Public-API-Read).
+   * Die Einreichungsbelege eines Mandanten — **mit Cursor-Paging**.
+   *
+   * BEFUND 2026-10-23 (Nachtrag 88): Die Liste wurde als **Gesamtliste**
+   * geladen und im Service auf `pageSize` gekuerzt — ohne Cursor. Das
+   * Ergebnis: die API meldete `hasMore: false`, obwohl Datensaetze
+   * abgeschnitten wurden. Ein Client, der `hasMore` vertraut, glaubte, er
+   * haette alles — die abgeschnittenen Einreichungen waren fuer ihn nicht
+   * erreichbar (kein `nextCursor`).
+   *
+   * Alle anderen Listen der oeffentlichen API (Mandanten, Bilanzen, GuV,
+   * Anhang) nutzen echtes Cursor-Paging mit `take: pageSize + 1` — diese
+   * Liste war die einzige Ausnahme.
    */
-  async findBanzSubmissionsByMandant(
-    mandantId: string,
-  ): Promise<
-    Array<{
-      id: string;
-      jahresabschlussId: string;
-      mandantId: string;
-      channel: string;
-      status: string;
-      banzVorgangsnummer: string | null;
-      submittedAt: Date | null;
-      jahresabschluss?: { geschaeftsjahr: number };
-    }>
-  > {
+  async findBanzSubmissionsByMandantPaginated(args: {
+    mandantId: string;
+    cursor?: string;
+    pageSize: number;
+  }): Promise<BanzSubmissionListEntry[]> {
+    const where: Prisma.BanzSubmissionWhereInput = { mandantId: args.mandantId };
+
+    if (args.cursor) {
+      const cond = PaginationService.cursorCondition(
+        args.cursor,
+        'preparedAt',
+        'desc',
+        'asc',
+        (w: string) => new Date(w),
+      );
+      if (cond) where.OR = cond;
+    }
+
     const subs = await this.prismaService.banzSubmission.findMany({
-      where: { mandantId },
-      orderBy: { preparedAt: 'desc' },
+      where,
+      orderBy: [{ preparedAt: 'desc' }, { id: 'asc' }],
+      take: args.pageSize + 1,
       include: {
         jahresabschluss: { select: { geschaeftsjahr: true } },
       },
     });
-    return subs.map((s) => ({
+    return subs.map((s) => this.toBanzSubmissionListEntry(s));
+  }
+
+  /**
+   * Die Gesamtzahl der Einreichungsbelege eines Mandanten.
+   *
+   * Parallel zum `findBanzSubmissionsByMandantPaginated` ausgefuehrt.
+   */
+  async countBanzSubmissionsByMandant(args: { mandantId: string }): Promise<number> {
+    return this.prismaService.banzSubmission.count({
+      where: { mandantId: args.mandantId },
+    });
+  }
+
+  /**
+   * BEFUND 2026-10-23 (Nachtrag 88): Die Vorgangsnummer kam aus
+   * `banzVorgangsnummer` — einem Feld, das **niemand schreibt**. Die
+   * Einreichung schreibt seit Nachtrag 62 (2026-10-20) `banzBestellnummer`
+   * (das eindeutige Feld, `@unique`). Die oeffentliche API meldete darum
+   * fuer jede Einreichung `banzVorgangsnummer: null`, waehrend der
+   * Datensatz die Nummer very trug — ein externes ERP konnte die Einreichung
+   * nicht zuordnen.
+   *
+   * Der **oeffentliche** Feldname bleibt `banzVorgangsnummer` (API-Vertrag,
+   * in der Swagger-Dokumentation so beschrieben); geaendert wird die Quelle.
+   */
+  private toBanzSubmissionListEntry(s: {
+    id: string;
+    jahresabschlussId: string;
+    mandantId: string;
+    channel: string;
+    status: string;
+    banzBestellnummer: string | null;
+    preparedAt: Date;
+    submittedAt: Date | null;
+    jahresabschluss: { geschaeftsjahr: number } | null;
+  }): BanzSubmissionListEntry {
+    return {
       id: s.id,
       jahresabschlussId: s.jahresabschlussId,
       mandantId: s.mandantId,
       channel: s.channel,
       status: s.status,
-      banzVorgangsnummer: s.banzVorgangsnummer,
+      banzVorgangsnummer: s.banzBestellnummer,
+      // Der Sortierwert des Cursor-Paging (Nachtrag 88).
+      preparedAt: s.preparedAt,
       submittedAt: s.submittedAt,
       jahresabschluss: s.jahresabschluss
         ? { geschaeftsjahr: s.jahresabschluss.geschaeftsjahr }
         : undefined,
-    }));
+    };
   }
+}
+
+/**
+ * Ein Einreichungsbeleg in der Form der oeffentlichen API.
+ */
+export interface BanzSubmissionListEntry {
+  id: string;
+  jahresabschlussId: string;
+  mandantId: string;
+  channel: string;
+  status: string;
+  /** Die BAnz-Vorgangsnummer (aus `banzBestellnummer`, siehe Nachtrag 88). */
+  banzVorgangsnummer: string | null;
+  /** Sortierwert des Cursor-Paging (die Submissions haben kein `updatedAt`). */
+  preparedAt: Date;
+  submittedAt: Date | null;
+  jahresabschluss?: { geschaeftsjahr: number };
 }
